@@ -62,6 +62,31 @@ For detailed format instructions, click the "Waste Factor Format Guide" button i
 
 ## Support
 
+# My Vite + Express App
+
+This is a full-stack application using Vite (React) and Express.js backend.
+
+## Scripts
+
+- `npm run dev` — start development server
+- `npm run build` — build client
+- `npm start` — serve in production mode
+
+## Deployment
+
+Runs on port `5000`. Make sure `dist/public` exists before running in production.
+
+## Build
+
+```bash
+npm install
+npm run build
+npm start
+
+
+
+
+
 For questions or issues, please contact the development team.
 
 ## License
