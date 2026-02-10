@@ -99,10 +99,14 @@ export default function ScopeInput({
         const unitDisplay = factor.unit ? ` (${factor.unit})` : '';
         
         // Format the label with additional useful information
+        const yearDisplay = factor.year ? ` • ${factor.year}` : "";
+        const sourceDisplay = factor.source ? ` • ${factor.source}` : "";
+
         return {
           value: key,
-          label: `${displayName}${unitDisplay}`,
-          unit: factor.unit // Make unit available for auto-selection
+          label: `${displayName}${unitDisplay}${yearDisplay}${sourceDisplay}`,
+          unit: factor.unit, // Make unit available for auto-selection
+          year: factor.year,
         };
       });
     
@@ -425,6 +429,10 @@ export default function ScopeInput({
                         const selectedActivity = activityOptions.find(option => option.value === value);
                         if (selectedActivity && selectedActivity.unit) {
                           updateInput(index, "unit", selectedActivity.unit);
+                        }
+                        if (selectedActivity?.year && !localInputs[index]?.year) {
+                          setShowYearInput(true);
+                          updateInput(index, "year", selectedActivity.year);
                         }
                       }}
                     >

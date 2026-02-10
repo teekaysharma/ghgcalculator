@@ -4,6 +4,8 @@ export interface EmissionFactor {
   name: string;
   factor: number;
   unit: string;
+  source?: string;
+  year?: number;
   wasteType?: string;
   disposalMethod?: string;
   category?: string;

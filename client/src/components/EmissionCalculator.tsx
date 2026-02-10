@@ -57,10 +57,13 @@ export default function EmissionCalculator() {
   });
 
   const handleFactorsUploaded = (factors: Record<string, EmissionFactor>) => {
-    setEmissionFactors(factors);
+    setEmissionFactors((prevFactors) => ({
+      ...prevFactors,
+      ...factors,
+    }));
     toast({
-      title: "Success",
-      description: "Emission factors loaded successfully!",
+      title: "Factors merged",
+      description: `Added ${Object.keys(factors).length} factors. You can continue uploading additional years.`,
       variant: "default"
     });
   };
