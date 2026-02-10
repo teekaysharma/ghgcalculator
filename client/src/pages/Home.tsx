@@ -1,7 +1,7 @@
 import EmissionCalculator from "@/components/EmissionCalculator";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Leaf, LineChart, UploadCloud, ShieldCheck } from "lucide-react";
+import { Leaf, LineChart, UploadCloud, ShieldCheck, Sparkles } from "lucide-react";
 
 const highlights = [
   {
@@ -21,47 +21,64 @@ const highlights = [
   },
 ];
 
+const quickSteps = [
+  "Upload your emission factor workbook",
+  "Add activity data by scope",
+  "Review insights and export your report",
+];
+
 export default function Home() {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-sm">
+    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-slate-50 to-white text-slate-800">
+      <header className="sticky top-0 z-10 border-b border-emerald-100/80 bg-white/85 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-emerald-500/20 p-2 text-emerald-400">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-emerald-100 p-2.5 text-emerald-700">
               <Leaf className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Sustainability Platform</p>
-              <h1 className="text-lg font-semibold">GHG Emissions Calculator</h1>
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Sustainability Platform</p>
+              <h1 className="text-lg font-semibold text-slate-900">GHG Emissions Calculator</h1>
             </div>
           </div>
-          <Badge variant="secondary" className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+          <Badge variant="secondary" className="border border-emerald-200 bg-emerald-50 text-emerald-700">
             Carbon Analytics Workspace
           </Badge>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
-        <section className="grid gap-6 rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 p-6 shadow-2xl lg:grid-cols-[1.35fr_1fr] lg:p-8">
+        <section className="grid gap-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:grid-cols-[1.2fr_1fr] lg:p-8">
           <div className="space-y-4">
-            <p className="text-xs font-medium uppercase tracking-[0.24em] text-emerald-300">Enterprise Carbon Management</p>
-            <h2 className="text-3xl font-bold leading-tight text-white sm:text-4xl">
-              Build a reliable emissions baseline and monitor performance over time.
-            </h2>
-            <p className="max-w-2xl text-slate-300">
-              Inspired by the clean SustainMetrics-style experience: focused dashboards, clear data flow, and
-              actionable reporting for sustainability teams.
+            <p className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-emerald-700">
+              <Sparkles className="h-3.5 w-3.5" />
+              Guided Carbon Workflow
             </p>
+            <h2 className="text-3xl font-bold leading-tight text-slate-900 sm:text-4xl">
+              A calmer, clearer workspace for emissions tracking and reporting.
+            </h2>
+            <p className="max-w-2xl text-slate-600">
+              This interface is tuned for readability: softer colors, cleaner spacing, and a simple flow your team can
+              follow from data upload to final report.
+            </p>
+            <div className="grid gap-2 pt-2 text-sm text-slate-700 sm:grid-cols-3">
+              {quickSteps.map((step, index) => (
+                <div key={step} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <span className="mr-2 font-semibold text-emerald-700">{index + 1}.</span>
+                  {step}
+                </div>
+              ))}
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-1">
             {highlights.map((item) => {
               const Icon = item.icon;
               return (
-                <Card key={item.title} className="border-slate-700/80 bg-slate-900/70">
+                <Card key={item.title} className="border-emerald-100 bg-emerald-50/50 shadow-none">
                   <CardContent className="p-4">
-                    <Icon className="mb-2 h-5 w-5 text-emerald-300" />
-                    <p className="text-sm font-semibold text-white">{item.title}</p>
-                    <p className="mt-1 text-xs text-slate-300">{item.description}</p>
+                    <Icon className="mb-2 h-5 w-5 text-emerald-700" />
+                    <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                    <p className="mt-1 text-xs text-slate-600">{item.description}</p>
                   </CardContent>
                 </Card>
               );
@@ -69,7 +86,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-100 p-4 text-slate-900 shadow-xl sm:p-6">
+        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <EmissionCalculator />
         </section>
       </main>

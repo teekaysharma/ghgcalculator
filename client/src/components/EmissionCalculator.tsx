@@ -86,23 +86,23 @@ export default function EmissionCalculator() {
       <FileUpload onFactorsUploaded={handleFactorsUploaded} />
       
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-        <TabsList className="grid grid-cols-4 w-full">
-          <TabsTrigger value="scope1" className="flex items-center gap-1">
+        <TabsList className="grid w-full grid-cols-4 rounded-xl border border-slate-200 bg-slate-50 p-1">
+          <TabsTrigger value="scope1" className="flex items-center gap-1 rounded-lg text-slate-600 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm">
             <HomeIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Scope 1</span>
             <span className="inline sm:hidden">1</span>
           </TabsTrigger>
-          <TabsTrigger value="scope2" className="flex items-center gap-1">
+          <TabsTrigger value="scope2" className="flex items-center gap-1 rounded-lg text-slate-600 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm">
             <ZapIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Scope 2</span>
             <span className="inline sm:hidden">2</span>
           </TabsTrigger>
-          <TabsTrigger value="scope3" className="flex items-center gap-1">
+          <TabsTrigger value="scope3" className="flex items-center gap-1 rounded-lg text-slate-600 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm">
             <GlobeIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Scope 3</span>
             <span className="inline sm:hidden">3</span>
           </TabsTrigger>
-          <TabsTrigger value="results" className="flex items-center gap-1">
+          <TabsTrigger value="results" className="flex items-center gap-1 rounded-lg text-slate-600 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm">
             <BarChartIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Results</span>
             <span className="inline sm:hidden">Results</span>
