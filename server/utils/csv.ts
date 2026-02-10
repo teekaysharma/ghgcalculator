@@ -4,6 +4,14 @@ import { Emission } from "../../shared/schema";
  * Generates a CSV string from emissions data
  */
 export function generateCSV(emissions: Emission[]): string {
+  const escapeCsvValue = (value: string | number): string => {
+    const stringValue = String(value);
+    if (/[",\n]/.test(stringValue)) {
+      return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
+  };
+
   // CSV header
   const header = "Year,Product,Scope,Activity,Unit,Quantity,Emission Factor,Emissions (kg CO₂e)";
   
@@ -21,7 +29,9 @@ export function generateCSV(emissions: Emission[]): string {
       emission.quantity.toString(),
       emission.factor.toString(),
       emission.emission.toFixed(2)
-    ].join(',');
+    ]
+      .map(escapeCsvValue)
+      .join(',');
   });
   
   // Combine header and rows
