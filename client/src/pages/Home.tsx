@@ -58,8 +58,8 @@ export default function Home() {
               A calmer, clearer workspace for emissions tracking and reporting.
             </h2>
             <p className="max-w-2xl text-slate-600">
-              This interface is tuned for readability: softer colors, cleaner spacing, and a simple flow your team can
-              follow from data upload to final report.
+              This redesigned layout is tuned for readability: softer colors, cleaner spacing, and a simple flow your team
+              can follow from data upload to final report.
             </p>
             <div className="grid gap-2 pt-2 text-sm text-slate-700 sm:grid-cols-3">
               {quickSteps.map((step, index) => (
