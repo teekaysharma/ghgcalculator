@@ -65,6 +65,36 @@ const UNIT_COLUMNS = ["Unit", "Units", "Measurement Unit", "Unit of Measure", "U
 
 const SOURCE_HINTS = ["DEFRA", "CEA", "IEA", "EPA"] as const;
 
+const SCOPE3_CATEGORY_MAP: Record<string, string> = {
+  "category 1": "Category 1: Purchased Goods and Services",
+  "category 2": "Category 2: Capital Goods",
+  "category 3": "Category 3: Fuel- and Energy-Related Activities",
+  "category 4": "Category 4: Upstream Transportation and Distribution",
+  "category 5": "Category 5: Waste Generated in Operations",
+  "category 6": "Category 6: Business Travel",
+  "category 7": "Category 7: Employee Commuting",
+  "category 8": "Category 8: Upstream Leased Assets",
+  "category 9": "Category 9: Downstream Transportation and Distribution",
+  "category 10": "Category 10: Processing of Sold Products",
+  "category 11": "Category 11: Use of Sold Products",
+  "category 12": "Category 12: End-of-Life Treatment of Sold Products",
+  "category 13": "Category 13: Downstream Leased Assets",
+  "category 14": "Category 14: Franchises",
+  "category 15": "Category 15: Investments",
+};
+
+const normalizeScope3Category = (value: unknown): string | undefined => {
+  if (!value) return undefined;
+  const text = String(value).trim();
+  const key = text.toLowerCase();
+  if (SCOPE3_CATEGORY_MAP[key]) return SCOPE3_CATEGORY_MAP[key];
+  const match = key.match(/category\s*(\d{1,2})/);
+  if (match) {
+    return SCOPE3_CATEGORY_MAP[`category ${match[1]}`] || text;
+  }
+  return text;
+};
+
 const slugify = (value: string) => value.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase();
 
 const parseYear = (value: unknown): number | undefined => {
@@ -253,6 +283,8 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
           let unit = UNIT_COLUMNS.map((col) => row[col]).find(Boolean) || "";
           if (!unit) unit = "unit";
 
+          const scope3Category = normalizeScope3Category(row["Category"] ?? row["Scope 3 Category"] ?? row["Scope3 Category"]);
+
           if (activityType && !Number.isNaN(emissionFactor)) {
             const activityKey = `${rowScopePrefix}${slugify(String(activityType))}__${source.toLowerCase()}__${rowYear ?? "na"}`;
             factors[activityKey] = {
@@ -261,6 +293,7 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
               unit: String(unit),
               source,
               year: rowYear,
+              category: scope3Category,
             };
             totalFactors++;
           }

@@ -18,6 +18,25 @@ interface ScopeInputProps {
   onChange: (inputs: EmissionInput[]) => void;
 }
 
+
+const SCOPE3_CATEGORIES = [
+  "Category 1: Purchased Goods and Services",
+  "Category 2: Capital Goods",
+  "Category 3: Fuel- and Energy-Related Activities",
+  "Category 4: Upstream Transportation and Distribution",
+  "Category 5: Waste Generated in Operations",
+  "Category 6: Business Travel",
+  "Category 7: Employee Commuting",
+  "Category 8: Upstream Leased Assets",
+  "Category 9: Downstream Transportation and Distribution",
+  "Category 10: Processing of Sold Products",
+  "Category 11: Use of Sold Products",
+  "Category 12: End-of-Life Treatment of Sold Products",
+  "Category 13: Downstream Leased Assets",
+  "Category 14: Franchises",
+  "Category 15: Investments",
+];
+
 export default function ScopeInput({
   title,
   description,
@@ -107,6 +126,7 @@ export default function ScopeInput({
           label: `${displayName}${unitDisplay}${yearDisplay}${sourceDisplay}`,
           unit: factor.unit, // Make unit available for auto-selection
           year: factor.year,
+          category: factor.category,
         };
       });
     
@@ -434,6 +454,9 @@ export default function ScopeInput({
                           setShowYearInput(true);
                           updateInput(index, "year", selectedActivity.year);
                         }
+                        if (scope === "scope3" && selectedActivity?.category) {
+                          updateInput(index, "scope3Category", selectedActivity.category);
+                        }
                       }}
                     >
                       <SelectTrigger id={`activity-${scope}-${index}`}>
@@ -483,6 +506,29 @@ export default function ScopeInput({
                     />
                   </div>
                 </div>
+
+                {scope === "scope3" && (
+                  <div className="mt-4">
+                    <Label htmlFor={`scope3-category-${scope}-${index}`} className="mb-1">
+                      Scope 3 Category
+                    </Label>
+                    <Select
+                      value={input.scope3Category}
+                      onValueChange={(value) => updateInput(index, "scope3Category", value)}
+                    >
+                      <SelectTrigger id={`scope3-category-${scope}-${index}`}>
+                        <SelectValue placeholder="Select Scope 3 category (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SCOPE3_CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
                 {/* Conditional advanced fields */}
                 {(showYearInput || showProductInput || showWasteInput) && (

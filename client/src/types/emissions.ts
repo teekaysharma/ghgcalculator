@@ -19,6 +19,7 @@ export interface EmissionInput {
   product?: string;
   wasteType?: string;
   disposalMethod?: string;
+  scope3Category?: string;
 }
 
 export interface Emission {
@@ -32,6 +33,7 @@ export interface Emission {
   product?: string;
   wasteType?: string;
   disposalMethod?: string;
+  scope3Category?: string;
 }
 
 export interface ProductData {

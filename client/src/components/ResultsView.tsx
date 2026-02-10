@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScopeType, Emission } from "@/types/emissions";
-import { Download, Layers, Calendar, Factory, Trash } from "lucide-react";
+import { Download, Layers, Calendar, Factory, Trash, GitBranch } from "lucide-react";
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
 import { useMutation } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import YearlyComparison from "./YearlyComparison";
 import ProductIntensity from "./ProductIntensity";
 import WasteAnalysis from "./WasteAnalysis";
+import ScopeReport from "./ScopeReport";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -28,6 +29,8 @@ export default function ResultsView({ results, emissions, isLoading }: ResultsVi
   const [hasYearData, setHasYearData] = useState(false);
   const [hasProductData, setHasProductData] = useState(false);
   const [hasWasteData, setHasWasteData] = useState(false);
+  const [hasScopeReportData, setHasScopeReportData] = useState(false);
+  const [hasScope3CategoryData, setHasScope3CategoryData] = useState(false);
   
   useEffect(() => {
     // Check if any emissions have year data
@@ -40,6 +43,9 @@ export default function ResultsView({ results, emissions, isLoading }: ResultsVi
     setHasWasteData(emissions.some(emission => 
       emission.wasteType !== undefined && emission.disposalMethod !== undefined
     ));
+
+    setHasScopeReportData(emissions.length > 0);
+    setHasScope3CategoryData(emissions.some(emission => emission.scope3Category !== undefined));
   }, [emissions]);
   
   const chartData = {
@@ -149,6 +155,10 @@ export default function ResultsView({ results, emissions, isLoading }: ResultsVi
           <TabsTrigger value="summary" className="flex items-center gap-1">
             <Layers className="h-4 w-4" />
             <span>Summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="scopeReport" className="flex items-center gap-1" disabled={!hasScopeReportData}>
+            <GitBranch className="h-4 w-4" />
+            <span>Scope Report</span>
           </TabsTrigger>
           <TabsTrigger 
             value="yearly" 
@@ -296,6 +306,9 @@ export default function ResultsView({ results, emissions, isLoading }: ResultsVi
                       <tr>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Scope</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Activity</th>
+                        {hasScope3CategoryData && (
+                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Scope 3 Category</th>
+                        )}
                         {hasYearData && (
                           <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Year</th>
                         )}
@@ -314,6 +327,11 @@ export default function ResultsView({ results, emissions, isLoading }: ResultsVi
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-600">
                             {emission.scope.replace('scope', 'Scope ')}
                           </td>
+                          {hasScope3CategoryData && (
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-600">
+                              {emission.scope3Category || "-"}
+                            </td>
+                          )}
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-800">
                             {emission.activity.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                           </td>
@@ -347,6 +365,10 @@ export default function ResultsView({ results, emissions, isLoading }: ResultsVi
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="scopeReport">
+          <ScopeReport emissions={emissions} />
         </TabsContent>
 
         <TabsContent value="yearly">

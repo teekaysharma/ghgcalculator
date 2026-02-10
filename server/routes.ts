@@ -12,12 +12,14 @@ const emissionInputSchema = z.object({
   qty: z.number().nonnegative(),
   year: z.number().int().optional(),
   product: z.string().optional(),
+  scope3Category: z.string().optional(),
 });
 
 const factorSchema = z.object({
   name: z.string(),
   factor: z.number(),
   unit: z.string(),
+  category: z.string().optional(),
 });
 
 const calculateRequestSchema = z.object({
@@ -40,6 +42,7 @@ const emissionSchema = z.object({
   product: z.string().optional(),
   wasteType: z.string().optional(),
   disposalMethod: z.string().optional(),
+  scope3Category: z.string().optional(),
 });
 
 const emissionsRequestSchema = z.object({
@@ -90,6 +93,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             emission,
             year: input.year,
             product: input.product,
+            scope3Category: input.scope3Category || emissionFactors[input.activity]?.category,
           });
         }
       }

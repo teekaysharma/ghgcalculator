@@ -13,7 +13,7 @@ export function generateCSV(emissions: Emission[]): string {
   };
 
   // CSV header
-  const header = "Year,Product,Scope,Activity,Unit,Quantity,Emission Factor,Emissions (kg CO₂e)";
+  const header = "Year,Product,Scope,Scope 3 Category,Activity,Unit,Quantity,Emission Factor,Emissions (kg CO₂e)";
   
   // Format emission rows
   const rows = emissions.map(emission => {
@@ -24,6 +24,7 @@ export function generateCSV(emissions: Emission[]): string {
       emission.year || "",
       emission.product || "",
       scopeFormatted,
+      emission.scope3Category || "",
       activityFormatted,
       emission.unit,
       emission.quantity.toString(),
