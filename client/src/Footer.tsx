@@ -1,24 +1,6 @@
 import React from "react";
 
-function Footer() {
-  return (
-    <div style={styles.footer}>
-      <p style={styles.text}>
-        Built with ❤️ for You. Reach out to me on{" "}
-        <a
-          href="https://github.com/teekaysharma"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={styles.link}
-        >
-          GitHub
-        </a>
-      </p>
-    </div>
-  );
-}
-
-const styles = {
+const styles: Record<string, React.CSSProperties> = {
   footer: {
     position: "fixed",
     bottom: 0,
@@ -39,5 +21,18 @@ const styles = {
     textDecoration: "none",
   },
 };
+
+function Footer() {
+  return (
+    <div style={styles.footer}>
+      <p style={styles.text}>
+        Built with ❤️ for You. Reach out to me on{" "}
+        <a href="https://github.com/teekaysharma" target="_blank" rel="noopener noreferrer" style={styles.link}>
+          GitHub
+        </a>
+      </p>
+    </div>
+  );
+}
 
 export default Footer;
