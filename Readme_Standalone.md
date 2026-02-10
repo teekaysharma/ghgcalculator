@@ -27,8 +27,8 @@ cd ghgcalculator
 
 ## 2) Install prerequisites
 
-- **Node.js 18+** (recommended: latest LTS)
-- **npm** (installed with Node.js)
+- **Node.js 18 LTS or 20 LTS**
+- **npm 9+** (installed with Node.js)
 
 Check versions:
 
