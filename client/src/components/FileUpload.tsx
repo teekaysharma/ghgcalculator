@@ -2,7 +2,7 @@ import { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EmissionFactor } from "@/types/emissions";
-import { Upload, Check, AlertCircle, Calendar, Database } from "lucide-react";
+import { Upload, Check, AlertCircle, Calendar, Database, TriangleAlert } from "lucide-react";
 import { read, utils } from "xlsx";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,9 @@ interface UploadBatch {
   source: string;
   years: number[];
   count: number;
+  profile: string;
+  confidence: string;
+  warnings: string[];
 }
 
 const YEAR_COLUMNS = ["Year", "Reporting Year", "Factor Year", "Data Year", "Calendar Year"];
@@ -182,6 +185,54 @@ const detectRowScopePrefix = (row: any, fallback: string): string => {
   return fallback;
 };
 
+
+
+type FileProfile = "DEFRA Flat File" | "CEA Flat File" | "IEA Dataset" | "EPA Dataset" | "Generic Spreadsheet";
+
+const inferFileProfile = (headers: string[], source: string): { profile: FileProfile; confidence: string } => {
+  const normalizedHeaders = headers.map((h) => h.toLowerCase());
+  const hasLevelHierarchy = normalizedHeaders.some((h) => /^level\s*\d+$/i.test(h)) || normalizedHeaders.includes("column text");
+  const hasDefraFactorColumn = normalizedHeaders.some((h) => h.includes("ghg conversion factor"));
+
+  if (source === "DEFRA" || (hasLevelHierarchy && hasDefraFactorColumn)) {
+    return { profile: "DEFRA Flat File", confidence: "high" };
+  }
+  if (source === "CEA") return { profile: "CEA Flat File", confidence: "medium" };
+  if (source === "IEA") return { profile: "IEA Dataset", confidence: "medium" };
+  if (source === "EPA") return { profile: "EPA Dataset", confidence: "medium" };
+
+  if (hasLevelHierarchy || normalizedHeaders.some((h) => h.includes("scope"))) {
+    return { profile: "Generic Spreadsheet", confidence: "medium" };
+  }
+
+  return { profile: "Generic Spreadsheet", confidence: "low" };
+};
+
+const detectAbnormalFactors = (values: number[]): string[] => {
+  const warnings: string[] = [];
+  if (values.length === 0) return warnings;
+
+  const negatives = values.filter((v) => v < 0).length;
+  const zeros = values.filter((v) => v === 0).length;
+  const veryLarge = values.filter((v) => Math.abs(v) > 1_000_000).length;
+
+  if (negatives > 0) warnings.push(`${negatives} factor values are negative.`);
+  if (zeros > 0) warnings.push(`${zeros} factor values are zero.`);
+  if (veryLarge > 0) warnings.push(`${veryLarge} factor values are unusually large (>1,000,000).`);
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const q1 = sorted[Math.floor((sorted.length - 1) * 0.25)];
+  const q3 = sorted[Math.floor((sorted.length - 1) * 0.75)];
+  const iqr = q3 - q1;
+  if (iqr > 0) {
+    const upperFence = q3 + 3 * iqr;
+    const lowerFence = q1 - 3 * iqr;
+    const outliers = sorted.filter((v) => v > upperFence || v < lowerFence).length;
+    if (outliers > 0) warnings.push(`${outliers} factor values look like statistical outliers.`);
+  }
+
+  return warnings;
+};
 export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
   const [fileName, setFileName] = useState<string>("");
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
@@ -209,9 +260,11 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
       const yearsFound = new Set<number>();
       let totalFactors = 0;
 
-      const firstSheet = utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as any[];
-      const firstHeaders = firstSheet[0] ? Object.keys(firstSheet[0]) : [];
-      const source = detectSource(file.name, workbook.SheetNames, firstHeaders, firstSheet);
+      const firstSheetRows = utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as any[];
+      const firstHeaders = firstSheetRows[0] ? Object.keys(firstSheetRows[0]) : [];
+      const source = detectSource(file.name, workbook.SheetNames, firstHeaders, firstSheetRows);
+      const profile = inferFileProfile(firstHeaders, source);
+      const factorValues: number[] = [];
 
       for (const sheetName of workbook.SheetNames) {
         const sheetRows = utils.sheet_to_json(workbook.Sheets[sheetName]) as any[];
@@ -259,6 +312,7 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
                 category: "waste",
               };
               totalFactors++;
+              factorValues.push(emissionFactor);
             } else {
               const disposalMethods = ["Landfill", "Incineration", "Recycling", "Composting"];
               for (const column of Object.keys(row)) {
@@ -283,6 +337,7 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
                   category: "waste",
                 };
                 totalFactors++;
+                factorValues.push(emissionFactor);
               }
             }
             continue;
@@ -341,6 +396,7 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
               category: scope3Category,
             };
             totalFactors++;
+            factorValues.push(emissionFactor);
           }
         }
       }
@@ -350,6 +406,8 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
           "No valid emission factors found. Please verify columns for activity, factor, unit, and optional year.",
         );
       }
+
+      const anomalyWarnings = detectAbnormalFactors(factorValues);
 
       setUploadStatus("success");
       onFactorsUploaded(factors);
@@ -361,17 +419,37 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
           source,
           years: yearsArray,
           count: totalFactors,
+          profile: profile.profile,
+          confidence: profile.confidence,
+          warnings: anomalyWarnings,
         },
         ...prev,
       ]);
 
       toast({
         title: "Upload Successful",
-        description: `${totalFactors} factors loaded from ${source}${
+        description: `${totalFactors} factors loaded from ${source} (${profile.profile})${
           yearsArray.length ? ` for year(s): ${yearsArray.join(", ")}` : " (year not specified)"
         }`,
         variant: "default",
       });
+
+      if (anomalyWarnings.length > 0) {
+        toast({
+          title: "Review recommended",
+          description: `${anomalyWarnings.slice(0, 2).join(" ")} Validate against authority notes before final use.`,
+          variant: "destructive",
+        });
+      }
+
+      if (profile.confidence === "low") {
+        toast({
+          title: "Layout interpreted heuristically",
+          description:
+            "The file layout is uncommon. We inferred columns automatically. If results look off, provide DEFRA-compatible columns as a last resort.",
+          variant: "default",
+        });
+      }
     } catch (error) {
       console.error("File upload error:", error);
       setUploadStatus("error");
@@ -459,17 +537,31 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
             <p className="mb-2 text-sm font-medium text-slate-700">Uploaded datasets</p>
             <div className="space-y-2">
               {uploadedBatches.slice(0, 5).map((batch, index) => (
-                <div key={`${batch.fileName}-${index}`} className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                  <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-                    <Database className="mr-1 h-3 w-3" />
-                    {batch.source}
-                  </Badge>
-                  <span className="font-medium text-slate-700">{batch.fileName}</span>
-                  <span>({batch.count} factors)</span>
-                  <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
-                    <Calendar className="mr-1 h-3 w-3" />
-                    {batch.years.length ? batch.years.join(", ") : "Year not provided"}
-                  </Badge>
+                <div key={`${batch.fileName}-${index}`} className="space-y-1 text-xs text-slate-600">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                      <Database className="mr-1 h-3 w-3" />
+                      {batch.source}
+                    </Badge>
+                    <span className="font-medium text-slate-700">{batch.fileName}</span>
+                    <span>({batch.count} factors)</span>
+                    <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                      <Calendar className="mr-1 h-3 w-3" />
+                      {batch.years.length ? batch.years.join(", ") : "Year not provided"}
+                    </Badge>
+                    <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
+                      {batch.profile}
+                    </Badge>
+                    <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                      Confidence: {batch.confidence}
+                    </Badge>
+                  </div>
+                  {batch.warnings.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 text-amber-700">
+                      <TriangleAlert className="h-3 w-3" />
+                      <span>{batch.warnings.join(" ")}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
