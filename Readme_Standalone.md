@@ -55,6 +55,8 @@ npm install
 npm run dev
 ```
 
+This script is cross-platform and works in Windows Command Prompt/PowerShell as well.
+
 Then open:
 
 - `http://localhost:5000`
