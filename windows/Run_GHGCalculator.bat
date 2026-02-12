@@ -36,12 +36,20 @@ if not exist "%PROJECT_ROOT%\node_modules" (
   echo [1/3] node_modules found, skipping fresh install.
 )
 
-echo [2/3] Building and starting standalone server...
-call npm run standalone
+echo [2/3] Building production assets...
+call npm run build
 if errorlevel 1 (
-  echo [FAIL] Standalone launch failed.
+  echo [FAIL] Build failed.
   exit /b 1
 )
 
-echo [3/3] Done.
+echo [3/3] Starting local server on http://localhost:5000
+echo         Press Ctrl+C in this window to stop the server.
+start "" "http://localhost:5000" >nul 2>&1
+call npm start
+if errorlevel 1 (
+  echo [FAIL] Server failed to start.
+  exit /b 1
+)
+
 endlocal

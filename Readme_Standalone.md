@@ -96,8 +96,9 @@ This branch includes Windows helper scripts in `windows/` and root-level launche
 ### Quick start on Windows
 1. Download ZIP from the branch and extract it.
 2. Double-click `Run_GHGCalculator.bat` (or `windows\Run_GHGCalculator.bat`).
-3. Wait for checks/build/start.
-4. Open `http://localhost:5000` in your browser.
+3. Wait for checks/build/start. The launcher will try to open your default browser automatically.
+4. If needed, manually open `http://localhost:5000` in your browser.
+5. Keep the launcher window open while using the app; press `Ctrl+C` there to stop the server.
 
 If prerequisites are missing, the script will show clear installation guidance.
 
