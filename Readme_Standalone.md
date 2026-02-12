@@ -81,6 +81,24 @@ Then open:
 
 ---
 
+
+## Windows one-click launcher (recommended for end users)
+
+This branch includes Windows helper scripts in `windows/`:
+
+- `windows\Check_Prerequisites.bat` → validates Node.js/npm compatibility for this app
+- `windows\Run_GHGCalculator.bat` → runs prerequisite checks, installs dependencies (if needed), then starts standalone mode
+
+### Quick start on Windows
+1. Download ZIP from the branch and extract it.
+2. Double-click `windows\Run_GHGCalculator.bat`.
+3. Wait for checks/build/start.
+4. Open `http://localhost:5000` in your browser.
+
+If prerequisites are missing, the script will show clear installation guidance.
+
+---
+
 ## 6) Typical local workflow for emissions factors
 
 1. Open the app in browser.
