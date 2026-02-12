@@ -76,14 +76,13 @@ app.use((req, res, next) => {
   }
 
   const port = Number(process.env.PORT) || 5000;
-  server.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+  const listenOptions: Parameters<typeof server.listen>[0] = {
+    port,
+    host: "0.0.0.0",
+    ...(process.platform !== "win32" ? { reusePort: true } : {}),
+  };
+
+  server.listen(listenOptions, () => {
+    log(`serving on port ${port}`);
+  });
 })();
