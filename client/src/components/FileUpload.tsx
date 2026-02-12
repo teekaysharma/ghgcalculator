@@ -62,6 +62,7 @@ const FACTOR_COLUMNS = [
   "Value",
 ];
 const UNIT_COLUMNS = ["Unit", "Units", "Measurement Unit", "Unit of Measure", "UOM"];
+const LEVEL_COLUMNS = ["Level 1", "Level 2", "Level 3", "Level 4", "Column Text"];
 
 const SOURCE_HINTS = ["DEFRA", "CEA", "IEA", "EPA"] as const;
 
@@ -103,6 +104,44 @@ const parseYear = (value: unknown): number | undefined => {
   if (!match) return undefined;
   const year = Number(match[0]);
   return year >= 1990 && year <= 2100 ? year : undefined;
+};
+
+
+const buildHierarchicalActivity = (row: Record<string, unknown>): string | undefined => {
+  const dynamicLevelColumns = Object.keys(row)
+    .filter((key) => /^Level\s*\d+$/i.test(key))
+    .sort((a, b) => {
+      const ai = parseInt((a.match(/\d+/) || ["0"])[0], 10);
+      const bi = parseInt((b.match(/\d+/) || ["0"])[0], 10);
+      return ai - bi;
+    });
+
+  const columns = [...dynamicLevelColumns, ...LEVEL_COLUMNS.filter((col) => !dynamicLevelColumns.includes(col))];
+  const parts = columns
+    .map((col) => row[col])
+    .filter((value): value is string | number => value !== undefined && value !== null && String(value).trim() !== "")
+    .map((value) => String(value).trim());
+
+  if (parts.length === 0) return undefined;
+  return parts.join(" > ");
+};
+
+const getEmissionFactorFromRow = (row: Record<string, unknown>): number => {
+  for (const col of FACTOR_COLUMNS) {
+    const value = row[col];
+    if (value !== undefined && value !== null && value !== "") {
+      const parsed = parseFloat(String(value));
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+  }
+
+  const ghgFactorColumn = Object.keys(row).find((key) => /GHG\s*Conversion\s*Factor/i.test(key));
+  if (ghgFactorColumn) {
+    const parsed = parseFloat(String(row[ghgFactorColumn]));
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  return NaN;
 };
 
 const detectSource = (fileName: string, sheetNames: string[], headers: string[], rows: any[]): string => {
@@ -249,7 +288,8 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
             continue;
           }
 
-          let activityType = ACTIVITY_COLUMNS.map((col) => row[col]).find(Boolean);
+          const hierarchicalActivity = buildHierarchicalActivity(row);
+          let activityType = hierarchicalActivity || ACTIVITY_COLUMNS.map((col) => row[col]).find(Boolean);
           if (!activityType) {
             activityType = Object.keys(row)
               .filter((key) => !["Unit", "Scope", ...YEAR_COLUMNS].includes(key))
@@ -257,13 +297,7 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
               .find((value) => typeof value === "string");
           }
 
-          let emissionFactor = NaN;
-          for (const col of FACTOR_COLUMNS) {
-            if (row[col] !== undefined && row[col] !== null && row[col] !== "") {
-              emissionFactor = parseFloat(row[col]);
-              if (!Number.isNaN(emissionFactor)) break;
-            }
-          }
+          let emissionFactor = getEmissionFactorFromRow(row);
 
           if (Number.isNaN(emissionFactor)) {
             for (const key of Object.keys(row)) {
@@ -283,12 +317,23 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
           let unit = UNIT_COLUMNS.map((col) => row[col]).find(Boolean) || "";
           if (!unit) unit = "unit";
 
+          const ghgUnit = row["GHG/Unit"] ? String(row["GHG/Unit"]).trim() : "";
           const scope3Category = normalizeScope3Category(row["Category"] ?? row["Scope 3 Category"] ?? row["Scope3 Category"]);
 
           if (activityType && !Number.isNaN(emissionFactor)) {
-            const activityKey = `${rowScopePrefix}${slugify(String(activityType))}__${source.toLowerCase()}__${rowYear ?? "na"}`;
+            const activityName = String(activityType);
+            const keyParts = [
+              rowScopePrefix + slugify(activityName),
+              slugify(String(unit)),
+              ghgUnit ? slugify(ghgUnit) : "",
+              row["ID"] ? slugify(String(row["ID"])) : "",
+              source.toLowerCase(),
+              String(rowYear ?? "na"),
+            ].filter(Boolean);
+
+            const activityKey = keyParts.join("__");
             factors[activityKey] = {
-              name: String(activityType),
+              name: activityName,
               factor: emissionFactor,
               unit: String(unit),
               source,
