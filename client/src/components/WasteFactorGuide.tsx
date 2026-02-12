@@ -18,7 +18,7 @@ export default function WasteFactorGuide() {
           <span>Waste Factor Format Guide</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto pr-2">
         <DialogHeader>
           <DialogTitle>Waste Emission Factors Format Guide</DialogTitle>
           <DialogDescription>
