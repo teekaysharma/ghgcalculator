@@ -84,14 +84,16 @@ Then open:
 
 ## Windows one-click launcher (recommended for end users)
 
-This branch includes Windows helper scripts in `windows/`:
+This branch includes Windows helper scripts in `windows/` and root-level launchers:
 
+- `Check_Prerequisites.bat` → root shortcut that calls `windows\Check_Prerequisites.bat`
+- `Run_GHGCalculator.bat` → root shortcut that calls `windows\Run_GHGCalculator.bat`
 - `windows\Check_Prerequisites.bat` → validates Node.js/npm compatibility for this app
 - `windows\Run_GHGCalculator.bat` → runs prerequisite checks, installs dependencies (if needed), then starts standalone mode
 
 ### Quick start on Windows
 1. Download ZIP from the branch and extract it.
-2. Double-click `windows\Run_GHGCalculator.bat`.
+2. Double-click `Run_GHGCalculator.bat` (or `windows\Run_GHGCalculator.bat`).
 3. Wait for checks/build/start.
 4. Open `http://localhost:5000` in your browser.
 
