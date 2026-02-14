@@ -2,7 +2,15 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { z } from "zod";
 import { generateCSV } from "./utils/csv";
-import { Emission, ProductData, YearlyEmissions, ProductIntensity } from "../shared/schema";
+import {
+  Emission,
+  ProductData,
+  YearlyEmissions,
+  ProductIntensity,
+  Organization,
+  Facility,
+  ReportingBoundary,
+} from "../shared/schema";
 
 const scopeTypeSchema = z.enum(["scope1", "scope2", "scope3"]);
 
@@ -61,6 +69,35 @@ const productIntensityRequestSchema = z.object({
   productionData: z.array(productionDataSchema),
 });
 
+
+
+const consolidationApproachSchema = z.enum(["operational_control", "financial_control", "equity_share"]);
+
+const organizationCreateSchema = z.object({
+  name: z.string().min(1),
+  legalEntity: z.string().optional(),
+});
+
+const facilityCreateSchema = z.object({
+  organizationId: z.number().int().positive(),
+  name: z.string().min(1),
+  country: z.string().optional(),
+});
+
+const reportingBoundaryCreateSchema = z.object({
+  organizationId: z.number().int().positive(),
+  reportingYear: z.number().int().min(1990).max(2100),
+  consolidationApproach: consolidationApproachSchema,
+  description: z.string().optional(),
+});
+
+const organizations: Organization[] = [];
+const facilities: Facility[] = [];
+const reportingBoundaries: ReportingBoundary[] = [];
+let nextOrganizationId = 1;
+let nextFacilityId = 1;
+let nextBoundaryId = 1;
+
 const parseBody = <T>(schema: z.ZodSchema<T>, body: unknown): T => {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -70,6 +107,75 @@ const parseBody = <T>(schema: z.ZodSchema<T>, body: unknown): T => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.get("/api/organizations", (_req, res) => {
+    return res.json({ organizations });
+  });
+
+  app.post("/api/organizations", (req, res) => {
+    try {
+      const data = parseBody(organizationCreateSchema, req.body);
+      const organization: Organization = {
+        id: nextOrganizationId++,
+        name: data.name,
+        legalEntity: data.legalEntity,
+        createdAt: new Date().toISOString(),
+      };
+      organizations.push(organization);
+      return res.status(201).json({ organization });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid organization payload" });
+    }
+  });
+
+  app.get("/api/facilities", (_req, res) => {
+    return res.json({ facilities });
+  });
+
+  app.post("/api/facilities", (req, res) => {
+    try {
+      const data = parseBody(facilityCreateSchema, req.body);
+      const orgExists = organizations.some((org) => org.id === data.organizationId);
+      if (!orgExists) return res.status(404).json({ message: "Organization not found" });
+
+      const facility: Facility = {
+        id: nextFacilityId++,
+        organizationId: data.organizationId,
+        name: data.name,
+        country: data.country,
+        createdAt: new Date().toISOString(),
+      };
+      facilities.push(facility);
+      return res.status(201).json({ facility });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility payload" });
+    }
+  });
+
+  app.get("/api/reporting-boundaries", (_req, res) => {
+    return res.json({ reportingBoundaries });
+  });
+
+  app.post("/api/reporting-boundaries", (req, res) => {
+    try {
+      const data = parseBody(reportingBoundaryCreateSchema, req.body);
+      const orgExists = organizations.some((org) => org.id === data.organizationId);
+      if (!orgExists) return res.status(404).json({ message: "Organization not found" });
+
+      const boundary: ReportingBoundary = {
+        id: nextBoundaryId++,
+        organizationId: data.organizationId,
+        reportingYear: data.reportingYear,
+        consolidationApproach: data.consolidationApproach,
+        description: data.description,
+        createdAt: new Date().toISOString(),
+      };
+      reportingBoundaries.push(boundary);
+      return res.status(201).json({ boundary });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid boundary payload" });
+    }
+  });
+
   app.post("/api/calculate", (req, res) => {
     try {
       const { inputs, emissionFactors } = parseBody(calculateRequestSchema, req.body);

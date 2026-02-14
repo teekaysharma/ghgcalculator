@@ -96,3 +96,40 @@ export interface WasteDisposalSummary {
   totalQuantity: number;
   unit: string;
 }
+
+
+export type ConsolidationApproach = "operational_control" | "financial_control" | "equity_share";
+
+export type DataQualityTier = "best" | "intermediate" | "minimum";
+
+export type IsoInventoryCategory =
+  | "category_1_direct"
+  | "category_2_imported_energy"
+  | "category_3_transportation"
+  | "category_4_products_used"
+  | "category_5_use_of_products"
+  | "category_6_other_indirect";
+
+export interface Organization {
+  id: number;
+  name: string;
+  legalEntity?: string;
+  createdAt: string;
+}
+
+export interface Facility {
+  id: number;
+  organizationId: number;
+  name: string;
+  country?: string;
+  createdAt: string;
+}
+
+export interface ReportingBoundary {
+  id: number;
+  organizationId: number;
+  reportingYear: number;
+  consolidationApproach: ConsolidationApproach;
+  description?: string;
+  createdAt: string;
+}
