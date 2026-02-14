@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { rm } from "node:fs/promises";
 
-const BASE_URL = "http://127.0.0.1:5000";
+const TEST_HOST = process.env.TEST_HOST || "localhost";
+const TEST_PORT = process.env.TEST_PORT || "5000";
+const BASE_URL = `http://${TEST_HOST}:${TEST_PORT}`;
 const STORE_PATH = "data/setup-store.json";
 
 function assert(condition, message) {
@@ -28,7 +30,13 @@ async function waitForServer(timeoutMs = 20000) {
 function startServer() {
   const server = spawn(process.execPath, ["./node_modules/tsx/dist/cli.mjs", "server/index.ts"], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, NODE_ENV: "development", FORCE_COLOR: "0" },
+    env: {
+      ...process.env,
+      NODE_ENV: "development",
+      FORCE_COLOR: "0",
+      HOST: process.env.HOST || TEST_HOST,
+      PORT: process.env.PORT || TEST_PORT,
+    },
   });
 
   server.stdout.on("data", (chunk) => process.stdout.write(`[dev] ${chunk}`));
