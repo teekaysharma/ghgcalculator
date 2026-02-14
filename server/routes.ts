@@ -6,11 +6,9 @@ import {
   Emission,
   ProductData,
   YearlyEmissions,
-  ProductIntensity,
-  Organization,
-  Facility,
-  ReportingBoundary,
+  ProductIntensity
 } from "../shared/schema";
+import { storage } from "./storage";
 
 const scopeTypeSchema = z.enum(["scope1", "scope2", "scope3"]);
 
@@ -91,13 +89,6 @@ const reportingBoundaryCreateSchema = z.object({
   description: z.string().optional(),
 });
 
-const organizations: Organization[] = [];
-const facilities: Facility[] = [];
-const reportingBoundaries: ReportingBoundary[] = [];
-let nextOrganizationId = 1;
-let nextFacilityId = 1;
-let nextBoundaryId = 1;
-
 const parseBody = <T>(schema: z.ZodSchema<T>, body: unknown): T => {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -107,33 +98,32 @@ const parseBody = <T>(schema: z.ZodSchema<T>, body: unknown): T => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.get("/api/organizations", (_req, res) => {
+  app.get("/api/organizations", async (_req, res) => {
+    const organizations = await storage.listOrganizations();
     return res.json({ organizations });
   });
 
-  app.post("/api/organizations", (req, res) => {
+  app.post("/api/organizations", async (req, res) => {
     try {
       const data = parseBody(organizationCreateSchema, req.body);
-      const organization: Organization = {
-        id: nextOrganizationId++,
-        name: data.name,
-        legalEntity: data.legalEntity,
-        createdAt: new Date().toISOString(),
-      };
-      organizations.push(organization);
+      const organization = await storage.createOrganization(data);
       return res.status(201).json({ organization });
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid organization payload" });
     }
   });
 
-  app.get("/api/facilities", (_req, res) => {
+  app.get("/api/facilities", async (_req, res) => {
+    const facilities = await storage.listFacilities();
     return res.json({ facilities });
   });
 
-  app.post("/api/facilities", (req, res) => {
+  app.post("/api/facilities", async (req, res) => {
     try {
       const data = parseBody(facilityCreateSchema, req.body);
+      const organizations = await storage.listOrganizations();
+      const facilities = await storage.listFacilities();
+
       const orgExists = organizations.some((org) => org.id === data.organizationId);
       if (!orgExists) return res.status(404).json({ message: "Organization not found" });
 
@@ -146,25 +136,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: "Facility name already exists for this organization" });
       }
 
-      const facility: Facility = {
-        id: nextFacilityId++,
-        organizationId: data.organizationId,
-        name: data.name,
-        country: data.country,
-        createdAt: new Date().toISOString(),
-      };
-      facilities.push(facility);
+      const facility = await storage.createFacility(data);
       return res.status(201).json({ facility });
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility payload" });
     }
   });
 
-  app.get("/api/reporting-boundaries", (_req, res) => {
+  app.get("/api/reporting-boundaries", async (_req, res) => {
+    const reportingBoundaries = await storage.listReportingBoundaries();
     return res.json({ reportingBoundaries });
   });
 
-  app.get("/api/setup-status", (_req, res) => {
+  app.get("/api/setup-status", async (_req, res) => {
+    const organizations = await storage.listOrganizations();
+    const facilities = await storage.listFacilities();
+    const reportingBoundaries = await storage.listReportingBoundaries();
+
     const setupStatus = {
       organizationCount: organizations.length,
       facilityCount: facilities.length,
@@ -175,7 +163,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ setupStatus });
   });
 
-  app.get("/api/setup-summary", (_req, res) => {
+  app.get("/api/setup-summary", async (_req, res) => {
+    const organizations = await storage.listOrganizations();
+    const facilities = await storage.listFacilities();
+    const reportingBoundaries = await storage.listReportingBoundaries();
+
     const organizationsWithFacilities = organizations.map((org) => ({
       ...org,
       facilities: facilities.filter((facility) => facility.organizationId === org.id),
@@ -185,9 +177,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ organizations: organizationsWithFacilities });
   });
 
-  app.post("/api/reporting-boundaries", (req, res) => {
+  app.post("/api/reporting-boundaries", async (req, res) => {
     try {
       const data = parseBody(reportingBoundaryCreateSchema, req.body);
+      const organizations = await storage.listOrganizations();
+      const reportingBoundaries = await storage.listReportingBoundaries();
+
       const orgExists = organizations.some((org) => org.id === data.organizationId);
       if (!orgExists) return res.status(404).json({ message: "Organization not found" });
 
@@ -198,24 +193,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: "Reporting boundary already exists for this organization and year" });
       }
 
-      const boundary: ReportingBoundary = {
-        id: nextBoundaryId++,
-        organizationId: data.organizationId,
-        reportingYear: data.reportingYear,
-        consolidationApproach: data.consolidationApproach,
-        description: data.description,
-        createdAt: new Date().toISOString(),
-      };
-      reportingBoundaries.push(boundary);
+      const boundary = await storage.createReportingBoundary(data);
       return res.status(201).json({ boundary });
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid boundary payload" });
     }
   });
 
-  app.post("/api/calculate", (req, res) => {
+  app.post("/api/calculate", async (req, res) => {
     try {
       const { inputs, emissionFactors } = parseBody(calculateRequestSchema, req.body);
+
+      const organizations = await storage.listOrganizations();
+      const facilities = await storage.listFacilities();
+      const reportingBoundaries = await storage.listReportingBoundaries();
 
       if (organizations.length === 0 || facilities.length === 0 || reportingBoundaries.length === 0) {
         return res.status(400).json({

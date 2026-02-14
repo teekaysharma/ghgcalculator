@@ -18,9 +18,10 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
 - Added setup gating in calculation flow so emissions cannot be calculated before organization/facility/boundary setup is complete.
 - Added a client setup panel to create organizations, facilities, and boundaries before normal emission workflows.
 - Added a setup API integration test script (`npm run test:setup-api`) covering readiness, creation flows, and duplicate constraint responses.
+- Refactored setup API state handling through `server/storage.ts` to remove route-local setup arrays and prepare for DB-backed persistence.
 
 ## Next implementation slices
-1. Persist these entities in database tables (replace in-memory arrays).
+1. Persist these entities in database tables (replace in-memory storage implementation in `server/storage.ts`).
 2. ✅ Add uniqueness constraints:
    - one boundary per organization/year
    - unique facility name per organization
