@@ -1,103 +1,38 @@
 # GHG Emissions Calculator
 
-A comprehensive tool for tracking and analyzing Scope 1, 2, and 3 carbon emissions with support for advanced features like multi-year comparisons, product intensity metrics, and waste management tracking.
+A full-stack greenhouse-gas emissions calculator (React + Express) for tracking Scope 1, 2, and 3 emissions.
 
-## Features
+## Run on localhost (current phase)
 
-- **Multi-Scope Emissions Tracking**: Calculate and track Scope 1, 2, and 3 greenhouse gas emissions
-- **Multi-Year Comparison**: Track and visualize emissions trends over time
-- **Product Intensity Metrics**: Calculate emissions per unit of production for various products
-- **Waste Analysis**: Track emissions by waste type and disposal method
-- **Flexible Data Import**: Support for various Excel file formats and column naming conventions
-- **Visualization**: Charts and graphs for emissions data analysis
+This phase is **localhost-only** and does **not** require a database.
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js (v16 or higher)
-- npm or yarn
-
-### Installation
-
-1. Unzip the downloaded file to a directory of your choice
-2. Open a terminal/command prompt and navigate to the project directory
-3. Install dependencies:
+### Step 1 — Install dependencies
 
 ```bash
 npm install
 ```
 
-or if you use yarn:
-
-```bash
-yarn
-```
-
-### Running the Application
-
-To start the development server:
+### Step 2 — Start the app
 
 ```bash
 npm run dev
 ```
 
-This will launch both the backend server and the frontend application. The application will be available at `http://localhost:5000` in your web browser.
+Then open `http://localhost:5000`.
 
-### Using the Application
+---
 
-1. **Upload Emission Factors**: Use the "Upload Emission Factors" section to import your Excel file with emission factors
-2. **Enter Activity Data**: Enter your activity data in the appropriate scope tabs
-3. **View Results**: The Results section will display your calculated emissions and visualizations
+## Available scripts
 
-## Emission Factor File Format
+- `npm run dev` — start local development server
+- `npm run check` — run TypeScript checks
+- `npm run build` — build client and server bundles
+- `npm start` — run production server from `dist`
+- `npm run standalone` — build and start production locally
+- `npm run test:setup-api` — run setup API integration checks
 
-The application supports various emission factor file formats:
+## Notes
 
-1. **Standard format**: A simple table with columns for Activity Type, Emission Factor, and Unit
-2. **Multi-scope format**: Data organized by scope (1, 2, or 3) using sheet names or a Scope column
-3. **Waste-specific format**: Detailed tracking of waste types and disposal methods
-
-For detailed format instructions, click the "Waste Factor Format Guide" button in the application.
-
-## Support
-
-# My Vite + Express App
-
-This is a full-stack application using Vite (React) and Express.js backend.
-
-## Scripts
-
-- `npm run dev` — start development server
-- `npm run build` — build client
-- `npm start` — serve in production mode
-
-## Deployment
-
-Runs on port `5000`. Make sure `dist/public` exists before running in production.
-
-## Build
-
-```bash
-npm install
-npm run build
-npm start
-
-
-
-
-
-For questions or issues, please contact the development team.
-
-## License
-
-This project is licensed under the MIT License.
-## Reliability roadmap
-
-Initial Phase 0 reliability planning artifacts are available in:
-
-- `docs/phase-0-implementation-blueprint.md`
-- `docs/iso-controls-matrix.md`
-- `docs/phase-1-execution-plan.md`
-- `docs/development-changelog.md`
-
+- Default port: `5000` (configurable via `PORT`).
+- Default host: `localhost` (configurable via `HOST`).
+- Persistent DB storage will be introduced in a later phase.
