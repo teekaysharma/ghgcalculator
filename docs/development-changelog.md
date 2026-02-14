@@ -121,3 +121,18 @@ This document captures implementation progress, issues encountered, and how they
 ### Problems solved
 - **Problem:** Setup APIs only supported creation/listing, so readiness transitions and lifecycle operations were not testable or operationally complete.
 - **Solution:** Added delete lifecycle endpoints + automated tests to verify readiness flips from `true` back to `false` when required entities are removed.
+
+
+## 2026-02-14 — Setup panel UX polishing and lifecycle controls
+
+### What was built
+- Upgraded `SetupBoundaryPanel` presentation with cleaner card sections, status badge, and improved visual hierarchy.
+- Added in-panel lifecycle actions to remove:
+  - organization
+  - facilities
+  - reporting boundaries
+- Added selected-organization management view showing facilities and boundaries with inline delete controls.
+
+### Problems solved
+- **Problem:** Setup lifecycle APIs existed but operational UX for lifecycle management was incomplete, reducing usability and perceived product polish.
+- **Solution:** Added direct management affordances in the setup UI so users can correct setup configuration without API tooling or manual intervention.
