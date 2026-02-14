@@ -23,9 +23,11 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
 - Extended setup integration testing to verify setup-status transitions after delete operations.
 - Polished `SetupBoundaryPanel` UI with management cards, readiness badge, and inline delete actions for organization/facility/boundary lifecycle operations.
 - Added `GET /api/setup-summary` pagination support (`page`, `pageSize`) with metadata and validation responses for invalid pagination input.
+- Persisted setup-domain state to a local store file (`data/setup-store.json`) via `server/storage.ts`, replacing ephemeral route-process setup state.
+- Extended setup integration tests to validate setup persistence across server restart in addition to lifecycle transitions.
 
 ## Next implementation slices
-1. Persist these entities in database tables (replace in-memory storage implementation in `server/storage.ts`).
+1. ✅ Persist setup state beyond route process memory (implemented with file-backed store in `server/storage.ts`; relational DB migration remains Phase 2 hardening).
 2. ✅ Add uniqueness constraints:
    - one boundary per organization/year
    - unique facility name per organization
@@ -35,3 +37,8 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
    - ✅ Boundary & consolidation selection form
 4. ✅ Block emissions calculation until boundary setup is complete.
 5. ✅ Add integration tests for the new setup APIs.
+
+
+## Phase 1 Completion Status
+- Foundation objectives are implemented and operational for current standalone scope.
+- Remaining heavy-lift persistence upgrade to relational DB is deferred to Phase 2 hardening/scale work.

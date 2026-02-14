@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { rm } from "node:fs/promises";
 
 const BASE_URL = "http://127.0.0.1:5000";
+const STORE_PATH = "data/setup-store.json";
 
 function assert(condition, message) {
   if (!condition) {
@@ -23,6 +25,22 @@ async function waitForServer(timeoutMs = 20000) {
   throw new Error("Server did not become ready in time");
 }
 
+function startServer() {
+  const server = spawn(process.execPath, ["./node_modules/tsx/dist/cli.mjs", "server/index.ts"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, NODE_ENV: "development", FORCE_COLOR: "0" },
+  });
+
+  server.stdout.on("data", (chunk) => process.stdout.write(`[dev] ${chunk}`));
+  server.stderr.on("data", (chunk) => process.stderr.write(`[dev] ${chunk}`));
+  return server;
+}
+
+async function stopServer(server) {
+  server.kill("SIGKILL");
+  await delay(250);
+}
+
 async function jsonRequest(path, { method = "GET", body } = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -41,15 +59,9 @@ async function jsonRequest(path, { method = "GET", body } = {}) {
 }
 
 async function run() {
-  const serverCmd = process.platform === "win32" ? "tsx.cmd" : "tsx";
-  const server = spawn(serverCmd, ["server/index.ts"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, NODE_ENV: "development", FORCE_COLOR: "0" },
-  });
+  await rm(STORE_PATH, { force: true });
 
-  server.stdout.on("data", (chunk) => process.stdout.write(`[dev] ${chunk}`));
-  server.stderr.on("data", (chunk) => process.stderr.write(`[dev] ${chunk}`));
-
+  let server = startServer();
   try {
     await waitForServer();
 
@@ -120,6 +132,14 @@ async function run() {
     assert(setup1.status === 200, "setup-status should return 200 after setup");
     assert(setup1.data?.setupStatus?.readyForCalculation === true, "setup should be ready after required entities");
 
+    await stopServer(server);
+    server = startServer();
+    await waitForServer();
+
+    const setupAfterRestart = await jsonRequest("/api/setup-status");
+    assert(setupAfterRestart.status === 200, "setup-status should return 200 after restart");
+    assert(setupAfterRestart.data?.setupStatus?.readyForCalculation === true, "setup should persist after restart");
+
     const deleteBoundary = await jsonRequest(`/api/reporting-boundaries/${boundaryId}`, { method: "DELETE" });
     assert(deleteBoundary.status === 204, "boundary delete should return 204");
 
@@ -135,13 +155,17 @@ async function run() {
 
     console.log("✅ setup API integration checks passed");
   } finally {
-    server.kill("SIGKILL");
-    await delay(200);
+    await stopServer(server);
+    await rm(STORE_PATH, { force: true });
   }
 }
 
-run().catch((error) => {
-  console.error("❌ setup API integration checks failed");
-  console.error(error);
-  process.exit(1);
-});
+run()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error("❌ setup API integration checks failed");
+    console.error(error);
+    process.exit(1);
+  });

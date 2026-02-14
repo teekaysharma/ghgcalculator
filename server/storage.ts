@@ -1,3 +1,5 @@
+import path from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   users,
   type User,
@@ -7,6 +9,28 @@ import {
   type ReportingBoundary,
   type ConsolidationApproach,
 } from "@shared/schema";
+
+interface SetupStoreSnapshot {
+  organizations: Organization[];
+  facilities: Facility[];
+  boundaries: ReportingBoundary[];
+  counters: {
+    organization: number;
+    facility: number;
+    boundary: number;
+  };
+}
+
+const EMPTY_SNAPSHOT: SetupStoreSnapshot = {
+  organizations: [],
+  facilities: [],
+  boundaries: [],
+  counters: {
+    organization: 1,
+    facility: 1,
+    boundary: 1,
+  },
+};
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
@@ -41,6 +65,8 @@ export class MemStorage implements IStorage {
   private currentOrganizationId: number;
   private currentFacilityId: number;
   private currentBoundaryId: number;
+  private readonly setupStorePath: string;
+  private readonly setupStoreReady: Promise<void>;
 
   constructor() {
     this.users = new Map();
@@ -51,6 +77,40 @@ export class MemStorage implements IStorage {
     this.currentOrganizationId = 1;
     this.currentFacilityId = 1;
     this.currentBoundaryId = 1;
+    this.setupStorePath = path.join(process.cwd(), "data", "setup-store.json");
+    this.setupStoreReady = this.loadSetupStore();
+  }
+
+  private async loadSetupStore(): Promise<void> {
+    try {
+      const raw = await readFile(this.setupStorePath, "utf-8");
+      const parsed = JSON.parse(raw) as SetupStoreSnapshot;
+      this.organizations = parsed.organizations || [];
+      this.facilities = parsed.facilities || [];
+      this.boundaries = parsed.boundaries || [];
+      this.currentOrganizationId = parsed.counters?.organization || 1;
+      this.currentFacilityId = parsed.counters?.facility || 1;
+      this.currentBoundaryId = parsed.counters?.boundary || 1;
+    } catch {
+      await this.persistSetupStore();
+    }
+  }
+
+  private async persistSetupStore(): Promise<void> {
+    const snapshot: SetupStoreSnapshot = {
+      organizations: this.organizations,
+      facilities: this.facilities,
+      boundaries: this.boundaries,
+      counters: {
+        organization: this.currentOrganizationId,
+        facility: this.currentFacilityId,
+        boundary: this.currentBoundaryId,
+      },
+    };
+
+    const payload = JSON.stringify(snapshot || EMPTY_SNAPSHOT, null, 2);
+    await mkdir(path.dirname(this.setupStorePath), { recursive: true });
+    await writeFile(this.setupStorePath, payload, "utf-8");
   }
 
   async getUser(id: number): Promise<User | undefined> {
@@ -69,10 +129,12 @@ export class MemStorage implements IStorage {
   }
 
   async listOrganizations(): Promise<Organization[]> {
+    await this.setupStoreReady;
     return [...this.organizations];
   }
 
   async createOrganization(payload: { name: string; legalEntity?: string }): Promise<Organization> {
+    await this.setupStoreReady;
     const organization: Organization = {
       id: this.currentOrganizationId++,
       name: payload.name,
@@ -80,14 +142,17 @@ export class MemStorage implements IStorage {
       createdAt: new Date().toISOString(),
     };
     this.organizations.push(organization);
+    await this.persistSetupStore();
     return organization;
   }
 
   async listFacilities(): Promise<Facility[]> {
+    await this.setupStoreReady;
     return [...this.facilities];
   }
 
   async createFacility(payload: { organizationId: number; name: string; country?: string }): Promise<Facility> {
+    await this.setupStoreReady;
     const facility: Facility = {
       id: this.currentFacilityId++,
       organizationId: payload.organizationId,
@@ -96,16 +161,21 @@ export class MemStorage implements IStorage {
       createdAt: new Date().toISOString(),
     };
     this.facilities.push(facility);
+    await this.persistSetupStore();
     return facility;
   }
 
   async deleteFacility(id: number): Promise<boolean> {
+    await this.setupStoreReady;
     const before = this.facilities.length;
     this.facilities = this.facilities.filter((facility) => facility.id !== id);
-    return this.facilities.length < before;
+    const changed = this.facilities.length < before;
+    if (changed) await this.persistSetupStore();
+    return changed;
   }
 
   async listReportingBoundaries(): Promise<ReportingBoundary[]> {
+    await this.setupStoreReady;
     return [...this.boundaries];
   }
 
@@ -115,6 +185,7 @@ export class MemStorage implements IStorage {
     consolidationApproach: ConsolidationApproach;
     description?: string;
   }): Promise<ReportingBoundary> {
+    await this.setupStoreReady;
     const boundary: ReportingBoundary = {
       id: this.currentBoundaryId++,
       organizationId: payload.organizationId,
@@ -124,21 +195,28 @@ export class MemStorage implements IStorage {
       createdAt: new Date().toISOString(),
     };
     this.boundaries.push(boundary);
+    await this.persistSetupStore();
     return boundary;
   }
 
   async deleteReportingBoundary(id: number): Promise<boolean> {
+    await this.setupStoreReady;
     const before = this.boundaries.length;
     this.boundaries = this.boundaries.filter((boundary) => boundary.id !== id);
-    return this.boundaries.length < before;
+    const changed = this.boundaries.length < before;
+    if (changed) await this.persistSetupStore();
+    return changed;
   }
 
   async deleteOrganization(id: number): Promise<boolean> {
+    await this.setupStoreReady;
     const before = this.organizations.length;
     this.organizations = this.organizations.filter((organization) => organization.id !== id);
     this.facilities = this.facilities.filter((facility) => facility.organizationId !== id);
     this.boundaries = this.boundaries.filter((boundary) => boundary.organizationId !== id);
-    return this.organizations.length < before;
+    const changed = this.organizations.length < before;
+    if (changed) await this.persistSetupStore();
+    return changed;
   }
 }
 

@@ -151,3 +151,15 @@ This document captures implementation progress, issues encountered, and how they
 ### Problems solved
 - **Problem:** Setup summary retrieval lacked paging controls, which would not scale for larger setup datasets and had no query guardrails.
 - **Solution:** Added bounded pagination and validation to keep summary retrieval predictable and safe as record counts grow.
+
+
+## 2026-02-14 — File-backed setup persistence and restart durability
+
+### What was built
+- Added local file-backed setup persistence (`data/setup-store.json`) in `server/storage.ts`.
+- Setup-domain entities (organizations/facilities/boundaries + counters) are now loaded on startup and persisted on mutations.
+- Extended integration tests to restart the server mid-run and verify setup readiness remains `true` after restart.
+
+### Problems solved
+- **Problem:** Setup state was lost whenever the process restarted, causing operational friction and non-durable setup in standalone usage.
+- **Solution:** Implemented durable file-backed persistence with restart validation in automated integration tests.
