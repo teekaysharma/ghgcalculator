@@ -92,3 +92,10 @@ For questions or issues, please contact the development team.
 ## License
 
 This project is licensed under the MIT License.
+## Reliability roadmap
+
+Initial Phase 0 reliability planning artifacts are available in:
+
+- `docs/phase-0-implementation-blueprint.md`
+- `docs/iso-controls-matrix.md`
+
