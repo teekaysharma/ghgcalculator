@@ -137,6 +137,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const orgExists = organizations.some((org) => org.id === data.organizationId);
       if (!orgExists) return res.status(404).json({ message: "Organization not found" });
 
+      const duplicateFacility = facilities.some(
+        (facility) =>
+          facility.organizationId === data.organizationId &&
+          facility.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
+      );
+      if (duplicateFacility) {
+        return res.status(409).json({ message: "Facility name already exists for this organization" });
+      }
+
       const facility: Facility = {
         id: nextFacilityId++,
         organizationId: data.organizationId,
@@ -166,11 +175,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ setupStatus });
   });
 
+  app.get("/api/setup-summary", (_req, res) => {
+    const organizationsWithFacilities = organizations.map((org) => ({
+      ...org,
+      facilities: facilities.filter((facility) => facility.organizationId === org.id),
+      boundaries: reportingBoundaries.filter((boundary) => boundary.organizationId === org.id),
+    }));
+
+    return res.json({ organizations: organizationsWithFacilities });
+  });
+
   app.post("/api/reporting-boundaries", (req, res) => {
     try {
       const data = parseBody(reportingBoundaryCreateSchema, req.body);
       const orgExists = organizations.some((org) => org.id === data.organizationId);
       if (!orgExists) return res.status(404).json({ message: "Organization not found" });
+
+      const duplicateBoundary = reportingBoundaries.some(
+        (boundary) => boundary.organizationId === data.organizationId && boundary.reportingYear === data.reportingYear,
+      );
+      if (duplicateBoundary) {
+        return res.status(409).json({ message: "Reporting boundary already exists for this organization and year" });
+      }
 
       const boundary: ReportingBoundary = {
         id: nextBoundaryId++,
