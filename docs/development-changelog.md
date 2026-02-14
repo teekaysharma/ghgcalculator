@@ -106,3 +106,18 @@ This document captures implementation progress, issues encountered, and how they
 3. Add setup panel UX for editing/deleting entities.
 4. Add integration tests for setup-status transitions across delete/update operations.
 5. Begin Phase 2 quantification spine (gas-level model + GWP-versioned conversion).
+
+
+## 2026-02-14 — Setup lifecycle and state-transition hardening
+
+### What was built
+- Added setup lifecycle delete endpoints:
+  - `DELETE /api/organizations/:id` (cascade removes organization-linked facilities and boundaries in current memory implementation)
+  - `DELETE /api/facilities/:id`
+  - `DELETE /api/reporting-boundaries/:id`
+- Expanded `GET /api/setup-summary` with optional `organizationId` filter support.
+- Extended automated integration test coverage to validate readiness transitions after deletion.
+
+### Problems solved
+- **Problem:** Setup APIs only supported creation/listing, so readiness transitions and lifecycle operations were not testable or operationally complete.
+- **Solution:** Added delete lifecycle endpoints + automated tests to verify readiness flips from `true` back to `false` when required entities are removed.

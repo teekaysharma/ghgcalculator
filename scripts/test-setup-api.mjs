@@ -70,6 +70,8 @@ async function run() {
       body: { organizationId, name: "Plant Alpha" },
     });
     assert(facility.status === 201, "facility creation should return 201");
+    const facilityId = facility.data?.facility?.id;
+    assert(Number.isInteger(facilityId), "facility id missing");
 
     const facilityDuplicate = await jsonRequest("/api/facilities", {
       method: "POST",
@@ -86,6 +88,8 @@ async function run() {
       },
     });
     assert(boundary.status === 201, "boundary creation should return 201");
+    const boundaryId = boundary.data?.boundary?.id;
+    assert(Number.isInteger(boundaryId), "boundary id missing");
 
     const boundaryDuplicate = await jsonRequest("/api/reporting-boundaries", {
       method: "POST",
@@ -101,9 +105,26 @@ async function run() {
     assert(summary.status === 200, "setup-summary should return 200");
     assert(Array.isArray(summary.data?.organizations), "setup-summary organizations should be an array");
 
+    const filteredSummary = await jsonRequest(`/api/setup-summary?organizationId=${organizationId}`);
+    assert(filteredSummary.status === 200, "filtered setup-summary should return 200");
+    assert(filteredSummary.data?.organizations?.length === 1, "filtered setup-summary should return one organization");
+
     const setup1 = await jsonRequest("/api/setup-status");
     assert(setup1.status === 200, "setup-status should return 200 after setup");
     assert(setup1.data?.setupStatus?.readyForCalculation === true, "setup should be ready after required entities");
+
+    const deleteBoundary = await jsonRequest(`/api/reporting-boundaries/${boundaryId}`, { method: "DELETE" });
+    assert(deleteBoundary.status === 204, "boundary delete should return 204");
+
+    const setup2 = await jsonRequest("/api/setup-status");
+    assert(setup2.status === 200, "setup-status should return 200 after boundary delete");
+    assert(setup2.data?.setupStatus?.readyForCalculation === false, "setup should be incomplete after deleting boundary");
+
+    const deleteFacility = await jsonRequest(`/api/facilities/${facilityId}`, { method: "DELETE" });
+    assert(deleteFacility.status === 204, "facility delete should return 204");
+
+    const deleteOrganization = await jsonRequest(`/api/organizations/${organizationId}`, { method: "DELETE" });
+    assert(deleteOrganization.status === 204, "organization delete should return 204");
 
     console.log("✅ setup API integration checks passed");
   } finally {

@@ -113,6 +113,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+
+  app.delete("/api/organizations/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid organization id" });
+
+    const deleted = await storage.deleteOrganization(id);
+    if (!deleted) return res.status(404).json({ message: "Organization not found" });
+
+    return res.status(204).end();
+  });
+
   app.get("/api/facilities", async (_req, res) => {
     const facilities = await storage.listFacilities();
     return res.json({ facilities });
@@ -143,6 +154,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+
+  app.delete("/api/facilities/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid facility id" });
+
+    const deleted = await storage.deleteFacility(id);
+    if (!deleted) return res.status(404).json({ message: "Facility not found" });
+
+    return res.status(204).end();
+  });
+
   app.get("/api/reporting-boundaries", async (_req, res) => {
     const reportingBoundaries = await storage.listReportingBoundaries();
     return res.json({ reportingBoundaries });
@@ -163,12 +185,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ setupStatus });
   });
 
-  app.get("/api/setup-summary", async (_req, res) => {
+  app.get("/api/setup-summary", async (req, res) => {
     const organizations = await storage.listOrganizations();
     const facilities = await storage.listFacilities();
     const reportingBoundaries = await storage.listReportingBoundaries();
 
-    const organizationsWithFacilities = organizations.map((org) => ({
+    const organizationId = req.query.organizationId ? Number(req.query.organizationId) : undefined;
+
+    const filteredOrganizations = Number.isInteger(organizationId)
+      ? organizations.filter((org) => org.id === organizationId)
+      : organizations;
+
+    const organizationsWithFacilities = filteredOrganizations.map((org) => ({
       ...org,
       facilities: facilities.filter((facility) => facility.organizationId === org.id),
       boundaries: reportingBoundaries.filter((boundary) => boundary.organizationId === org.id),
@@ -198,6 +226,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid boundary payload" });
     }
+  });
+
+
+  app.delete("/api/reporting-boundaries/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+
+    const deleted = await storage.deleteReportingBoundary(id);
+    if (!deleted) return res.status(404).json({ message: "Reporting boundary not found" });
+
+    return res.status(204).end();
   });
 
   app.post("/api/calculate", async (req, res) => {

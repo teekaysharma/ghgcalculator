@@ -18,6 +18,7 @@ export interface IStorage {
 
   listFacilities(): Promise<Facility[]>;
   createFacility(payload: { organizationId: number; name: string; country?: string }): Promise<Facility>;
+  deleteFacility(id: number): Promise<boolean>;
 
   listReportingBoundaries(): Promise<ReportingBoundary[]>;
   createReportingBoundary(payload: {
@@ -26,6 +27,9 @@ export interface IStorage {
     consolidationApproach: ConsolidationApproach;
     description?: string;
   }): Promise<ReportingBoundary>;
+  deleteReportingBoundary(id: number): Promise<boolean>;
+
+  deleteOrganization(id: number): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -95,6 +99,12 @@ export class MemStorage implements IStorage {
     return facility;
   }
 
+  async deleteFacility(id: number): Promise<boolean> {
+    const before = this.facilities.length;
+    this.facilities = this.facilities.filter((facility) => facility.id !== id);
+    return this.facilities.length < before;
+  }
+
   async listReportingBoundaries(): Promise<ReportingBoundary[]> {
     return [...this.boundaries];
   }
@@ -115,6 +125,20 @@ export class MemStorage implements IStorage {
     };
     this.boundaries.push(boundary);
     return boundary;
+  }
+
+  async deleteReportingBoundary(id: number): Promise<boolean> {
+    const before = this.boundaries.length;
+    this.boundaries = this.boundaries.filter((boundary) => boundary.id !== id);
+    return this.boundaries.length < before;
+  }
+
+  async deleteOrganization(id: number): Promise<boolean> {
+    const before = this.organizations.length;
+    this.organizations = this.organizations.filter((organization) => organization.id !== id);
+    this.facilities = this.facilities.filter((facility) => facility.organizationId !== id);
+    this.boundaries = this.boundaries.filter((boundary) => boundary.organizationId !== id);
+    return this.organizations.length < before;
   }
 }
 
