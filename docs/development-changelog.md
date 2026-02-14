@@ -136,3 +136,18 @@ This document captures implementation progress, issues encountered, and how they
 ### Problems solved
 - **Problem:** Setup lifecycle APIs existed but operational UX for lifecycle management was incomplete, reducing usability and perceived product polish.
 - **Solution:** Added direct management affordances in the setup UI so users can correct setup configuration without API tooling or manual intervention.
+
+
+## 2026-02-14 — Setup summary pagination and query hardening
+
+### What was built
+- Added pagination query support for `GET /api/setup-summary`:
+  - `page` (default `1`)
+  - `pageSize` (default `25`, max `100`)
+- Added `pagination` metadata in setup-summary response.
+- Added 400 validation for invalid pagination combinations.
+- Extended integration tests to cover paged summary responses and invalid query rejection.
+
+### Problems solved
+- **Problem:** Setup summary retrieval lacked paging controls, which would not scale for larger setup datasets and had no query guardrails.
+- **Solution:** Added bounded pagination and validation to keep summary retrieval predictable and safe as record counts grow.

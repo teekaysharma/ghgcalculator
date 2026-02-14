@@ -22,6 +22,7 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
 - Added setup delete lifecycle endpoints (`DELETE /api/organizations/:id`, `DELETE /api/facilities/:id`, `DELETE /api/reporting-boundaries/:id`) and expanded setup-summary filtering (`organizationId`).
 - Extended setup integration testing to verify setup-status transitions after delete operations.
 - Polished `SetupBoundaryPanel` UI with management cards, readiness badge, and inline delete actions for organization/facility/boundary lifecycle operations.
+- Added `GET /api/setup-summary` pagination support (`page`, `pageSize`) with metadata and validation responses for invalid pagination input.
 
 ## Next implementation slices
 1. Persist these entities in database tables (replace in-memory storage implementation in `server/storage.ts`).

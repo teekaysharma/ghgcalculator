@@ -191,18 +191,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const reportingBoundaries = await storage.listReportingBoundaries();
 
     const organizationId = req.query.organizationId ? Number(req.query.organizationId) : undefined;
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 25;
+
+    if ((req.query.page && (!Number.isInteger(page) || page <= 0)) || (req.query.pageSize && (!Number.isInteger(pageSize) || pageSize <= 0 || pageSize > 100))) {
+      return res.status(400).json({ message: "Invalid pagination query. page must be >=1 and pageSize must be between 1 and 100." });
+    }
 
     const filteredOrganizations = Number.isInteger(organizationId)
       ? organizations.filter((org) => org.id === organizationId)
       : organizations;
 
-    const organizationsWithFacilities = filteredOrganizations.map((org) => ({
+    const total = filteredOrganizations.length;
+    const offset = (page - 1) * pageSize;
+    const paginatedOrganizations = filteredOrganizations.slice(offset, offset + pageSize);
+
+    const organizationsWithFacilities = paginatedOrganizations.map((org) => ({
       ...org,
       facilities: facilities.filter((facility) => facility.organizationId === org.id),
       boundaries: reportingBoundaries.filter((boundary) => boundary.organizationId === org.id),
     }));
 
-    return res.json({ organizations: organizationsWithFacilities });
+    return res.json({
+      organizations: organizationsWithFacilities,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize) || 1,
+      },
+    });
   });
 
   app.post("/api/reporting-boundaries", async (req, res) => {

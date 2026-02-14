@@ -109,6 +109,13 @@ async function run() {
     assert(filteredSummary.status === 200, "filtered setup-summary should return 200");
     assert(filteredSummary.data?.organizations?.length === 1, "filtered setup-summary should return one organization");
 
+    const pagedSummary = await jsonRequest("/api/setup-summary?page=1&pageSize=1");
+    assert(pagedSummary.status === 200, "paged setup-summary should return 200");
+    assert(pagedSummary.data?.pagination?.pageSize === 1, "paged setup-summary should respect pageSize");
+
+    const invalidPagedSummary = await jsonRequest("/api/setup-summary?page=0&pageSize=500");
+    assert(invalidPagedSummary.status === 400, "invalid pagination should return 400");
+
     const setup1 = await jsonRequest("/api/setup-status");
     assert(setup1.status === 200, "setup-status should return 200 after setup");
     assert(setup1.data?.setupStatus?.readyForCalculation === true, "setup should be ready after required entities");
@@ -128,9 +135,8 @@ async function run() {
 
     console.log("✅ setup API integration checks passed");
   } finally {
-    server.kill("SIGINT");
-    await delay(500);
-    if (!server.killed) server.kill("SIGKILL");
+    server.kill("SIGKILL");
+    await delay(200);
   }
 }
 
