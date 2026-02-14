@@ -163,3 +163,18 @@ This document captures implementation progress, issues encountered, and how they
 ### Problems solved
 - **Problem:** Setup state was lost whenever the process restarted, causing operational friction and non-durable setup in standalone usage.
 - **Solution:** Implemented durable file-backed persistence with restart validation in automated integration tests.
+
+
+## 2026-02-14 — Setup lifecycle editing endpoints and UI controls
+
+### What was built
+- Added setup update endpoints:
+  - `PUT /api/organizations/:id`
+  - `PUT /api/facilities/:id`
+  - `PUT /api/reporting-boundaries/:id`
+- Added in-panel edit controls in `SetupBoundaryPanel` for organization name, facility name, and boundary year/consolidation approach.
+- Extended integration tests to validate successful update flows for setup entities.
+
+### Problems solved
+- **Problem:** Users could create and delete setup entities but could not correct mistakes in-place, reducing operational usability and polish.
+- **Solution:** Added validated update lifecycle APIs and polished inline edit actions in the setup panel to support full CRUD behavior.

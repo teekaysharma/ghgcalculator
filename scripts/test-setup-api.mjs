@@ -128,6 +128,25 @@ async function run() {
     const invalidPagedSummary = await jsonRequest("/api/setup-summary?page=0&pageSize=500");
     assert(invalidPagedSummary.status === 400, "invalid pagination should return 400");
 
+
+    const orgUpdate = await jsonRequest(`/api/organizations/${organizationId}`, {
+      method: "PUT",
+      body: { name: "Acme Integration Test Org Updated" },
+    });
+    assert(orgUpdate.status === 200, "organization update should return 200");
+
+    const facilityUpdate = await jsonRequest(`/api/facilities/${facilityId}`, {
+      method: "PUT",
+      body: { name: "Plant Alpha Updated" },
+    });
+    assert(facilityUpdate.status === 200, "facility update should return 200");
+
+    const boundaryUpdate = await jsonRequest(`/api/reporting-boundaries/${boundaryId}`, {
+      method: "PUT",
+      body: { reportingYear: 2026, consolidationApproach: "financial_control" },
+    });
+    assert(boundaryUpdate.status === 200, "boundary update should return 200");
+
     const setup1 = await jsonRequest("/api/setup-status");
     assert(setup1.status === 200, "setup-status should return 200 after setup");
     assert(setup1.data?.setupStatus?.readyForCalculation === true, "setup should be ready after required entities");

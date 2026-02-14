@@ -20,6 +20,7 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
 - Added a setup API integration test script (`npm run test:setup-api`) covering readiness, creation flows, and duplicate constraint responses.
 - Refactored setup API state handling through `server/storage.ts` to remove route-local setup arrays and prepare for DB-backed persistence.
 - Added setup delete lifecycle endpoints (`DELETE /api/organizations/:id`, `DELETE /api/facilities/:id`, `DELETE /api/reporting-boundaries/:id`) and expanded setup-summary filtering (`organizationId`).
+- Added setup update lifecycle endpoints (`PUT /api/organizations/:id`, `PUT /api/facilities/:id`, `PUT /api/reporting-boundaries/:id`) with validation and duplicate guardrails.
 - Extended setup integration testing to verify setup-status transitions after delete operations.
 - Polished `SetupBoundaryPanel` UI with management cards, readiness badge, and inline delete actions for organization/facility/boundary lifecycle operations.
 - Added `GET /api/setup-summary` pagination support (`page`, `pageSize`) with metadata and validation responses for invalid pagination input.
@@ -33,7 +34,7 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
    - unique facility name per organization
 3. Add frontend setup flow:
    - ✅ Organization setup form
-   - ✅ Facility/reporting-boundary delete controls
+   - ✅ Facility/reporting-boundary delete and edit controls
    - ✅ Boundary & consolidation selection form
 4. ✅ Block emissions calculation until boundary setup is complete.
 5. ✅ Add integration tests for the new setup APIs.

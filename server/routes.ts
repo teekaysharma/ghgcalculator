@@ -89,6 +89,22 @@ const reportingBoundaryCreateSchema = z.object({
   description: z.string().optional(),
 });
 
+const organizationUpdateSchema = z.object({
+  name: z.string().min(1),
+  legalEntity: z.string().optional(),
+});
+
+const facilityUpdateSchema = z.object({
+  name: z.string().min(1),
+  country: z.string().optional(),
+});
+
+const reportingBoundaryUpdateSchema = z.object({
+  reportingYear: z.number().int().min(1990).max(2100),
+  consolidationApproach: consolidationApproachSchema,
+  description: z.string().optional(),
+});
+
 const parseBody = <T>(schema: z.ZodSchema<T>, body: unknown): T => {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -122,6 +138,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!deleted) return res.status(404).json({ message: "Organization not found" });
 
     return res.status(204).end();
+  });
+
+
+  app.put("/api/organizations/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid organization id" });
+
+    try {
+      const data = parseBody(organizationUpdateSchema, req.body);
+      const organization = await storage.updateOrganization(id, data);
+      if (!organization) return res.status(404).json({ message: "Organization not found" });
+      return res.json({ organization });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid organization payload" });
+    }
   });
 
   app.get("/api/facilities", async (_req, res) => {
@@ -163,6 +194,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!deleted) return res.status(404).json({ message: "Facility not found" });
 
     return res.status(204).end();
+  });
+
+
+  app.put("/api/facilities/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid facility id" });
+
+    try {
+      const data = parseBody(facilityUpdateSchema, req.body);
+      const facilities = await storage.listFacilities();
+      const targetFacility = facilities.find((facility) => facility.id === id);
+      if (!targetFacility) return res.status(404).json({ message: "Facility not found" });
+
+      const duplicateFacility = facilities.some(
+        (facility) =>
+          facility.id !== id &&
+          facility.organizationId === targetFacility.organizationId &&
+          facility.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
+      );
+      if (duplicateFacility) {
+        return res.status(409).json({ message: "Facility name already exists for this organization" });
+      }
+
+      const facility = await storage.updateFacility(id, data);
+      return res.json({ facility });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility payload" });
+    }
   });
 
   app.get("/api/reporting-boundaries", async (_req, res) => {
@@ -255,6 +314,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!deleted) return res.status(404).json({ message: "Reporting boundary not found" });
 
     return res.status(204).end();
+  });
+
+
+  app.put("/api/reporting-boundaries/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+
+    try {
+      const data = parseBody(reportingBoundaryUpdateSchema, req.body);
+      const reportingBoundaries = await storage.listReportingBoundaries();
+      const targetBoundary = reportingBoundaries.find((boundary) => boundary.id === id);
+      if (!targetBoundary) return res.status(404).json({ message: "Reporting boundary not found" });
+
+      const duplicateBoundary = reportingBoundaries.some(
+        (boundary) =>
+          boundary.id !== id &&
+          boundary.organizationId === targetBoundary.organizationId &&
+          boundary.reportingYear === data.reportingYear,
+      );
+      if (duplicateBoundary) {
+        return res.status(409).json({ message: "Reporting boundary already exists for this organization and year" });
+      }
+
+      const boundary = await storage.updateReportingBoundary(id, data);
+      return res.json({ boundary });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid boundary payload" });
+    }
   });
 
   app.post("/api/calculate", async (req, res) => {

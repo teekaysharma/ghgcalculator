@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { Trash2 } from "lucide-react";
+import { Trash2, Pencil, Check, X } from "lucide-react";
 
 interface Organization {
   id: number;
@@ -54,6 +54,13 @@ export default function SetupBoundaryPanel() {
   const [reportingYear, setReportingYear] = useState<string>(String(new Date().getFullYear()));
   const [consolidationApproach, setConsolidationApproach] = useState<string>("operational_control");
 
+  const [editingOrganizationName, setEditingOrganizationName] = useState("");
+  const [editingFacilityId, setEditingFacilityId] = useState<number | null>(null);
+  const [editingFacilityName, setEditingFacilityName] = useState("");
+  const [editingBoundaryId, setEditingBoundaryId] = useState<number | null>(null);
+  const [editingBoundaryYear, setEditingBoundaryYear] = useState("");
+  const [editingBoundaryApproach, setEditingBoundaryApproach] = useState<string>("operational_control");
+
   const statusQuery = useQuery<SetupStatusResponse>({ queryKey: ["/api/setup-status"] });
   const organizationsQuery = useQuery<{ organizations: Organization[] }>({ queryKey: ["/api/organizations"] });
   const facilitiesQuery = useQuery<{ facilities: Facility[] }>({ queryKey: ["/api/facilities"] });
@@ -90,7 +97,10 @@ export default function SetupBoundaryPanel() {
     },
     onSuccess: async (payload) => {
       const createdId = payload?.organization?.id;
-      if (createdId) setSelectedOrganizationId(String(createdId));
+      if (createdId) {
+        setSelectedOrganizationId(String(createdId));
+        setEditingOrganizationName(payload.organization.name || "");
+      }
       setOrganizationName("");
       await invalidateSetupQueries();
       toast({ title: "Organization created", variant: "default" });
@@ -131,6 +141,49 @@ export default function SetupBoundaryPanel() {
     onError: (error: Error) => toast({ title: "Create boundary failed", description: error.message, variant: "destructive" }),
   });
 
+  const updateOrganization = useMutation({
+    mutationFn: async ({ organizationId, name }: { organizationId: number; name: string }) => {
+      const response = await apiRequest("PUT", `/api/organizations/${organizationId}`, { name: name.trim() });
+      return response.json();
+    },
+    onSuccess: async () => {
+      await invalidateSetupQueries();
+      toast({ title: "Organization updated", variant: "default" });
+    },
+    onError: (error: Error) => toast({ title: "Update organization failed", description: error.message, variant: "destructive" }),
+  });
+
+  const updateFacility = useMutation({
+    mutationFn: async ({ facilityId, name }: { facilityId: number; name: string }) => {
+      const response = await apiRequest("PUT", `/api/facilities/${facilityId}`, { name: name.trim() });
+      return response.json();
+    },
+    onSuccess: async () => {
+      setEditingFacilityId(null);
+      setEditingFacilityName("");
+      await invalidateSetupQueries();
+      toast({ title: "Facility updated", variant: "default" });
+    },
+    onError: (error: Error) => toast({ title: "Update facility failed", description: error.message, variant: "destructive" }),
+  });
+
+  const updateBoundary = useMutation({
+    mutationFn: async ({ boundaryId, year, approach }: { boundaryId: number; year: number; approach: string }) => {
+      const response = await apiRequest("PUT", `/api/reporting-boundaries/${boundaryId}`, {
+        reportingYear: year,
+        consolidationApproach: approach,
+      });
+      return response.json();
+    },
+    onSuccess: async () => {
+      setEditingBoundaryId(null);
+      setEditingBoundaryYear("");
+      await invalidateSetupQueries();
+      toast({ title: "Boundary updated", variant: "default" });
+    },
+    onError: (error: Error) => toast({ title: "Update boundary failed", description: error.message, variant: "destructive" }),
+  });
+
   const deleteOrganization = useMutation({
     mutationFn: async (organizationId: number) => {
       await apiRequest("DELETE", `/api/organizations/${organizationId}`);
@@ -166,7 +219,12 @@ export default function SetupBoundaryPanel() {
   });
 
   const setupReady = statusQuery.data?.setupStatus.readyForCalculation ?? false;
-  const selectedOrganizationName = organizations.find((org) => String(org.id) === selectedOrganizationId)?.name;
+  const selectedOrganization = organizations.find((org) => String(org.id) === selectedOrganizationId);
+
+  const startOrganizationEdit = () => {
+    if (!selectedOrganization) return;
+    setEditingOrganizationName(selectedOrganization.name);
+  };
 
   return (
     <Card className="border-emerald-100 bg-white">
@@ -249,9 +307,12 @@ export default function SetupBoundaryPanel() {
         {selectedOrganizationId ? (
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-lg border border-slate-200 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-medium text-slate-700">Facilities · {selectedOrganizationName}</p>
-                {selectedOrganizationId && (
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-slate-700">Organization & Facilities</p>
+                <div className="flex items-center gap-1">
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={startOrganizationEdit}>
+                    <Pencil className="h-3 w-3" />
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -262,24 +323,72 @@ export default function SetupBoundaryPanel() {
                     <Trash2 className="mr-1 h-3 w-3" />
                     Remove org
                   </Button>
-                )}
+                </div>
               </div>
+
+              {editingOrganizationName ? (
+                <div className="mb-2 flex items-center gap-2">
+                  <Input value={editingOrganizationName} onChange={(e) => setEditingOrganizationName(e.target.value)} />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => updateOrganization.mutate({ organizationId: Number(selectedOrganizationId), name: editingOrganizationName })}
+                    disabled={!editingOrganizationName.trim()}
+                  >
+                    <Check className="h-3 w-3" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setEditingOrganizationName("")}> 
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ) : (
+                <p className="mb-2 text-xs text-slate-600">{selectedOrganization?.name}</p>
+              )}
+
               {selectedOrganizationFacilities.length === 0 ? (
                 <p className="text-xs text-slate-500">No facilities yet.</p>
               ) : (
                 <div className="space-y-2">
                   {selectedOrganizationFacilities.map((facility) => (
-                    <div key={facility.id} className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1">
-                      <span className="text-xs text-slate-700">{facility.name}</span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-red-600 hover:bg-red-50"
-                        onClick={() => deleteFacility.mutate(facility.id)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+                    <div key={facility.id} className="rounded border border-slate-200 bg-slate-50 px-2 py-1">
+                      {editingFacilityId === facility.id ? (
+                        <div className="flex items-center gap-2">
+                          <Input value={editingFacilityName} onChange={(e) => setEditingFacilityName(e.target.value)} className="h-7" />
+                          <Button type="button" size="sm" onClick={() => updateFacility.mutate({ facilityId: facility.id, name: editingFacilityName })}>
+                            <Check className="h-3 w-3" />
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => setEditingFacilityId(null)}>
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-700">{facility.name}</span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2"
+                              onClick={() => {
+                                setEditingFacilityId(facility.id);
+                                setEditingFacilityName(facility.name);
+                              }}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2 text-red-600 hover:bg-red-50"
+                              onClick={() => deleteFacility.mutate(facility.id)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -293,19 +402,67 @@ export default function SetupBoundaryPanel() {
               ) : (
                 <div className="space-y-2">
                   {selectedOrganizationBoundaries.map((boundary) => (
-                    <div key={boundary.id} className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-2 py-1">
-                      <span className="text-xs text-slate-700">
-                        {boundary.reportingYear} · {approachLabel(boundary.consolidationApproach)}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-red-600 hover:bg-red-50"
-                        onClick={() => deleteBoundary.mutate(boundary.id)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
+                    <div key={boundary.id} className="rounded border border-slate-200 bg-slate-50 px-2 py-1">
+                      {editingBoundaryId === boundary.id ? (
+                        <div className="flex items-center gap-2">
+                          <Input value={editingBoundaryYear} onChange={(e) => setEditingBoundaryYear(e.target.value)} className="h-7 w-20" />
+                          <Select value={editingBoundaryApproach} onValueChange={setEditingBoundaryApproach}>
+                            <SelectTrigger className="h-7">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {consolidationOptions.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() =>
+                              updateBoundary.mutate({ boundaryId: boundary.id, year: Number(editingBoundaryYear), approach: editingBoundaryApproach })
+                            }
+                            disabled={!editingBoundaryYear.trim()}
+                          >
+                            <Check className="h-3 w-3" />
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => setEditingBoundaryId(null)}>
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-700">
+                            {boundary.reportingYear} · {approachLabel(boundary.consolidationApproach)}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2"
+                              onClick={() => {
+                                setEditingBoundaryId(boundary.id);
+                                setEditingBoundaryYear(String(boundary.reportingYear));
+                                setEditingBoundaryApproach(boundary.consolidationApproach);
+                              }}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2 text-red-600 hover:bg-red-50"
+                              onClick={() => deleteBoundary.mutate(boundary.id)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

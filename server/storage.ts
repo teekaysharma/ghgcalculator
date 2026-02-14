@@ -39,9 +39,11 @@ export interface IStorage {
 
   listOrganizations(): Promise<Organization[]>;
   createOrganization(payload: { name: string; legalEntity?: string }): Promise<Organization>;
+  updateOrganization(id: number, payload: { name: string; legalEntity?: string }): Promise<Organization | undefined>;
 
   listFacilities(): Promise<Facility[]>;
   createFacility(payload: { organizationId: number; name: string; country?: string }): Promise<Facility>;
+  updateFacility(id: number, payload: { name: string; country?: string }): Promise<Facility | undefined>;
   deleteFacility(id: number): Promise<boolean>;
 
   listReportingBoundaries(): Promise<ReportingBoundary[]>;
@@ -51,6 +53,10 @@ export interface IStorage {
     consolidationApproach: ConsolidationApproach;
     description?: string;
   }): Promise<ReportingBoundary>;
+  updateReportingBoundary(
+    id: number,
+    payload: { reportingYear: number; consolidationApproach: ConsolidationApproach; description?: string },
+  ): Promise<ReportingBoundary | undefined>;
   deleteReportingBoundary(id: number): Promise<boolean>;
 
   deleteOrganization(id: number): Promise<boolean>;
@@ -146,6 +152,17 @@ export class MemStorage implements IStorage {
     return organization;
   }
 
+  async updateOrganization(id: number, payload: { name: string; legalEntity?: string }): Promise<Organization | undefined> {
+    await this.setupStoreReady;
+    const organization = this.organizations.find((item) => item.id === id);
+    if (!organization) return undefined;
+
+    organization.name = payload.name;
+    organization.legalEntity = payload.legalEntity;
+    await this.persistSetupStore();
+    return organization;
+  }
+
   async listFacilities(): Promise<Facility[]> {
     await this.setupStoreReady;
     return [...this.facilities];
@@ -161,6 +178,17 @@ export class MemStorage implements IStorage {
       createdAt: new Date().toISOString(),
     };
     this.facilities.push(facility);
+    await this.persistSetupStore();
+    return facility;
+  }
+
+  async updateFacility(id: number, payload: { name: string; country?: string }): Promise<Facility | undefined> {
+    await this.setupStoreReady;
+    const facility = this.facilities.find((item) => item.id === id);
+    if (!facility) return undefined;
+
+    facility.name = payload.name;
+    facility.country = payload.country;
     await this.persistSetupStore();
     return facility;
   }
@@ -195,6 +223,21 @@ export class MemStorage implements IStorage {
       createdAt: new Date().toISOString(),
     };
     this.boundaries.push(boundary);
+    await this.persistSetupStore();
+    return boundary;
+  }
+
+  async updateReportingBoundary(
+    id: number,
+    payload: { reportingYear: number; consolidationApproach: ConsolidationApproach; description?: string },
+  ): Promise<ReportingBoundary | undefined> {
+    await this.setupStoreReady;
+    const boundary = this.boundaries.find((item) => item.id === id);
+    if (!boundary) return undefined;
+
+    boundary.reportingYear = payload.reportingYear;
+    boundary.consolidationApproach = payload.consolidationApproach;
+    boundary.description = payload.description;
     await this.persistSetupStore();
     return boundary;
   }
