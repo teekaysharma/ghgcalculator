@@ -17,6 +17,7 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
   - setup summary (`GET /api/setup-summary`)
 - Added setup gating in calculation flow so emissions cannot be calculated before organization/facility/boundary setup is complete.
 - Added a client setup panel to create organizations, facilities, and boundaries before normal emission workflows.
+- Added a setup API integration test script (`npm run test:setup-api`) covering readiness, creation flows, and duplicate constraint responses.
 
 ## Next implementation slices
 1. Persist these entities in database tables (replace in-memory arrays).
@@ -28,4 +29,4 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
    - Facility management form
    - Boundary & consolidation selection form
 4. Block emissions calculation until boundary setup is complete.
-5. Add integration tests for the new setup APIs.
+5. ✅ Add integration tests for the new setup APIs.
