@@ -10,9 +10,10 @@ import {
   Globe as GlobeIcon, 
   BarChart as BarChartIcon 
 } from "lucide-react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import SetupBoundaryPanel from "@/components/SetupBoundaryPanel";
 
 export default function EmissionCalculator() {
   const [emissionFactors, setEmissionFactors] = useState<Record<string, EmissionFactor>>({});
@@ -29,6 +30,11 @@ export default function EmissionCalculator() {
   const [calculatedEmissions, setCalculatedEmissions] = useState<Emission[]>([]);
   const [activeTab, setActiveTab] = useState<string>("scope1");
   const { toast } = useToast();
+
+  const setupStatusQuery = useQuery<{ setupStatus: { readyForCalculation: boolean } }>({
+    queryKey: ["/api/setup-status"],
+  });
+
 
   const calculateMutation = useMutation({
     mutationFn: async () => {
@@ -80,12 +86,22 @@ export default function EmissionCalculator() {
     
     // If user switches to results tab, calculate emissions
     if (value === "results") {
+      if (!setupStatusQuery.data?.setupStatus.readyForCalculation) {
+        toast({
+          title: "Setup required",
+          description: "Create at least one organization, facility, and reporting boundary first.",
+          variant: "destructive",
+        });
+        setActiveTab("scope1");
+        return;
+      }
       calculateMutation.mutate();
     }
   };
 
   return (
     <div className="space-y-6">
+      <SetupBoundaryPanel />
       <FileUpload onFactorsUploaded={handleFactorsUploaded} />
       
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">

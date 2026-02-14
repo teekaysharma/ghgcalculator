@@ -13,6 +13,9 @@ Begin implementation of the foundational inventory hierarchy and boundary contro
   - organizations (`GET/POST /api/organizations`)
   - facilities (`GET/POST /api/facilities`)
   - reporting boundaries (`GET/POST /api/reporting-boundaries`)
+  - setup status (`GET /api/setup-status`)
+- Added setup gating in calculation flow so emissions cannot be calculated before organization/facility/boundary setup is complete.
+- Added a client setup panel to create organizations, facilities, and boundaries before normal emission workflows.
 
 ## Next implementation slices
 1. Persist these entities in database tables (replace in-memory arrays).

@@ -155,6 +155,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ reportingBoundaries });
   });
 
+  app.get("/api/setup-status", (_req, res) => {
+    const setupStatus = {
+      organizationCount: organizations.length,
+      facilityCount: facilities.length,
+      boundaryCount: reportingBoundaries.length,
+      readyForCalculation: organizations.length > 0 && facilities.length > 0 && reportingBoundaries.length > 0,
+    };
+
+    return res.json({ setupStatus });
+  });
+
   app.post("/api/reporting-boundaries", (req, res) => {
     try {
       const data = parseBody(reportingBoundaryCreateSchema, req.body);
@@ -179,6 +190,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/calculate", (req, res) => {
     try {
       const { inputs, emissionFactors } = parseBody(calculateRequestSchema, req.body);
+
+      if (organizations.length === 0 || facilities.length === 0 || reportingBoundaries.length === 0) {
+        return res.status(400).json({
+          message: "Setup incomplete. Configure at least one organization, facility, and reporting boundary before calculation.",
+        });
+      }
 
       const results = { scope1: 0, scope2: 0, scope3: 0 };
       const emissions: Emission[] = [];
