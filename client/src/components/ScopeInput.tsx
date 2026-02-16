@@ -112,7 +112,10 @@ export default function ScopeInput({
       .map(([key, factor]) => {
         // Remove scope prefix for display
         const displayKey = key.replace(/^scope[123]_/, '');
-        const displayName = factor.name || displayKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const hierarchyDisplay = factor.hierarchy && factor.hierarchy.length > 0
+          ? factor.hierarchy.join(" > ")
+          : undefined;
+        const displayName = hierarchyDisplay || factor.name || displayKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         
         // Add unit to display name if available
         const unitDisplay = factor.unit ? ` (${factor.unit})` : '';

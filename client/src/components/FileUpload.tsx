@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EmissionFactor } from "@/types/emissions";
 import { Upload, Check, AlertCircle, Calendar, Database, TriangleAlert } from "lucide-react";
-import { read, utils } from "xlsx";
+import { read, utils, type WorkSheet } from "xlsx";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import WasteFactorGuide from "./WasteFactorGuide";
@@ -109,8 +109,54 @@ const parseYear = (value: unknown): number | undefined => {
   return year >= 1990 && year <= 2100 ? year : undefined;
 };
 
+const normalizeHeader = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
 
-const buildHierarchicalActivity = (row: Record<string, unknown>): string | undefined => {
+const isIdLikeText = (value: unknown): boolean => {
+  if (value === undefined || value === null) return false;
+  const text = String(value).trim();
+  if (!text) return false;
+  return /^\d+(?:[_-]\d+){2,}$/.test(text);
+};
+
+const detectHeaderRowIndex = (rows: unknown[][]): number => {
+  let bestScore = -1;
+  let bestIndex = 0;
+
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i] || [];
+    const normalized = row.map((cell) => normalizeHeader(String(cell || ""))).filter(Boolean);
+    if (normalized.length < 2) continue;
+
+    let score = 0;
+    if (normalized.some((h) => h.includes("ghg conversion factor"))) score += 4;
+    if (normalized.some((h) => /^level\s*\d+$/i.test(h) || h === "column text")) score += 3;
+    if (normalized.some((h) => h === "description" || h === "activity" || h === "activity type")) score += 2;
+    if (normalized.some((h) => h === "unit" || h === "ghg/unit")) score += 1;
+    if (normalized.some((h) => h === "id")) score += 1;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  return bestScore > 0 ? bestIndex : 0;
+};
+
+const getSheetRowsWithDetectedHeader = (sheet: WorkSheet) => {
+  const matrix = utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
+  if (!matrix || matrix.length === 0) {
+    return { rows: [] as Record<string, unknown>[], headerRowIndex: 0, headers: [] as string[] };
+  }
+
+  const headerRowIndex = detectHeaderRowIndex(matrix);
+  const rows = utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as Record<string, unknown>[];
+  const headers = rows[0] ? Object.keys(rows[0]) : [];
+
+  return { rows, headerRowIndex, headers };
+};
+
+const getHierarchyParts = (row: Record<string, unknown>): string[] => {
   const dynamicLevelColumns = Object.keys(row)
     .filter((key) => /^Level\s*\d+$/i.test(key))
     .sort((a, b) => {
@@ -120,13 +166,48 @@ const buildHierarchicalActivity = (row: Record<string, unknown>): string | undef
     });
 
   const columns = [...dynamicLevelColumns, ...LEVEL_COLUMNS.filter((col) => !dynamicLevelColumns.includes(col))];
-  const parts = columns
+  return columns
     .map((col) => row[col])
     .filter((value): value is string | number => value !== undefined && value !== null && String(value).trim() !== "")
     .map((value) => String(value).trim());
+};
 
+const buildHierarchicalActivity = (row: Record<string, unknown>): string | undefined => {
+  const parts = getHierarchyParts(row);
   if (parts.length === 0) return undefined;
   return parts.join(" > ");
+};
+
+const pickActivityFromRow = (row: Record<string, unknown>): { name?: string; hierarchy?: string[] } => {
+  const hierarchy = getHierarchyParts(row);
+  if (hierarchy.length > 0) {
+    return { name: hierarchy.join(" > "), hierarchy };
+  }
+
+  const preferredColumns = [
+    ...ACTIVITY_COLUMNS,
+    "Column Text",
+    "Full Name",
+    "Activity Description",
+  ];
+
+  for (const column of preferredColumns) {
+    const value = row[column];
+    if (!value || String(value).trim() === "") continue;
+    if (/^id$/i.test(column) || /\bid\b/i.test(column)) continue;
+    if (isIdLikeText(value)) continue;
+    return { name: String(value).trim() };
+  }
+
+  for (const key of Object.keys(row)) {
+    const value = row[key];
+    if (typeof value !== "string" || value.trim() === "") continue;
+    if (/\bid\b/i.test(key)) continue;
+    if (isIdLikeText(value)) continue;
+    return { name: value.trim() };
+  }
+
+  return {};
 };
 
 const getEmissionFactorFromRow = (row: Record<string, unknown>): number => {
@@ -260,14 +341,16 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
       const yearsFound = new Set<number>();
       let totalFactors = 0;
 
-      const firstSheetRows = utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as any[];
-      const firstHeaders = firstSheetRows[0] ? Object.keys(firstSheetRows[0]) : [];
+      const firstSheet = getSheetRowsWithDetectedHeader(workbook.Sheets[workbook.SheetNames[0]]);
+      const firstSheetRows = firstSheet.rows as any[];
+      const firstHeaders = firstSheet.headers;
       const source = detectSource(file.name, workbook.SheetNames, firstHeaders, firstSheetRows);
       const profile = inferFileProfile(firstHeaders, source);
       const factorValues: number[] = [];
 
       for (const sheetName of workbook.SheetNames) {
-        const sheetRows = utils.sheet_to_json(workbook.Sheets[sheetName]) as any[];
+        const sheetData = getSheetRowsWithDetectedHeader(workbook.Sheets[sheetName]);
+        const sheetRows = sheetData.rows as any[];
         if (!sheetRows || sheetRows.length === 0) continue;
 
         const sheetYear = parseYear(sheetName);
@@ -344,13 +427,8 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
           }
 
           const hierarchicalActivity = buildHierarchicalActivity(row);
-          let activityType = hierarchicalActivity || ACTIVITY_COLUMNS.map((col) => row[col]).find(Boolean);
-          if (!activityType) {
-            activityType = Object.keys(row)
-              .filter((key) => !["Unit", "Scope", ...YEAR_COLUMNS].includes(key))
-              .map((key) => row[key])
-              .find((value) => typeof value === "string");
-          }
+          const pickedActivity = pickActivityFromRow(row);
+          const activityType = pickedActivity.name || hierarchicalActivity;
 
           let emissionFactor = getEmissionFactorFromRow(row);
 
@@ -394,6 +472,7 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
               source,
               year: rowYear,
               category: scope3Category,
+              hierarchy: pickedActivity.hierarchy,
             };
             totalFactors++;
             factorValues.push(emissionFactor);
@@ -408,6 +487,9 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
       }
 
       const anomalyWarnings = detectAbnormalFactors(factorValues);
+      if (firstSheet.headerRowIndex > 0) {
+        anomalyWarnings.push(`Detected header row at line ${firstSheet.headerRowIndex + 1}; metadata rows above were skipped.`);
+      }
 
       setUploadStatus("success");
       onFactorsUploaded(factors);

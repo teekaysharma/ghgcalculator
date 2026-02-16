@@ -9,6 +9,7 @@ export interface EmissionFactor {
   wasteType?: string;
   disposalMethod?: string;
   category?: string;
+  hierarchy?: string[];
 }
 
 export interface EmissionInput {
