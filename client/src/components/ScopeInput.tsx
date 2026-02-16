@@ -2,12 +2,13 @@ import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { EmissionFactor, EmissionInput, ScopeType } from "@/types/emissions";
-import { Plus, Trash2, Calendar, Package, Trash } from "lucide-react";
+import { Plus, Trash2, Calendar, Package, Trash, Sparkles, ListChecks, CircleGauge } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Badge } from "@/components/ui/badge";
 
 interface ScopeInputProps {
   title: string;
@@ -296,6 +297,13 @@ export default function ScopeInput({
   const productOptions = getProductOptions();
   const wasteTypeOptions = getWasteTypeOptions();
 
+  const completedRows = localInputs.filter((item) => item.activity && item.unit && (item.qty || 0) > 0).length;
+  const totalQuantity = localInputs.reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
+
+  const applyQtyPreset = (index: number, qty: number) => {
+    updateInput(index, "qty", qty);
+  };
+
   useEffect(() => {
     // If there are no inputs, add one by default
     if (localInputs.length === 0) {
@@ -345,14 +353,31 @@ export default function ScopeInput({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-heading font-semibold text-neutral-800">{title}</h2>
-          <p className="text-neutral-600">{description}</p>
+      <div className="rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-white p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-heading font-semibold text-neutral-800">{title}</h2>
+            <p className="text-neutral-600">{description}</p>
+            <p className="mt-1 text-xs text-neutral-500">Choose an activity, confirm unit, and enter quantity. We auto-fill defaults where possible.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+              <ListChecks className="mr-1 h-3.5 w-3.5" />
+              Completed {completedRows}/{Math.max(localInputs.length, 1)}
+            </Badge>
+            <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+              <CircleGauge className="mr-1 h-3.5 w-3.5" />
+              Total Qty: {totalQuantity.toLocaleString()}
+            </Badge>
+            <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
+              <Sparkles className="mr-1 h-3.5 w-3.5" />
+              {activityOptions.length} factors available
+            </Badge>
+          </div>
         </div>
       </div>
 
-      <Card className="bg-white">
+      <Card className="border-slate-200 bg-white shadow-sm">
         <CardContent className="pt-6">
           {/* Advanced options toggle */}
           <Collapsible 
@@ -438,7 +463,15 @@ export default function ScopeInput({
 
           <div className="space-y-4">
             {localInputs.map((input, index) => (
-              <div key={index} className="p-4 border border-neutral-200 rounded-lg bg-neutral-50">
+              <div key={index} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 transition-colors hover:border-emerald-200 hover:bg-emerald-50/30">
+                <div className="mb-3 flex items-center justify-between">
+                  <Badge variant="secondary" className="bg-white text-slate-700 border border-slate-200">Activity #{index + 1}</Badge>
+                  {input.activity && (input.qty || 0) > 0 ? (
+                    <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">Ready</Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">Needs input</Badge>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <Label htmlFor={`activity-${scope}-${index}`} className="mb-1">
@@ -507,6 +540,21 @@ export default function ScopeInput({
                       value={input.qty || ""}
                       onChange={(e) => updateInput(index, "qty", e.target.value)}
                     />
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                      <span className="text-neutral-500">Quick set:</span>
+                      {[1, 10, 100].map((preset) => (
+                        <Button
+                          key={`${scope}-${index}-${preset}`}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => applyQtyPreset(index, preset)}
+                        >
+                          {preset}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -651,8 +699,8 @@ export default function ScopeInput({
           </div>
           
           <Button
-            variant="ghost"
-            className="mt-4 text-primary-700 hover:bg-primary-50"
+            variant="outline"
+            className="mt-4 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
             onClick={addInput}
           >
             <Plus className="h-4 w-4 mr-1" />
