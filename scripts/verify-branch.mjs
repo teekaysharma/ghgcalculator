@@ -96,6 +96,9 @@ async function killServer() {
 async function waitForServer(timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    if (serverProcess && serverProcess.exitCode !== null) {
+      return false; // process already crashed, no point continuing to poll
+    }
     try {
       const res = await fetch(`${BASE_URL}/api/auth/me`);
       // Any HTTP response at all (even 401) means the server is up.
