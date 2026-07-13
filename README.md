@@ -19,6 +19,14 @@ This branch rebuilds the persistence and identity layer on top of the working ca
 4. `npm run db:push` — this runs `drizzle-kit push` and creates all tables (`organizations`, `users`, `memberships`, `emission_factors`, `emission_records`) directly from `shared/schema.ts`. The `session` table used by `connect-pg-simple` is created automatically on first server start (`createTableIfMissing: true`), no separate step needed.
 5. `npm run dev`
 
+### One-shot verification: `npm run verify`
+
+Does steps 3-5 above automatically, then runs a real end-to-end smoke test against the live server (register, fetch session, create an emission factor, list it back, run a calculation with `persist: true`, confirm it was actually saved, log out), then reverts: stops the server and deletes only the rows that specific run created, tagged by a unique per-run identifier. It does not touch your schema or any other data.
+
+Requires `.env` to already exist and be filled in (step 1-2 above are still manual, on purpose, since `DATABASE_URL` is a live credential this script deliberately never generates or guesses). Exits non-zero if any step fails, with the specific failing step printed.
+
+Works on Windows, macOS, and Linux (uses `taskkill /T` to fully stop the server process tree on Windows, since a plain kill leaves the underlying node process running under Windows' `cmd.exe` wrapper).
+
 ### New endpoints
 
 - `POST /api/auth/register` — `{ email, password, name?, organizationName }`. Creates a user, an organization, and an owner membership in one call.
