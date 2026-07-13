@@ -1,10 +1,49 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import { Pool } from "pg";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { passport } from "./auth";
+
+if (!process.env.SESSION_SECRET) {
+  throw new Error(
+    "SESSION_SECRET is not set. Set a long random string as SESSION_SECRET in your .env file (see .env.example).",
+  );
+}
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set. See .env.example.");
+}
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Session store lives in the same Postgres database as everything else.
+// connect-pg-simple talks to it over the standard Postgres wire protocol via
+// `pg`, separate from the @neondatabase/serverless HTTP driver used for app
+// queries in server/db.ts -- both point at the same DATABASE_URL, Neon
+// supports both protocols on one connection string.
+const PgSession = connectPgSimple(session);
+const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+app.use(
+  session({
+    store: new PgSession({ pool: sessionPool, tableName: "session", createTableIfMissing: true }),
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    },
+  }),
+);
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 app.use((req, res, next) => {
   const start = Date.now();

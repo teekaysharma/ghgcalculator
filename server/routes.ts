@@ -1,14 +1,178 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { hashPassword, comparePassword, passport } from "./auth";
+import { requireAuth, requireOrg } from "./middleware/tenant";
 import { generateCSV } from "./utils/csv";
-import { Emission, ProductData, YearlyEmissions, ProductIntensity } from "../shared/schema";
+import {
+  Emission,
+  ProductData,
+  YearlyEmissions,
+  ProductIntensity,
+  registerSchema,
+  loginSchema,
+} from "../shared/schema";
+
+function slugify(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "") || "org"
+  );
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Calculate emissions endpoint
-  app.post("/api/calculate", (req, res) => {
+  // -----------------------------------------------------------------------
+  // Auth
+  //
+  // Registration creates a user, an organization, and the membership that
+  // links them (role: owner) in one flow. There is no separate "invite" flow
+  // yet -- day-one signup is one user standing up one organization. Adding a
+  // second member is a createMembership call against an existing org, which
+  // storage.ts already supports; wiring an invite endpoint is future scope.
+  // -----------------------------------------------------------------------
+  app.post("/api/auth/register", async (req, res) => {
     try {
-      const { inputs, emissionFactors } = req.body;
+      const parsed = registerSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+      }
+      const { email, password, name, organizationName } = parsed.data;
+
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        return res.status(409).json({ message: "An account with this email already exists" });
+      }
+
+      const passwordHash = await hashPassword(password);
+      const user = await storage.createUser({ email, passwordHash, name: name ?? null });
+
+      let slug = slugify(organizationName);
+      let org = await storage.getOrganizationBySlug(slug);
+      if (org) {
+        // Slug collision: append the new user's id to keep it unique rather
+        // than fail signup over a cosmetic slug clash.
+        slug = `${slug}-${user.id}`;
+      }
+      const organization = await storage.createOrganization({ name: organizationName, slug });
+      await storage.createMembership({ userId: user.id, organizationId: organization.id, role: "owner" });
+
+      req.login(user, (err) => {
+        if (err) return res.status(500).json({ message: "Registered, but failed to start session" });
+        return res.status(201).json({
+          user: { id: user.id, email: user.email, name: user.name },
+          organization: { id: organization.id, name: organization.name, slug: organization.slug },
+        });
+      });
+    } catch (error) {
+      console.error("Registration error:", error);
+      return res.status(500).json({ message: "Failed to register" });
+    }
+  });
+
+  app.post("/api/auth/login", (req, res, next) => {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    }
+    passport.authenticate("local", (err: unknown, user: Express.User | false, info: { message?: string }) => {
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ message: info?.message || "Invalid email or password" });
+      req.login(user, (loginErr) => {
+        if (loginErr) return next(loginErr);
+        return res.json({ user: { id: user.id, email: user.email, name: user.name } });
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/auth/logout", (req, res, next) => {
+    req.logout((err) => {
+      if (err) return next(err);
+      req.session.destroy(() => {
+        res.clearCookie("connect.sid");
+        res.status(204).end();
+      });
+    });
+  });
+
+  app.get("/api/auth/me", requireAuth, async (req, res) => {
+    const user = req.user as { id: number; email: string; name: string | null };
+    const memberships = await storage.getMembershipsForUser(user.id);
+    return res.json({ user: { id: user.id, email: user.email, name: user.name }, memberships });
+  });
+
+  // -----------------------------------------------------------------------
+  // Emission factors -- persisted, tenant-scoped
+  // -----------------------------------------------------------------------
+  app.get("/api/emission-factors", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const factors = await storage.listEmissionFactors(req.organizationId!);
+      return res.json({ factors });
+    } catch (error) {
+      console.error("List emission factors error:", error);
+      return res.status(500).json({ message: "Failed to list emission factors" });
+    }
+  });
+
+  app.post("/api/emission-factors", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const { factors } = req.body as { factors?: Array<Record<string, unknown>> };
+      if (!factors || !Array.isArray(factors) || factors.length === 0) {
+        return res.status(400).json({ message: "Missing factors array" });
+      }
+      const user = req.user as { id: number };
+      const rows = factors.map((f) => ({
+        name: String(f.name),
+        factor: String(f.factor),
+        unit: String(f.unit),
+        scope: f.scope ? String(f.scope) : null,
+        category: f.category ? String(f.category) : null,
+        wasteType: f.wasteType ? String(f.wasteType) : null,
+        disposalMethod: f.disposalMethod ? String(f.disposalMethod) : null,
+        source: f.source ? String(f.source) : null,
+        uploadedBy: user.id,
+      }));
+      const created = await storage.createEmissionFactors(req.organizationId!, rows);
+      return res.status(201).json({ factors: created });
+    } catch (error) {
+      console.error("Create emission factors error:", error);
+      return res.status(500).json({ message: "Failed to save emission factors" });
+    }
+  });
+
+  app.delete("/api/emission-factors/:id", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const deleted = await storage.deleteEmissionFactor(req.organizationId!, Number(req.params.id));
+      if (!deleted) return res.status(404).json({ message: "Emission factor not found" });
+      return res.status(204).end();
+    } catch (error) {
+      console.error("Delete emission factor error:", error);
+      return res.status(500).json({ message: "Failed to delete emission factor" });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Emission records -- persisted, tenant-scoped
+  // -----------------------------------------------------------------------
+  app.get("/api/emission-records", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const records = await storage.listEmissionRecords(req.organizationId!);
+      return res.json({ records });
+    } catch (error) {
+      console.error("List emission records error:", error);
+      return res.status(500).json({ message: "Failed to list emission records" });
+    }
+  });
+
+  // Calculate emissions endpoint. Unchanged calculation logic (kept exactly
+  // as verified working on main). What changed: it now requires auth, and
+  // optionally persists results when `persist: true` is sent, instead of
+  // always computing and discarding.
+  app.post("/api/calculate", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const { inputs, emissionFactors, persist } = req.body;
       
       if (!inputs || !emissionFactors) {
         return res.status(400).json({ message: "Missing inputs or emission factors" });
@@ -40,6 +204,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
       }
+
+      // Opt-in persistence. Existing calculator UI (EmissionCalculator.tsx)
+      // was not built with this in mind, so this defaults to off (compute
+      // and return, same as before) unless the caller explicitly asks for
+      // it. Wiring the calculator UI to pass persist: true is a follow-up,
+      // not done in this branch.
+      if (persist) {
+        const user = req.user as { id: number };
+        await storage.createEmissionRecords(
+          req.organizationId!,
+          emissions.map((e) => ({
+            createdBy: user.id,
+            scope: e.scope,
+            activity: e.activity,
+            unit: e.unit,
+            quantity: String(e.quantity),
+            factor: String(e.factor),
+            emission: String(e.emission),
+            year: e.year ?? null,
+            product: e.product ?? null,
+            wasteType: e.wasteType ?? null,
+            disposalMethod: e.disposalMethod ?? null,
+          })),
+        );
+      }
       
       return res.json({ 
         results, 
@@ -52,7 +241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Download CSV endpoint
-  app.post("/api/download-csv", (req, res) => {
+  app.post("/api/download-csv", requireAuth, requireOrg, (req, res) => {
     try {
       const { emissions } = req.body;
       
@@ -73,7 +262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Calculate yearly comparison
-  app.post("/api/yearly-comparison", (req, res) => {
+  app.post("/api/yearly-comparison", requireAuth, requireOrg, (req, res) => {
     try {
       const { emissions } = req.body;
       
@@ -119,7 +308,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Calculate emissions intensity per product
-  app.post("/api/product-intensity", (req, res) => {
+  app.post("/api/product-intensity", requireAuth, requireOrg, (req, res) => {
     try {
       const { emissions, productionData } = req.body;
       
