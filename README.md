@@ -35,7 +35,21 @@ Works on Windows, macOS, and Linux (uses `taskkill /T` to fully stop the server 
 - `GET /api/auth/me` — current user + memberships
 - `GET /api/emission-factors`, `POST /api/emission-factors`, `DELETE /api/emission-factors/:id` — tenant-scoped, requires auth
 - `GET /api/emission-records` — tenant-scoped, requires auth
-- Existing `/api/calculate`, `/api/download-csv`, `/api/yearly-comparison`, `/api/product-intensity` are unchanged in behavior but now require auth. `/api/calculate` additionally accepts `persist: true` in the request body to save results to `emission_records`; the existing calculator UI does not send this flag yet, so current behavior (compute and return, nothing saved) is preserved unless a caller opts in.
+- `GET/POST/PUT/DELETE /api/reporting-entities` — the entity being measured (e.g. the client company a tenant is reporting GHG data for). Tenant-scoped.
+- `GET/POST/PUT/DELETE /api/facilities` — belongs to a reporting entity, unique name per entity.
+- `GET/POST/PUT/DELETE /api/reporting-boundaries` — belongs to a reporting entity, one per (entity, reportingYear).
+- `GET /api/setup-status` — `{ reportingEntityCount, facilityCount, boundaryCount, readyForCalculation }` for the caller's tenant.
+- Existing `/api/calculate`, `/api/download-csv`, `/api/yearly-comparison`, `/api/product-intensity` are unchanged in behavior but now require auth. `/api/calculate` additionally accepts `persist: true` in the request body to save results to `emission_records`; the existing calculator UI does not send this flag yet, so current behavior (compute and return, nothing saved) is preserved unless a caller opts in. **`/api/calculate` now also requires setup completeness**: at least one reporting entity, facility, and reporting boundary must exist for the tenant, or it returns 400. See "Reconciled from codex" below.
+
+### Reconciled from `codex/review-code-for-gaps-and-improvements`
+
+That branch (32 commits) independently built ISO 14064-1 boundary-setting concepts (reporting entity, facility, reporting boundary, consolidation approach) on top of `MemStorage` + a JSON-file snapshot, no tenant scoping, no real DB tables. Ported here as real Postgres tables, tenant-scoped like everything else on this branch.
+
+**Naming collision, resolved:** that branch called the entity being measured "Organization", which collides with this branch's `organizations` table (the SaaS tenant / paying customer account). These are different concepts — one tenant can report on one or more reporting entities (e.g. a consultancy tenant reporting for several client companies). Renamed to `ReportingEntity` / `reporting_entities` here to keep them permanently distinct. If you're comparing against the `codex` branch directly, `Organization` there = `ReportingEntity` here.
+
+Also ported: `scope3Category` on emission inputs/records, `source`/`year` on emission factors, and a CSV-escaping fix (commas/quotes/newlines in values were previously unescaped, which could corrupt exported CSVs or, worse, enable CSV injection if opened in Excel).
+
+**Not yet ported:** the `SetupBoundaryPanel.tsx` UI (478 lines on `codex`) that gates the calculator UI on setup completeness. The backend gate above is live; nothing in the current UI creates a reporting entity/facility/boundary yet, so the existing calculator will get a 400 from `/api/calculate` until either that UI is ported and adapted for auth/tenancy, or a new one is built against these endpoints.
 
 ### Known gaps in this branch (not done, scoped honestly)
 

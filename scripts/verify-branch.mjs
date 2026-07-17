@@ -9,8 +9,10 @@
 //   3. npm run db:push (creates/updates tables from shared/schema.ts)
 //   4. Starts the dev server in the background, waits for it to answer
 //   5. Runs a real end-to-end flow against the live endpoints:
-//        register -> me -> create emission factor -> list factors
-//        -> calculate (persist:true) -> list emission records -> logout
+//        register -> me -> create reporting entity -> create facility
+//        -> create reporting boundary -> setup-status -> create emission
+//        factor -> list factors -> calculate (persist:true, now gated on
+//        setup completeness) -> list emission records -> logout
 //   6. Reverts: deletes ONLY the rows this run created (matched by a unique
 //      test-run tag), then stops the server. It does NOT drop your schema
 //      or touch any other data in the database.
@@ -185,6 +187,57 @@ async function step5_smokeTest() {
       ok("GET /api/auth/me", "user + exactly one membership returned");
     } else {
       fail("GET /api/auth/me", `status ${res.status}, body ${JSON.stringify(body)}`);
+    }
+  }
+
+  // --- ISO setup: reporting entity, facility, reporting boundary ---
+  let entityId = null;
+  {
+    const res = await fetch(`${BASE_URL}/api/reporting-entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ name: `${RUN_TAG}-entity`, legalEntity: `${RUN_TAG}-legal` }),
+    });
+    const body = await res.json().catch(() => ({}));
+    entityId = body.reportingEntity?.id;
+    if (res.status === 201 && entityId) ok("POST /api/reporting-entities", `entity id ${entityId}`);
+    else fail("POST /api/reporting-entities", `status ${res.status}, body ${JSON.stringify(body)}`);
+  }
+
+  {
+    const res = await fetch(`${BASE_URL}/api/facilities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ reportingEntityId: entityId, name: `${RUN_TAG}-facility`, country: "GB" }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 201 && body.facility?.id) ok("POST /api/facilities", `facility id ${body.facility.id}`);
+    else fail("POST /api/facilities", `status ${res.status}, body ${JSON.stringify(body)}`);
+  }
+
+  {
+    const res = await fetch(`${BASE_URL}/api/reporting-boundaries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        reportingEntityId: entityId,
+        reportingYear: 2026,
+        consolidationApproach: "operational_control",
+        description: `${RUN_TAG}-boundary`,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 201 && body.boundary?.id) ok("POST /api/reporting-boundaries", `boundary id ${body.boundary.id}`);
+    else fail("POST /api/reporting-boundaries", `status ${res.status}, body ${JSON.stringify(body)}`);
+  }
+
+  {
+    const res = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: cookie } });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 200 && body.setupStatus?.readyForCalculation === true) {
+      ok("GET /api/setup-status", "readyForCalculation: true after entity+facility+boundary created");
+    } else {
+      fail("GET /api/setup-status", `status ${res.status}, body ${JSON.stringify(body)}`);
     }
   }
 
