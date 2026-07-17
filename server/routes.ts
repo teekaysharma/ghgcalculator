@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { z } from "zod";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
 import { requireAuth, requireOrg } from "./middleware/tenant";
@@ -11,7 +12,59 @@ import {
   ProductIntensity,
   registerSchema,
   loginSchema,
+  consolidationApproaches,
 } from "../shared/schema";
+
+// -----------------------------------------------------------------------
+// ISO setup validation schemas
+//
+// Ported from codex/review-code-for-gaps-and-improvements and adapted:
+// organizationId is no longer accepted from the request body (it comes
+// from req.organizationId, resolved by requireOrg -- never trust a
+// tenant id supplied by the client). "Organization" renamed to
+// "ReportingEntity" per the schema-level reconciliation, see schema.ts.
+// -----------------------------------------------------------------------
+
+const reportingEntityCreateSchema = z.object({
+  name: z.string().min(1),
+  legalEntity: z.string().optional(),
+});
+
+const reportingEntityUpdateSchema = reportingEntityCreateSchema;
+
+const facilityCreateSchema = z.object({
+  reportingEntityId: z.number().int().positive(),
+  name: z.string().min(1),
+  country: z.string().optional(),
+});
+
+const facilityUpdateSchema = z.object({
+  name: z.string().min(1),
+  country: z.string().optional(),
+});
+
+const consolidationApproachSchema = z.enum(consolidationApproaches);
+
+const reportingBoundaryCreateSchema = z.object({
+  reportingEntityId: z.number().int().positive(),
+  reportingYear: z.number().int().min(1990).max(2100),
+  consolidationApproach: consolidationApproachSchema,
+  description: z.string().optional(),
+});
+
+const reportingBoundaryUpdateSchema = z.object({
+  reportingYear: z.number().int().min(1990).max(2100),
+  consolidationApproach: consolidationApproachSchema,
+  description: z.string().optional(),
+});
+
+function parseBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message || "Invalid request payload");
+  }
+  return parsed.data;
+}
 
 function slugify(name: string): string {
   return (
@@ -166,6 +219,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // -----------------------------------------------------------------------
+  // ISO 14064-1 boundary setup -- reporting entities, facilities,
+  // reporting boundaries. Reconciled from codex/review-code-for-gaps-and-
+  // improvements: same validation and duplicate-prevention logic, now
+  // tenant-scoped and backed by real Postgres tables + DB unique
+  // constraints instead of a JSON file snapshot.
+  // -----------------------------------------------------------------------
+
+  app.get("/api/reporting-entities", requireAuth, requireOrg, async (req, res) => {
+    const reportingEntitiesList = await storage.listReportingEntities(req.organizationId!);
+    return res.json({ reportingEntities: reportingEntitiesList });
+  });
+
+  app.post("/api/reporting-entities", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const data = parseBody(reportingEntityCreateSchema, req.body);
+      const entity = await storage.createReportingEntity({ ...data, organizationId: req.organizationId! });
+      return res.status(201).json({ reportingEntity: entity });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid reporting entity payload" });
+    }
+  });
+
+  app.put("/api/reporting-entities/:id", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting entity id" });
+    try {
+      const data = parseBody(reportingEntityUpdateSchema, req.body);
+      const entity = await storage.updateReportingEntity(req.organizationId!, id, data);
+      if (!entity) return res.status(404).json({ message: "Reporting entity not found" });
+      return res.json({ reportingEntity: entity });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid reporting entity payload" });
+    }
+  });
+
+  app.delete("/api/reporting-entities/:id", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting entity id" });
+    const deleted = await storage.deleteReportingEntity(req.organizationId!, id);
+    if (!deleted) return res.status(404).json({ message: "Reporting entity not found" });
+    return res.status(204).end();
+  });
+
+  app.get("/api/facilities", requireAuth, requireOrg, async (req, res) => {
+    const facilitiesList = await storage.listFacilities(req.organizationId!);
+    return res.json({ facilities: facilitiesList });
+  });
+
+  app.post("/api/facilities", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const data = parseBody(facilityCreateSchema, req.body);
+      const entity = await storage.getReportingEntity(req.organizationId!, data.reportingEntityId);
+      if (!entity) return res.status(404).json({ message: "Reporting entity not found" });
+
+      const existing = await storage.listFacilities(req.organizationId!);
+      const duplicate = existing.some(
+        (f) => f.reportingEntityId === data.reportingEntityId && f.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
+      );
+      if (duplicate) return res.status(409).json({ message: "Facility name already exists for this reporting entity" });
+
+      const facility = await storage.createFacility({ ...data, organizationId: req.organizationId! });
+      return res.status(201).json({ facility });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility payload" });
+    }
+  });
+
+  app.put("/api/facilities/:id", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    try {
+      const data = parseBody(facilityUpdateSchema, req.body);
+      const target = await storage.getFacility(req.organizationId!, id);
+      if (!target) return res.status(404).json({ message: "Facility not found" });
+
+      const existing = await storage.listFacilities(req.organizationId!);
+      const duplicate = existing.some(
+        (f) => f.id !== id && f.reportingEntityId === target.reportingEntityId && f.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
+      );
+      if (duplicate) return res.status(409).json({ message: "Facility name already exists for this reporting entity" });
+
+      const facility = await storage.updateFacility(req.organizationId!, id, data);
+      return res.json({ facility });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility payload" });
+    }
+  });
+
+  app.delete("/api/facilities/:id", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    const deleted = await storage.deleteFacility(req.organizationId!, id);
+    if (!deleted) return res.status(404).json({ message: "Facility not found" });
+    return res.status(204).end();
+  });
+
+  app.get("/api/reporting-boundaries", requireAuth, requireOrg, async (req, res) => {
+    const boundaries = await storage.listReportingBoundaries(req.organizationId!);
+    return res.json({ reportingBoundaries: boundaries });
+  });
+
+  app.post("/api/reporting-boundaries", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const data = parseBody(reportingBoundaryCreateSchema, req.body);
+      const entity = await storage.getReportingEntity(req.organizationId!, data.reportingEntityId);
+      if (!entity) return res.status(404).json({ message: "Reporting entity not found" });
+
+      const existing = await storage.listReportingBoundaries(req.organizationId!);
+      const duplicate = existing.some(
+        (b) => b.reportingEntityId === data.reportingEntityId && b.reportingYear === data.reportingYear,
+      );
+      if (duplicate) return res.status(409).json({ message: "Reporting boundary already exists for this entity and year" });
+
+      const boundary = await storage.createReportingBoundary({ ...data, organizationId: req.organizationId! });
+      return res.status(201).json({ boundary });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid boundary payload" });
+    }
+  });
+
+  app.put("/api/reporting-boundaries/:id", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    try {
+      const data = parseBody(reportingBoundaryUpdateSchema, req.body);
+      const boundaries = await storage.listReportingBoundaries(req.organizationId!);
+      const target = boundaries.find((b) => b.id === id);
+      if (!target) return res.status(404).json({ message: "Reporting boundary not found" });
+
+      const duplicate = boundaries.some(
+        (b) => b.id !== id && b.reportingEntityId === target.reportingEntityId && b.reportingYear === data.reportingYear,
+      );
+      if (duplicate) return res.status(409).json({ message: "Reporting boundary already exists for this entity and year" });
+
+      const boundary = await storage.updateReportingBoundary(req.organizationId!, id, data);
+      return res.json({ boundary });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid boundary payload" });
+    }
+  });
+
+  app.delete("/api/reporting-boundaries/:id", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const deleted = await storage.deleteReportingBoundary(req.organizationId!, id);
+    if (!deleted) return res.status(404).json({ message: "Reporting boundary not found" });
+    return res.status(204).end();
+  });
+
+  // Setup completeness for the caller's tenant. Same readyForCalculation
+  // logic as codex/review-code-for-gaps-and-improvements: at least one
+  // reporting entity, one facility, and one reporting boundary must exist
+  // before calculation is considered ISO-14064-1-boundary-defined.
+  app.get("/api/setup-status", requireAuth, requireOrg, async (req, res) => {
+    const [entities, facilitiesList, boundaries] = await Promise.all([
+      storage.listReportingEntities(req.organizationId!),
+      storage.listFacilities(req.organizationId!),
+      storage.listReportingBoundaries(req.organizationId!),
+    ]);
+    const setupStatus = {
+      reportingEntityCount: entities.length,
+      facilityCount: facilitiesList.length,
+      boundaryCount: boundaries.length,
+      readyForCalculation: entities.length > 0 && facilitiesList.length > 0 && boundaries.length > 0,
+    };
+    return res.json({ setupStatus });
+  });
+
   // Calculate emissions endpoint. Unchanged calculation logic (kept exactly
   // as verified working on main). What changed: it now requires auth, and
   // optionally persists results when `persist: true` is sent, instead of
@@ -176,6 +398,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!inputs || !emissionFactors) {
         return res.status(400).json({ message: "Missing inputs or emission factors" });
+      }
+
+      // Setup-completeness gate, ported from codex/review-code-for-gaps-and-
+      // improvements. NOTE: this will reject calculation requests from the
+      // existing calculator UI (EmissionCalculator.tsx) until it's updated
+      // to create a reporting entity/facility/boundary first -- that UI
+      // work has not been done yet, see PROJECT INSTRUCTIONS known gaps.
+      const [entities, facilitiesList, boundaries] = await Promise.all([
+        storage.listReportingEntities(req.organizationId!),
+        storage.listFacilities(req.organizationId!),
+        storage.listReportingBoundaries(req.organizationId!),
+      ]);
+      if (entities.length === 0 || facilitiesList.length === 0 || boundaries.length === 0) {
+        return res.status(400).json({
+          message: "Setup incomplete. Configure at least one reporting entity, facility, and reporting boundary before calculation.",
+        });
       }
       
       const results = { scope1: 0, scope2: 0, scope3: 0 };
@@ -200,7 +438,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             factor,
             emission,
             year: input.year,
-            product: input.product
+            product: input.product,
+            scope3Category: input.scope3Category || emissionFactors[input.activity]?.category
           });
         }
       }
@@ -226,6 +465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             product: e.product ?? null,
             wasteType: e.wasteType ?? null,
             disposalMethod: e.disposalMethod ?? null,
+            scope3Category: e.scope3Category ?? null,
           })),
         );
       }
