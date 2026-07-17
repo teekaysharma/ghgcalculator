@@ -122,6 +122,7 @@ export const emissionFactorsTable = pgTable(
     wasteType: text("waste_type"),
     disposalMethod: text("disposal_method"),
     source: text("source"),
+    year: integer("year"),
     uploadedBy: integer("uploaded_by").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -141,6 +142,7 @@ export const insertEmissionFactorSchema = createInsertSchema(emissionFactorsTabl
   wasteType: true,
   disposalMethod: true,
   source: true,
+  year: true,
   uploadedBy: true,
 });
 
@@ -163,6 +165,7 @@ export const emissionRecordsTable = pgTable(
     product: text("product"),
     wasteType: text("waste_type"),
     disposalMethod: text("disposal_method"),
+    scope3Category: text("scope3_category"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -184,15 +187,132 @@ export const insertEmissionRecordSchema = createInsertSchema(emissionRecordsTabl
   product: true,
   wasteType: true,
   disposalMethod: true,
+  scope3Category: true,
 });
 
 export type InsertEmissionRecordRow = z.infer<typeof insertEmissionRecordSchema>;
 export type EmissionRecordRow = typeof emissionRecordsTable.$inferSelect;
 
+// ---------------------------------------------------------------------------
+// ISO 14064-1 boundary-setting tables
+//
+// Ported and reconciled from codex/review-code-for-gaps-and-improvements
+// (32 commits, MemStorage + JSON-file persistence, no tenant scoping, no
+// real DB tables -- these existed there as plain TypeScript interfaces).
+//
+// Naming collision resolved: that branch called the entity-being-measured
+// "Organization", which collides with this branch's `organizations` table
+// (the SaaS tenant / paying customer account). They are not the same
+// concept -- one org (tenant) can report on one or more reporting entities
+// (e.g. a consultancy tenant reporting for several client companies, or a
+// single company tenant with one reporting entity matching itself 1:1).
+// Renamed to ReportingEntity here to keep them distinct permanently.
+//
+// All three tables carry organization_id (the tenant) directly, even
+// though it's derivable via reportingEntityId, for the same reason every
+// other tenant-scoped table here does: every query filters on it directly,
+// no join required to enforce isolation.
+// ---------------------------------------------------------------------------
+
+export const consolidationApproaches = ["operational_control", "financial_control", "equity_share"] as const;
+export type ConsolidationApproach = (typeof consolidationApproaches)[number];
+
+export const dataQualityTiers = ["best", "intermediate", "minimum"] as const;
+export type DataQualityTier = (typeof dataQualityTiers)[number];
+
+export const isoInventoryCategories = [
+  "category_1_direct",
+  "category_2_imported_energy",
+  "category_3_transportation",
+  "category_4_products_used",
+  "category_5_use_of_products",
+  "category_6_other_indirect",
+] as const;
+export type IsoInventoryCategory = (typeof isoInventoryCategories)[number];
+
+export const reportingEntities = pgTable(
+  "reporting_entities",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    legalEntity: text("legal_entity"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index("reporting_entities_org_idx").on(table.organizationId),
+  }),
+);
+
+export const insertReportingEntitySchema = createInsertSchema(reportingEntities).pick({
+  organizationId: true,
+  name: true,
+  legalEntity: true,
+});
+
+export type InsertReportingEntity = z.infer<typeof insertReportingEntitySchema>;
+export type ReportingEntity = typeof reportingEntities.$inferSelect;
+
+export const facilities = pgTable(
+  "facilities",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    reportingEntityId: integer("reporting_entity_id").notNull().references(() => reportingEntities.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    country: text("country"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index("facilities_org_idx").on(table.organizationId),
+    entityNameUnique: unique("facilities_entity_name_unique").on(table.reportingEntityId, table.name),
+  }),
+);
+
+export const insertFacilitySchema = createInsertSchema(facilities).pick({
+  organizationId: true,
+  reportingEntityId: true,
+  name: true,
+  country: true,
+});
+
+export type InsertFacility = z.infer<typeof insertFacilitySchema>;
+export type Facility = typeof facilities.$inferSelect;
+
+export const reportingBoundaries = pgTable(
+  "reporting_boundaries",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    reportingEntityId: integer("reporting_entity_id").notNull().references(() => reportingEntities.id, { onDelete: "cascade" }),
+    reportingYear: integer("reporting_year").notNull(),
+    consolidationApproach: text("consolidation_approach").notNull(),
+    description: text("description"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orgIdx: index("reporting_boundaries_org_idx").on(table.organizationId),
+    entityYearUnique: unique("reporting_boundaries_entity_year_unique").on(table.reportingEntityId, table.reportingYear),
+  }),
+);
+
+export const insertReportingBoundarySchema = createInsertSchema(reportingBoundaries).pick({
+  organizationId: true,
+  reportingEntityId: true,
+  reportingYear: true,
+  consolidationApproach: true,
+  description: true,
+});
+
+export type InsertReportingBoundary = z.infer<typeof insertReportingBoundarySchema>;
+export type ReportingBoundary = typeof reportingBoundaries.$inferSelect;
+
 export interface EmissionFactor {
   name: string;
   factor: number;
   unit: string;
+  source?: string;
+  year?: number;
   wasteType?: string;
   disposalMethod?: string;
   category?: string;
@@ -206,6 +326,7 @@ export interface EmissionInput {
   product?: string;
   wasteType?: string;
   disposalMethod?: string;
+  scope3Category?: string;
 }
 
 export interface Emission {
@@ -219,6 +340,7 @@ export interface Emission {
   product?: string;
   wasteType?: string;
   disposalMethod?: string;
+  scope3Category?: string;
 }
 
 export interface ProductData {
