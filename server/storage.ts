@@ -6,6 +6,9 @@ import {
   memberships,
   emissionFactorsTable,
   emissionRecordsTable,
+  reportingEntities,
+  facilities,
+  reportingBoundaries,
   type Organization,
   type InsertOrganization,
   type User,
@@ -16,6 +19,12 @@ import {
   type InsertEmissionFactorRow,
   type EmissionRecordRow,
   type InsertEmissionRecordRow,
+  type ReportingEntity,
+  type InsertReportingEntity,
+  type Facility,
+  type InsertFacility,
+  type ReportingBoundary,
+  type InsertReportingBoundary,
 } from "@shared/schema";
 
 // -----------------------------------------------------------------------
@@ -51,6 +60,25 @@ export interface IStorage {
   // Emission records (tenant-scoped, persisted calculation results)
   createEmissionRecords(organizationId: number, records: Omit<InsertEmissionRecordRow, "organizationId">[]): Promise<EmissionRecordRow[]>;
   listEmissionRecords(organizationId: number): Promise<EmissionRecordRow[]>;
+
+  // ISO 14064-1 boundary setup (tenant-scoped). See PROJECT INSTRUCTIONS ->
+  // reconciliation with codex/review-code-for-gaps-and-improvements.
+  createReportingEntity(entity: InsertReportingEntity): Promise<ReportingEntity>;
+  listReportingEntities(organizationId: number): Promise<ReportingEntity[]>;
+  getReportingEntity(organizationId: number, id: number): Promise<ReportingEntity | undefined>;
+  updateReportingEntity(organizationId: number, id: number, data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity">>): Promise<ReportingEntity | undefined>;
+  deleteReportingEntity(organizationId: number, id: number): Promise<boolean>;
+
+  createFacility(facility: InsertFacility): Promise<Facility>;
+  listFacilities(organizationId: number): Promise<Facility[]>;
+  getFacility(organizationId: number, id: number): Promise<Facility | undefined>;
+  updateFacility(organizationId: number, id: number, data: Partial<Pick<InsertFacility, "name" | "country">>): Promise<Facility | undefined>;
+  deleteFacility(organizationId: number, id: number): Promise<boolean>;
+
+  createReportingBoundary(boundary: InsertReportingBoundary): Promise<ReportingBoundary>;
+  listReportingBoundaries(organizationId: number): Promise<ReportingBoundary[]>;
+  updateReportingBoundary(organizationId: number, id: number, data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description">>): Promise<ReportingBoundary | undefined>;
+  deleteReportingBoundary(organizationId: number, id: number): Promise<boolean>;
 }
 
 export class DbStorage implements IStorage {
@@ -141,6 +169,126 @@ export class DbStorage implements IStorage {
       .from(emissionRecordsTable)
       .where(eq(emissionRecordsTable.organizationId, organizationId))
       .orderBy(desc(emissionRecordsTable.createdAt));
+  }
+
+  // --- ISO 14064-1 boundary setup ---
+
+  async createReportingEntity(entity: InsertReportingEntity): Promise<ReportingEntity> {
+    const [row] = await db.insert(reportingEntities).values(entity).returning();
+    return row;
+  }
+
+  async listReportingEntities(organizationId: number): Promise<ReportingEntity[]> {
+    return db
+      .select()
+      .from(reportingEntities)
+      .where(eq(reportingEntities.organizationId, organizationId))
+      .orderBy(desc(reportingEntities.createdAt));
+  }
+
+  async getReportingEntity(organizationId: number, id: number): Promise<ReportingEntity | undefined> {
+    const [row] = await db
+      .select()
+      .from(reportingEntities)
+      .where(and(eq(reportingEntities.id, id), eq(reportingEntities.organizationId, organizationId)));
+    return row;
+  }
+
+  async updateReportingEntity(
+    organizationId: number,
+    id: number,
+    data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity">>,
+  ): Promise<ReportingEntity | undefined> {
+    const [row] = await db
+      .update(reportingEntities)
+      .set(data)
+      .where(and(eq(reportingEntities.id, id), eq(reportingEntities.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteReportingEntity(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(reportingEntities)
+      .where(and(eq(reportingEntities.id, id), eq(reportingEntities.organizationId, organizationId)))
+      .returning({ id: reportingEntities.id });
+    return deleted.length > 0;
+  }
+
+  async createFacility(facility: InsertFacility): Promise<Facility> {
+    const [row] = await db.insert(facilities).values(facility).returning();
+    return row;
+  }
+
+  async listFacilities(organizationId: number): Promise<Facility[]> {
+    return db
+      .select()
+      .from(facilities)
+      .where(eq(facilities.organizationId, organizationId))
+      .orderBy(desc(facilities.createdAt));
+  }
+
+  async getFacility(organizationId: number, id: number): Promise<Facility | undefined> {
+    const [row] = await db
+      .select()
+      .from(facilities)
+      .where(and(eq(facilities.id, id), eq(facilities.organizationId, organizationId)));
+    return row;
+  }
+
+  async updateFacility(
+    organizationId: number,
+    id: number,
+    data: Partial<Pick<InsertFacility, "name" | "country">>,
+  ): Promise<Facility | undefined> {
+    const [row] = await db
+      .update(facilities)
+      .set(data)
+      .where(and(eq(facilities.id, id), eq(facilities.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteFacility(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(facilities)
+      .where(and(eq(facilities.id, id), eq(facilities.organizationId, organizationId)))
+      .returning({ id: facilities.id });
+    return deleted.length > 0;
+  }
+
+  async createReportingBoundary(boundary: InsertReportingBoundary): Promise<ReportingBoundary> {
+    const [row] = await db.insert(reportingBoundaries).values(boundary).returning();
+    return row;
+  }
+
+  async listReportingBoundaries(organizationId: number): Promise<ReportingBoundary[]> {
+    return db
+      .select()
+      .from(reportingBoundaries)
+      .where(eq(reportingBoundaries.organizationId, organizationId))
+      .orderBy(desc(reportingBoundaries.createdAt));
+  }
+
+  async updateReportingBoundary(
+    organizationId: number,
+    id: number,
+    data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description">>,
+  ): Promise<ReportingBoundary | undefined> {
+    const [row] = await db
+      .update(reportingBoundaries)
+      .set(data)
+      .where(and(eq(reportingBoundaries.id, id), eq(reportingBoundaries.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteReportingBoundary(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(reportingBoundaries)
+      .where(and(eq(reportingBoundaries.id, id), eq(reportingBoundaries.organizationId, organizationId)))
+      .returning({ id: reportingBoundaries.id });
+    return deleted.length > 0;
   }
 }
 
