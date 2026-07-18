@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
-import { Info } from "lucide-react";
+import { Info, Download } from "lucide-react";
+import { utils, writeFile } from "xlsx";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +9,26 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+
+function downloadTemplate() {
+  // Multi-scope format (Format 3 below) -- the most flexible of the three
+  // supported formats, and the one FileUpload.tsx's parser handles most
+  // robustly. Generated client-side with the same xlsx library already
+  // used to parse uploads, no backend round trip needed.
+  const rows = [
+    { Scope: 1, "Activity Type": "Natural Gas", "Emission Factor": 2.02, Unit: "kg" },
+    { Scope: 1, "Activity Type": "Diesel", "Emission Factor": 2.68, Unit: "litre" },
+    { Scope: 2, "Activity Type": "Electricity", "Emission Factor": 0.42, Unit: "kWh" },
+    { Scope: 3, "Activity Type": "Business Travel", "Emission Factor": 0.14, Unit: "km" },
+    { Scope: 3, "Activity Type": "Paper/Cardboard - Landfill", "Emission Factor": 2100, Unit: "t" },
+    { Scope: 3, "Activity Type": "Paper/Cardboard - Recycling", "Emission Factor": 350, Unit: "t" },
+  ];
+  const worksheet = utils.json_to_sheet(rows);
+  worksheet["!cols"] = [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 10 }];
+  const workbook = utils.book_new();
+  utils.book_append_sheet(workbook, worksheet, "Emission Factors");
+  writeFile(workbook, "emission-factors-template.xlsx");
+}
 
 export default function WasteFactorGuide() {
   return (
@@ -25,6 +46,11 @@ export default function WasteFactorGuide() {
             Learn how to structure your waste emission factors Excel file
           </DialogDescription>
         </DialogHeader>
+
+        <Button onClick={downloadTemplate} variant="outline" size="sm" className="w-fit">
+          <Download className="h-4 w-4 mr-1" />
+          Download starter template (.xlsx)
+        </Button>
         
         <div className="space-y-4 mt-4">
           <p className="text-sm text-neutral-600">
