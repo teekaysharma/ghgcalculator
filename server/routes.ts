@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { z } from "zod";
+import rateLimit from "express-rate-limit";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
 import { requireAuth, requireOrg } from "./middleware/tenant";
@@ -13,6 +14,7 @@ import {
   registerSchema,
   loginSchema,
   consolidationApproaches,
+  membershipRoles,
 } from "../shared/schema";
 
 // -----------------------------------------------------------------------
@@ -66,6 +68,27 @@ function parseBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
   return parsed.data;
 }
 
+// Rate limits, IP-based. Separate limiters for register vs. login: register
+// is naturally low-frequency for a real user (you only do it once), so a
+// tight limit has little cost to legitimate use and blocks bulk account
+// creation. Login needs more headroom for someone who mistypes a password
+// a few times, but still caps credential-stuffing attempts.
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many accounts created from this address, try again later." },
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts, try again later." },
+});
+
 function slugify(name: string): string {
   return (
     name
@@ -86,7 +109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // second member is a createMembership call against an existing org, which
   // storage.ts already supports; wiring an invite endpoint is future scope.
   // -----------------------------------------------------------------------
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", registerLimiter, async (req, res) => {
     try {
       const parsed = registerSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -125,7 +148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/login", (req, res, next) => {
+  app.post("/api/auth/login", loginLimiter, (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
@@ -153,7 +176,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/me", requireAuth, async (req, res) => {
     const user = req.user as { id: number; email: string; name: string | null };
     const memberships = await storage.getMembershipsForUser(user.id);
-    return res.json({ user: { id: user.id, email: user.email, name: user.name }, memberships });
+    const organizations = await Promise.all(
+      memberships.map(async (m) => {
+        const org = await storage.getOrganization(m.organizationId);
+        return { organizationId: m.organizationId, role: m.role, name: org?.name ?? null, slug: org?.slug ?? null };
+      }),
+    );
+    return res.json({ user: { id: user.id, email: user.email, name: user.name }, memberships, organizations });
+  });
+
+  // -----------------------------------------------------------------------
+  // Team -- list members of the caller's org, invite an existing user by
+  // email. Deliberately minimal: invites only work for accounts that
+  // already exist (no email delivery / signup-by-invite-token flow yet,
+  // see README known gaps). Only owner/admin can invite.
+  // -----------------------------------------------------------------------
+  app.get("/api/team", requireAuth, requireOrg, async (req, res) => {
+    const members = await storage.listMembershipsForOrganization(req.organizationId!);
+    return res.json({
+      members: members.map((m) => ({ id: m.id, userId: m.userId, email: m.userEmail, name: m.userName, role: m.role, createdAt: m.createdAt })),
+    });
+  });
+
+  const inviteSchema = z.object({
+    email: z.string().email(),
+    role: z.enum(membershipRoles).default("member"),
+  });
+
+  app.post("/api/team/invite", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can invite team members" });
+    }
+    try {
+      const { email, role } = parseBody(inviteSchema, req.body);
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({
+          message: "No account exists for that email yet. They need to register before you can add them to your organization.",
+        });
+      }
+      const existing = await storage.getMembership(user.id, req.organizationId!);
+      if (existing) {
+        return res.status(409).json({ message: "This person is already a member of your organization" });
+      }
+      const membership = await storage.createMembership({ userId: user.id, organizationId: req.organizationId!, role });
+      return res.status(201).json({ membership: { id: membership.id, email: user.email, name: user.name, role: membership.role } });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid invite payload" });
+    }
   });
 
   // -----------------------------------------------------------------------
