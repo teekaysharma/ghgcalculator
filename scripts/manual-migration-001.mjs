@@ -9,12 +9,18 @@
 // additions on a database it's now re-introspecting mid-migration, not a
 // data problem (the orphaned-row theory was tested and ruled out).
 //
-// Rather than keep guessing at drizzle-kit's internals with no visibility
-// into the live database, this script brings the database in line with
-// shared/schema.ts directly: it checks information_schema and pg_constraint
-// for each expected column/constraint/index and applies only what's
-// missing. Every statement is idempotent (safe to run more than once) and
-// the whole thing runs in one transaction (all-or-nothing).
+// This script is a one-time, targeted workaround: first deletes orphaned
+// rows in reporting_entities/facilities/reporting_boundaries left over from
+// the earlier crashed push (rows whose organization_id or reporting_
+// entity_id no longer has a valid parent -- the FK constraints that would
+// normally prevent/cascade this never got created before the crash), then
+// checks information_schema/pg_constraint/pg_indexes for exactly what
+// shared/schema.ts expects and is currently missing (2 columns, 5 FKs, 2
+// unique constraints, 3 indexes), applies only the gap, in one
+// transaction, idempotent. Not a replacement for drizzle-kit push going
+// forward -- once this gap is closed, push should have nothing left to
+// diff for this increment and should work normally again for future
+// schema changes.
 //
 // Usage: node scripts/manual-migration-001.mjs
 
@@ -78,6 +84,28 @@ async function main() {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // --- cleanup: orphaned rows from the earlier crashed push, in all
+    // three ISO tables (not just reporting_boundaries -- that was fixed
+    // separately before, this run found the same problem in
+    // reporting_entities too, so doing all three together here, in
+    // dependency order: facilities/reporting_boundaries reference
+    // reporting_entities, so clean those first, then reporting_entities
+    // itself, all keyed off organization_id having no matching parent). ---
+    const cleanupQueries = [
+      { table: "facilities", sql: `DELETE FROM facilities f WHERE NOT EXISTS (SELECT 1 FROM organizations o WHERE o.id = f.organization_id) RETURNING f.id` },
+      { table: "reporting_boundaries", sql: `DELETE FROM reporting_boundaries rb WHERE NOT EXISTS (SELECT 1 FROM organizations o WHERE o.id = rb.organization_id) RETURNING rb.id` },
+      { table: "reporting_entities", sql: `DELETE FROM reporting_entities re WHERE NOT EXISTS (SELECT 1 FROM organizations o WHERE o.id = re.organization_id) RETURNING re.id` },
+      // second pass: facilities/boundaries that point at a reporting_entity
+      // which either never existed with a valid org, or was just deleted
+      // above in this same transaction
+      { table: "facilities", sql: `DELETE FROM facilities f WHERE NOT EXISTS (SELECT 1 FROM reporting_entities re WHERE re.id = f.reporting_entity_id) RETURNING f.id` },
+      { table: "reporting_boundaries", sql: `DELETE FROM reporting_boundaries rb WHERE NOT EXISTS (SELECT 1 FROM reporting_entities re WHERE re.id = rb.reporting_entity_id) RETURNING rb.id` },
+    ];
+    for (const { table, sql } of cleanupQueries) {
+      const res = await client.query(sql);
+      if (res.rowCount > 0) applied.push(`cleanup: deleted ${res.rowCount} orphaned row(s) from ${table}`);
+    }
 
     // --- columns ---
     await ensureColumn(client, "emission_factors", "year", "year integer");
