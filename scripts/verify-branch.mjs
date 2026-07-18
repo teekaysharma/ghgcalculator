@@ -140,7 +140,36 @@ async function step2_install() {
 async function step3_dbPush() {
   log("3/6", "npm run db:push (creates/updates schema on your real Neon database)");
   await run("npm", ["run", "db:push", "--", "--force"]);
-  ok("db:push");
+
+  // drizzle-kit push can print a fatal Postgres error and still exit 0
+  // (observed: "column \"id\" is in a primary key", code 42P16, mid-push --
+  // process exit code was 0 regardless). Don't trust the exit code alone,
+  // check that the columns/tables this push was supposed to create are
+  // actually there before letting the smoke test proceed and produce a
+  // pile of confusing, unrelated-looking 500s instead of one clear error.
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    const res = await pool.query(`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE (table_name = 'emission_factors' AND column_name = 'year')
+         OR (table_name = 'emission_records' AND column_name = 'scope3_category')
+    `);
+    const found = new Set(res.rows.map((r) => `${r.table_name}.${r.column_name}`));
+    const required = ["emission_factors.year", "emission_records.scope3_category"];
+    const missing = required.filter((r) => !found.has(r));
+    if (missing.length > 0) {
+      throw new Error(
+        `db:push reported success but these columns are missing: ${missing.join(", ")}. ` +
+          `drizzle-kit likely hit an error mid-push and exited 0 anyway -- scroll up in the ` +
+          `db:push output above for the real Postgres error (look for anything starting ` +
+          `with "error:"), fix it, then re-run.`,
+      );
+    }
+  } finally {
+    await pool.end();
+  }
+
+  ok("db:push", "schema verified against live database, not just trusting the exit code");
 }
 
 async function step4_startServer() {
