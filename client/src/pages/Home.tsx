@@ -1,9 +1,16 @@
 import { useState } from "react";
 import EmissionCalculator from "@/components/EmissionCalculator";
+import SetupPanel from "@/components/SetupPanel";
+import TeamPanel from "@/components/TeamPanel";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/use-auth";
 
 export default function Home() {
+  const { user, organizations, logout } = useAuth();
+  const org = organizations[0];
+
   return (
     <div className="min-h-screen bg-neutral-50 font-sans">
       <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -18,12 +25,24 @@ export default function Home() {
                 Track, calculate, and visualize your carbon footprint
               </p>
             </div>
+            <div className="flex items-center gap-3 mt-4 md:mt-0">
+              <div className="text-right text-sm">
+                {org && <div className="font-medium text-neutral-800">{org.name}</div>}
+                {user && <div className="text-neutral-500">{user.email}</div>}
+              </div>
+              <Button variant="outline" size="sm" onClick={() => logout()}>
+                Log out
+              </Button>
+            </div>
           </div>
         </header>
 
         {/* Main Content */}
-        <main>
-          <EmissionCalculator />
+        <main className="space-y-8">
+          <SetupPanel>
+            <EmissionCalculator />
+          </SetupPanel>
+          <TeamPanel />
         </main>
 
         {/* Footer */}

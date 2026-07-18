@@ -34,7 +34,8 @@ export default function EmissionCalculator() {
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/calculate", {
         inputs,
-        emissionFactors
+        emissionFactors,
+        persist: true
       });
       return response.json();
     },
