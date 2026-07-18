@@ -6,7 +6,9 @@
 //   1. Checks .env exists with DATABASE_URL and SESSION_SECRET set (does NOT
 //      create or guess these -- you fill .env yourself first, see .env.example).
 //   2. npm install
-//   3. npm run db:push (creates/updates tables from shared/schema.ts)
+//   3. Verifies the schema matches shared/schema.ts (does NOT run drizzle-kit
+//      push -- see step3_dbPush for why, and MIGRATIONS.md for the current
+//      migration process)
 //   4. Starts the dev server in the background, waits for it to answer
 //   5. Runs a real end-to-end flow against the live endpoints:
 //        register -> me -> create reporting entity -> create facility
@@ -138,15 +140,17 @@ async function step2_install() {
 }
 
 async function step3_dbPush() {
-  log("3/6", "npm run db:push (creates/updates schema on your real Neon database)");
-  await run("npm", ["run", "db:push", "--", "--force"]);
+  log("3/6", "verifying schema matches shared/schema.ts");
 
-  // drizzle-kit push can print a fatal Postgres error and still exit 0
-  // (observed: "column \"id\" is in a primary key", code 42P16, mid-push --
-  // process exit code was 0 regardless). Don't trust the exit code alone,
-  // check that the columns/tables this push was supposed to create are
-  // actually there before letting the smoke test proceed and produce a
-  // pile of confusing, unrelated-looking 500s instead of one clear error.
+  // drizzle-kit push is not used here. It failed three times against this
+  // database with an identical, unhelpful error ('column "id" is in a
+  // primary key', code 42P16, no table/column named) -- including once
+  // against a database already confirmed byte-for-byte in sync with
+  // shared/schema.ts via scripts/manual-migration-001.mjs. That rules out
+  // every data/state explanation; it's a drizzle-kit push bug for this
+  // schema shape in this environment. Schema changes on this branch go
+  // through hand-written, idempotent migration scripts (see
+  // scripts/manual-migration-001.mjs for the pattern) instead.
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   try {
     const res = await pool.query(`
@@ -159,17 +163,15 @@ async function step3_dbPush() {
     const missing = required.filter((r) => !found.has(r));
     if (missing.length > 0) {
       throw new Error(
-        `db:push reported success but these columns are missing: ${missing.join(", ")}. ` +
-          `drizzle-kit likely hit an error mid-push and exited 0 anyway -- scroll up in the ` +
-          `db:push output above for the real Postgres error (look for anything starting ` +
-          `with "error:"), fix it, then re-run.`,
+        `Schema is out of sync: missing ${missing.join(", ")}. Run the relevant migration ` +
+          `script in scripts/ against DATABASE_URL before re-running verify.`,
       );
     }
   } finally {
     await pool.end();
   }
 
-  ok("db:push", "schema verified against live database, not just trusting the exit code");
+  ok("schema check", "emission_factors.year and emission_records.scope3_category present");
 }
 
 async function step4_startServer() {

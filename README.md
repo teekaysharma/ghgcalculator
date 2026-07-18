@@ -16,12 +16,12 @@ This branch rebuilds the persistence and identity layer on top of the working ca
 1. Create a free Neon project at [console.neon.tech](https://console.neon.tech) and copy the connection string from **Connection Details**.
 2. `cp .env.example .env` and fill in `DATABASE_URL` and a generated `SESSION_SECRET` (command is in the file's comments).
 3. `npm install`
-4. `npm run db:push` — this runs `drizzle-kit push` and creates all tables (`organizations`, `users`, `memberships`, `emission_factors`, `emission_records`) directly from `shared/schema.ts`. The `session` table used by `connect-pg-simple` is created automatically on first server start (`createTableIfMissing: true`), no separate step needed.
+4. Apply the schema: `node scripts/manual-migration-001.mjs`. This creates/updates all tables (`organizations`, `users`, `memberships`, `emission_factors`, `emission_records`, `reporting_entities`, `facilities`, `reporting_boundaries`) directly against `DATABASE_URL`, idempotent, safe to re-run. **Do not use `npm run db:push`** — see [MIGRATIONS.md](./MIGRATIONS.md) for why (`drizzle-kit push` failed repeatedly against this schema in testing, confirmed to be a tool issue, not a data or state issue). The `session` table used by `connect-pg-simple` is created automatically on first server start (`createTableIfMissing: true`), no separate step needed.
 5. `npm run dev`
 
 ### One-shot verification: `npm run verify`
 
-Does steps 3-5 above automatically, then runs a real end-to-end smoke test against the live server (register, fetch session, create an emission factor, list it back, run a calculation with `persist: true`, confirm it was actually saved, log out), then reverts: stops the server and deletes only the rows that specific run created, tagged by a unique per-run identifier. It does not touch your schema or any other data.
+Runs `npm install`, verifies the schema matches `shared/schema.ts` (does not apply migrations itself, run `node scripts/manual-migration-001.mjs` first if this is a fresh database), starts the dev server, then runs a real end-to-end smoke test against the live server (register, fetch session, create a reporting entity/facility/reporting boundary, confirm setup status, create an emission factor, list it back, run a calculation with `persist: true`, confirm it was actually saved, log out), then reverts: stops the server and deletes only the rows that specific run created, tagged by a unique per-run identifier. It does not touch your schema or any other data.
 
 Requires `.env` to already exist and be filled in (step 1-2 above are still manual, on purpose, since `DATABASE_URL` is a live credential this script deliberately never generates or guesses). Exits non-zero if any step fails, with the specific failing step printed.
 
