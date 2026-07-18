@@ -51,6 +51,7 @@ export interface IStorage {
   createMembership(membership: InsertMembership): Promise<Membership>;
   getMembershipsForUser(userId: number): Promise<Membership[]>;
   getMembership(userId: number, organizationId: number): Promise<Membership | undefined>;
+  listMembershipsForOrganization(organizationId: number): Promise<(Membership & { userEmail: string; userName: string | null })[]>;
 
   // Emission factors (tenant-scoped)
   createEmissionFactors(organizationId: number, factors: Omit<InsertEmissionFactorRow, "organizationId">[]): Promise<EmissionFactorRow[]>;
@@ -127,6 +128,26 @@ export class DbStorage implements IStorage {
       .from(memberships)
       .where(and(eq(memberships.userId, userId), eq(memberships.organizationId, organizationId)));
     return row;
+  }
+
+  async listMembershipsForOrganization(
+    organizationId: number,
+  ): Promise<(Membership & { userEmail: string; userName: string | null })[]> {
+    const rows = await db
+      .select({
+        id: memberships.id,
+        userId: memberships.userId,
+        organizationId: memberships.organizationId,
+        role: memberships.role,
+        createdAt: memberships.createdAt,
+        userEmail: users.email,
+        userName: users.name,
+      })
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(eq(memberships.organizationId, organizationId))
+      .orderBy(desc(memberships.createdAt));
+    return rows;
   }
 
   async createEmissionFactors(
