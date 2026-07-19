@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Info, Download } from "lucide-react";
+import { Info, Download, ExternalLink } from "lucide-react";
 import { utils, writeFile } from "xlsx";
 import {
   Dialog,
@@ -10,21 +10,59 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+// Verified against IPCC AR6 WGI Chapter 7 Supplementary Material (Table
+// 7.SM.7), cross-checked against the GHG Protocol's own official GWP
+// reference PDF. GWP-100, without climate-carbon cycle feedbacks -- the
+// basis required by the GHG Protocol Corporate Standard, CDP, and SBTi.
+// Do not add rows to this table without verifying against the primary
+// source first; secondary/blog sources for GWP and emission factor figures
+// have been found to disagree with each other and with the primary source.
+const AR6_GWP_100 = [
+  { gas: "CO2", gwp: "1", note: "Reference gas" },
+  { gas: "CH4 (fossil)", gwp: "29.8", note: "Combustion, fugitive, process sources" },
+  { gas: "CH4 (biogenic/non-fossil)", gwp: "27.0", note: "e.g. landfill, agriculture, wastewater" },
+  { gas: "N2O", gwp: "273", note: "" },
+];
+
+const FACTOR_SOURCES = [
+  {
+    name: "UK Government GHG conversion factors (DEFRA/DESNZ)",
+    url: "https://www.gov.uk/government/collections/government-conversion-factors-for-company-reporting",
+    tier: "National (UK)",
+    note: "This project's primary source for UK activity data. Always links to the current reporting year's release.",
+  },
+  {
+    name: "IEA Emissions Factors (electricity grid, by country)",
+    url: "https://www.iea.org/data-and-statistics/data-product/emissions-factors-2025",
+    tier: "Global, country-specific",
+    note: "Use for Scope 2 grid electricity outside the UK, or to cross-check DEFRA's UK grid factor.",
+  },
+  {
+    name: "IPCC AR6 WGI Ch.7 Supplementary Material (GWP source table)",
+    url: "https://www.ipcc.ch/report/ar6/wg1/downloads/report/IPCC_AR6_WGI_Chapter_07_Supplementary_Material.pdf",
+    tier: "Primary source for GWP values",
+    note: "Table 7.SM.7. The table above is drawn from this document.",
+  },
+];
+
 function downloadTemplate() {
-  // Multi-scope format (Format 3 below) -- the most flexible of the three
-  // supported formats, and the one FileUpload.tsx's parser handles most
-  // robustly. Generated client-side with the same xlsx library already
-  // used to parse uploads, no backend round trip needed.
+  // Structural template only. Deliberately does NOT include invented
+  // emission-factor numbers dressed up as real DEFRA/IEA data -- secondary
+  // sources checked while building this gave contradicting figures for
+  // the same supposedly-official values, so no unverified number goes in
+  // here. Source/Year columns match the persisted emission_factors table
+  // (shared/schema.ts) and this project's sourcing-hierarchy requirement:
+  // every factor must be traceable to where it came from.
   const rows = [
-    { Scope: 1, "Activity Type": "Natural Gas", "Emission Factor": 2.02, Unit: "kg" },
-    { Scope: 1, "Activity Type": "Diesel", "Emission Factor": 2.68, Unit: "litre" },
-    { Scope: 2, "Activity Type": "Electricity", "Emission Factor": 0.42, Unit: "kWh" },
-    { Scope: 3, "Activity Type": "Business Travel", "Emission Factor": 0.14, Unit: "km" },
-    { Scope: 3, "Activity Type": "Paper/Cardboard - Landfill", "Emission Factor": 2100, Unit: "t" },
-    { Scope: 3, "Activity Type": "Paper/Cardboard - Recycling", "Emission Factor": 350, Unit: "t" },
+    { Scope: 1, "Activity Type": "Natural Gas", "Emission Factor": "", Unit: "kWh", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
+    { Scope: 1, "Activity Type": "Diesel", "Emission Factor": "", Unit: "litre", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
+    { Scope: 2, "Activity Type": "Grid Electricity", "Emission Factor": "", Unit: "kWh", Source: "REPLACE - country-specific, see IEA/gov.uk links", Year: "" },
+    { Scope: 3, "Activity Type": "Business Travel - Car", "Emission Factor": "", Unit: "km", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
+    { Scope: 3, "Activity Type": "Paper/Cardboard - Landfill", "Emission Factor": "", Unit: "t", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
+    { Scope: 3, "Activity Type": "Paper/Cardboard - Recycling", "Emission Factor": "", Unit: "t", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
   ];
   const worksheet = utils.json_to_sheet(rows);
-  worksheet["!cols"] = [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 10 }];
+  worksheet["!cols"] = [{ wch: 8 }, { wch: 28 }, { wch: 16 }, { wch: 10 }, { wch: 38 }, { wch: 8 }];
   const workbook = utils.book_new();
   utils.book_append_sheet(workbook, worksheet, "Emission Factors");
   writeFile(workbook, "emission-factors-template.xlsx");
@@ -53,8 +91,65 @@ export default function WasteFactorGuide() {
         </Button>
         
         <div className="space-y-4 mt-4">
+          <div className="border rounded-md p-4 bg-green-50 border-green-200">
+            <h3 className="font-medium text-neutral-800 mb-2">Where to get real, verified emission factors</h3>
+            <p className="text-sm text-neutral-700 mb-3">
+              Follow the emission factor sourcing hierarchy: prefer local or national factors over global defaults, and
+              always record where each factor came from. The three links below are the primary sources this project
+              treats as authoritative.
+            </p>
+            <ul className="space-y-2 text-sm">
+              {FACTOR_SOURCES.map((s) => (
+                <li key={s.url} className="border-b border-green-100 pb-2 last:border-0 last:pb-0">
+                  <a
+                    href={s.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-primary-700 hover:text-primary-900 underline inline-flex items-center gap-1"
+                  >
+                    {s.name}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                  <div className="text-xs text-neutral-600 mt-0.5">
+                    <span className="font-medium">{s.tier}.</span> {s.note}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="border rounded-md p-4 bg-neutral-50">
+            <h3 className="font-medium text-neutral-800 mb-2">IPCC AR6 GWP-100 values (verified)</h3>
+            <p className="text-sm text-neutral-600 mb-3">
+              Used to convert non-CO2 gases to CO2e. GWP-100, without climate-carbon cycle feedbacks, the basis
+              required by the GHG Protocol, CDP, and SBTi. Source: IPCC AR6 WGI Chapter 7 Supplementary Material,
+              Table 7.SM.7.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-neutral-200 border">
+                <thead className="bg-neutral-100">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Gas</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">GWP-100 (AR6)</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">Note</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-neutral-200">
+                  {AR6_GWP_100.map((g) => (
+                    <tr key={g.gas}>
+                      <td className="px-4 py-2 text-sm text-neutral-800 border-r">{g.gas}</td>
+                      <td className="px-4 py-2 text-sm text-neutral-600 border-r">{g.gwp}</td>
+                      <td className="px-4 py-2 text-sm text-neutral-600">{g.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <p className="text-sm text-neutral-600">
-            The calculator supports comprehensive emission factor files with multiple scopes and waste formats:
+            The formats below show how to structure your file. The numbers in these example tables are placeholders
+            to illustrate layout only, not published emission factors, get real values from the sources above.
           </p>
           
           <div className="space-y-4">
