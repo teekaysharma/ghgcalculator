@@ -85,10 +85,24 @@ export default function WasteFactorGuide() {
           </DialogDescription>
         </DialogHeader>
 
-        <Button onClick={downloadTemplate} variant="outline" size="sm" className="w-fit">
-          <Download className="h-4 w-4 mr-1" />
-          Download starter template (.xlsx)
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <a href="/emission-factors-template.xlsx" download>
+            <Button variant="default" size="sm" className="w-fit">
+              <Download className="h-4 w-4 mr-1" />
+              Download DEFRA 2026 factors (3,425 rows, .xlsx)
+            </Button>
+          </a>
+          <Button onClick={downloadTemplate} variant="outline" size="sm" className="w-fit">
+            <Download className="h-4 w-4 mr-1" />
+            Download blank template (format only)
+          </Button>
+        </div>
+        <p className="text-xs text-neutral-500">
+          The first file is the real UK Government GHG Conversion Factors for Company Reporting 2026 dataset (Scope
+          1/2/3 "kg CO2e" total factors, DESNZ, Open Government Licence v3.0), reshaped to this calculator's format
+          with a Source and Year column for traceability. It covers UK activities only, replace electricity and any
+          other location-specific rows with country-appropriate factors for non-UK operations.
+        </p>
         
         <div className="space-y-4 mt-4">
           <div className="border rounded-md p-4 bg-green-50 border-green-200">
