@@ -318,11 +318,19 @@ export default function FileUpload({ onFactorsUploaded }: FileUploadProps) {
             // Check if we have both an activity type and emission factor
             if (activityType && !isNaN(emissionFactor)) {
               const activityKey = `${rowScopePrefix}${activityType.replace(/\s+/g, '_').toLowerCase()}`;
-              
+
+              // Source/year, if the file provides them -- used for audit
+              // traceability (which tier/source a factor came from). Not
+              // required; factors without them still work as before.
+              const sourceValue = row["Source"] || row["Data Source"] || row["Reference"];
+              const yearValue = row["Year"] || row["Factor Year"] || row["Reporting Year"];
+
               factors[activityKey] = {
                 name: activityType,
                 factor: emissionFactor,
                 unit: unit,
+                ...(sourceValue ? { source: String(sourceValue) } : {}),
+                ...(yearValue && !isNaN(parseInt(String(yearValue), 10)) ? { year: parseInt(String(yearValue), 10) } : {}),
               };
               totalFactors++;
             }
