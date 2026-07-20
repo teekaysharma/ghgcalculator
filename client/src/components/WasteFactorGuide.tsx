@@ -10,18 +10,25 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-// Verified against IPCC AR6 WGI Chapter 7 Supplementary Material (Table
-// 7.SM.7), cross-checked against the GHG Protocol's own official GWP
-// reference PDF. GWP-100, without climate-carbon cycle feedbacks -- the
-// basis required by the GHG Protocol Corporate Standard, CDP, and SBTi.
-// Do not add rows to this table without verifying against the primary
-// source first; secondary/blog sources for GWP and emission factor figures
-// have been found to disagree with each other and with the primary source.
+// Hand-verified against the rendered GHG Protocol PDF pages directly (not
+// an automated bulk extraction -- pdfplumber's table-grid detection was
+// found to misalign columns on several pages of that document and would
+// have silently produced wrong values; see the full 42-gas file linked
+// below for the complete hand-verified set with AR4/AR5/AR6 all shown).
+// Source: GHG Protocol "IPCC Global Warming Potential Values" v2.0,
+// August 7 2024, adapted from IPCC AR6 (2021). GWP-100, no climate-carbon
+// feedback -- the basis required by the GHG Protocol, CDP, and SBTi.
 const AR6_GWP_100 = [
   { gas: "CO2", gwp: "1", note: "Reference gas" },
   { gas: "CH4 (fossil)", gwp: "29.8", note: "Combustion, fugitive, process sources" },
   { gas: "CH4 (biogenic/non-fossil)", gwp: "27.0", note: "e.g. landfill, agriculture, wastewater" },
   { gas: "N2O", gwp: "273", note: "" },
+  { gas: "SF6", gwp: "24,300", note: "Switchgear, electrical insulation" },
+  { gas: "NF3", gwp: "17,400", note: "Semiconductor manufacturing" },
+  { gas: "HFC-134a", gwp: "1,530", note: "Common refrigerant (R-134a)" },
+  { gas: "HFC-32", gwp: "771", note: "Common refrigerant (R-32)" },
+  { gas: "HFC-125", gwp: "3,740", note: "Common refrigerant blend component" },
+  { gas: "HFC-143a", gwp: "5,810", note: "Common refrigerant blend component" },
 ];
 
 const FACTOR_SOURCES = [
@@ -38,10 +45,16 @@ const FACTOR_SOURCES = [
     note: "Use for Scope 2 grid electricity outside the UK, or to cross-check DEFRA's UK grid factor.",
   },
   {
+    name: "GHG Protocol: IPCC Global Warming Potential Values (PDF)",
+    url: "https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf",
+    tier: "Full GWP list (~270 gases)",
+    note: "GHG Protocol's own hosted copy, includes the full Annex 1 (CFCs, HCFCs, halons, exotic solvents) not bundled in this app's download below.",
+  },
+  {
     name: "IPCC AR6 WGI Ch.7 Supplementary Material (GWP source table)",
     url: "https://www.ipcc.ch/report/ar6/wg1/downloads/report/IPCC_AR6_WGI_Chapter_07_Supplementary_Material.pdf",
     tier: "Primary source for GWP values",
-    note: "Table 7.SM.7. The table above is drawn from this document.",
+    note: "Table 7.SM.7. What the GHG Protocol PDF above is itself adapted from.",
   },
 ];
 
@@ -92,16 +105,25 @@ export default function WasteFactorGuide() {
               Download DEFRA 2026 factors (3,425 rows, .xlsx)
             </Button>
           </a>
+          <a href="/gwp-ar6-reference.xlsx" download>
+            <Button variant="default" size="sm" className="w-fit">
+              <Download className="h-4 w-4 mr-1" />
+              Download AR6 GWP reference (42 gases, .xlsx)
+            </Button>
+          </a>
           <Button onClick={downloadTemplate} variant="outline" size="sm" className="w-fit">
             <Download className="h-4 w-4 mr-1" />
             Download blank template (format only)
           </Button>
         </div>
         <p className="text-xs text-neutral-500">
-          The first file is the real UK Government GHG Conversion Factors for Company Reporting 2026 dataset (Scope
-          1/2/3 "kg CO2e" total factors, DESNZ, Open Government Licence v3.0), reshaped to this calculator's format
-          with a Source and Year column for traceability. It covers UK activities only, replace electricity and any
-          other location-specific rows with country-appropriate factors for non-UK operations.
+          The DEFRA file is the real UK Government GHG Conversion Factors for Company Reporting 2026 dataset (Scope
+          1/2/3 "kg CO2e" total factors, DESNZ, Open Government Licence v3.0). The GWP file covers CO2, CH4, N2O,
+          SF6, NF3, and every standard refrigerant HFC/PFC with AR4/AR5/AR6 values side by side, hand-verified
+          against the GHG Protocol's official PDF (not bulk-extracted, see the note in that file's Read Me sheet for
+          why). Both are reshaped to this calculator's format with Source/Year columns for traceability. DEFRA
+          covers UK activities only, replace electricity and other location-specific rows with country-appropriate
+          factors for non-UK operations.
         </p>
         
         <div className="space-y-4 mt-4">
@@ -136,8 +158,8 @@ export default function WasteFactorGuide() {
             <h3 className="font-medium text-neutral-800 mb-2">IPCC AR6 GWP-100 values (verified)</h3>
             <p className="text-sm text-neutral-600 mb-3">
               Used to convert non-CO2 gases to CO2e. GWP-100, without climate-carbon cycle feedbacks, the basis
-              required by the GHG Protocol, CDP, and SBTi. Source: IPCC AR6 WGI Chapter 7 Supplementary Material,
-              Table 7.SM.7.
+              required by the GHG Protocol, CDP, and SBTi. Quick reference below, common gases only, the full
+              42-gas file (download above) has AR4/AR5/AR6 side by side for every standard refrigerant HFC and PFC.
             </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-neutral-200 border">
