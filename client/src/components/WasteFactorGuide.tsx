@@ -10,14 +10,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-// Hand-verified against the rendered GHG Protocol PDF pages directly (not
-// an automated bulk extraction -- pdfplumber's table-grid detection was
-// found to misalign columns on several pages of that document and would
-// have silently produced wrong values; see the full 42-gas file linked
-// below for the complete hand-verified set with AR4/AR5/AR6 all shown).
-// Source: GHG Protocol "IPCC Global Warming Potential Values" v2.0,
-// August 7 2024, adapted from IPCC AR6 (2021). GWP-100, no climate-carbon
-// feedback -- the basis required by the GHG Protocol, CDP, and SBTi.
+// Hand-verified inline quick-reference (10 common gases). The downloadable
+// file linked below has the full 268-gas set, extracted using position-
+// based column matching (not table-grid detection, which was found to
+// misalign columns on this specific document -- see that file's Read Me
+// sheet for the full explanation) and validated against the source PDF's
+// rendered pages before shipping.
 const AR6_GWP_100 = [
   { gas: "CO2", gwp: "1", note: "Reference gas" },
   { gas: "CH4 (fossil)", gwp: "29.8", note: "Combustion, fugitive, process sources" },
@@ -48,7 +46,7 @@ const FACTOR_SOURCES = [
     name: "GHG Protocol: IPCC Global Warming Potential Values (PDF)",
     url: "https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf",
     tier: "Full GWP list (~270 gases)",
-    note: "GHG Protocol's own hosted copy, includes the full Annex 1 (CFCs, HCFCs, halons, exotic solvents) not bundled in this app's download below.",
+    note: "GHG Protocol's own hosted copy, the primary source this app's downloadable GWP file (below) was extracted from.",
   },
   {
     name: "IPCC AR6 WGI Ch.7 Supplementary Material (GWP source table)",
@@ -108,7 +106,7 @@ export default function WasteFactorGuide() {
           <a href="/gwp-ar6-reference.xlsx" download>
             <Button variant="default" size="sm" className="w-fit">
               <Download className="h-4 w-4 mr-1" />
-              Download AR6 GWP reference (42 gases, .xlsx)
+              Download AR6 GWP reference (268 gases, full set, .xlsx)
             </Button>
           </a>
           <Button onClick={downloadTemplate} variant="outline" size="sm" className="w-fit">
@@ -159,7 +157,8 @@ export default function WasteFactorGuide() {
             <p className="text-sm text-neutral-600 mb-3">
               Used to convert non-CO2 gases to CO2e. GWP-100, without climate-carbon cycle feedbacks, the basis
               required by the GHG Protocol, CDP, and SBTi. Quick reference below, common gases only, the full
-              42-gas file (download above) has AR4/AR5/AR6 side by side for every standard refrigerant HFC and PFC.
+              full 268-gas file (download above) covers every gas in the source document: standard refrigerant
+              HFCs/PFCs plus the full Annex 1 list (CFCs, HCFCs, halons, industrial solvents), AR4/AR5/AR6 side by side.
             </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-neutral-200 border">
