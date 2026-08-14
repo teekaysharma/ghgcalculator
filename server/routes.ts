@@ -664,7 +664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ reportingBoundary: boundary });
   });
 
-  const recalculateSchema = z.object({ reason: z.string().min(1, "A reason is required to recalculate a finalized report") });
+  const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });
 
   app.patch("/api/reporting-boundaries/:id/recalculate", requireAuth, requireOrg, async (req, res) => {
     const id = Number(req.params.id);
