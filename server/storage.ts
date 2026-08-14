@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   organizations,
@@ -9,6 +9,23 @@ import {
   reportingEntities,
   facilities,
   reportingBoundaries,
+  facilityIdentifiers,
+  facilityContacts,
+  facilityProducts,
+  sourceStreams,
+  calculationApproaches,
+  measurementBasedApproaches,
+  fallbackApproaches,
+  methaneReports,
+  dataQualityRecords,
+  verificationFindings,
+  managementQaRecords,
+  mitigationMeasures,
+  primaryActivityTypes,
+  productBenchmarks,
+  isicDivisions,
+  ipccDefaultFactors,
+  gwpValues,
   type Organization,
   type InsertOrganization,
   type User,
@@ -25,6 +42,35 @@ import {
   type InsertFacility,
   type ReportingBoundary,
   type InsertReportingBoundary,
+  type FacilityIdentifier,
+  type InsertFacilityIdentifier,
+  type FacilityContact,
+  type InsertFacilityContact,
+  type FacilityProduct,
+  type InsertFacilityProduct,
+  type SourceStream,
+  type InsertSourceStream,
+  type CalculationApproach,
+  type InsertCalculationApproach,
+  type MeasurementBasedApproach,
+  type InsertMeasurementBasedApproach,
+  type FallbackApproach,
+  type InsertFallbackApproach,
+  type MethaneReport,
+  type InsertMethaneReport,
+  type DataQualityRecord,
+  type InsertDataQualityRecord,
+  type VerificationFinding,
+  type InsertVerificationFinding,
+  type ManagementQaRecord,
+  type InsertManagementQaRecord,
+  type MitigationMeasure,
+  type InsertMitigationMeasure,
+  type PrimaryActivityType,
+  type ProductBenchmark,
+  type IsicDivision,
+  type IpccDefaultFactor,
+  type GwpValue,
 } from "@shared/schema";
 
 // -----------------------------------------------------------------------
@@ -61,6 +107,21 @@ export interface IStorage {
   // Emission records (tenant-scoped, persisted calculation results)
   createEmissionRecords(organizationId: number, records: Omit<InsertEmissionRecordRow, "organizationId">[]): Promise<EmissionRecordRow[]>;
   listEmissionRecords(organizationId: number): Promise<EmissionRecordRow[]>;
+  upsertEmissionRecordForCalculationApproach(data: {
+    organizationId: number;
+    facilityId: number;
+    sourceStreamId: number;
+    calculationApproachId: number;
+    reportingBoundaryId: number;
+    createdBy: number;
+    scope: string;
+    activity: string;
+    unit: string;
+    quantity: string;
+    factor: string;
+    emission: string;
+    gasBreakdown: unknown;
+  }): Promise<EmissionRecordRow>;
 
   // ISO 14064-1 boundary setup (tenant-scoped). See PROJECT INSTRUCTIONS ->
   // reconciliation with codex/review-code-for-gaps-and-improvements.
@@ -80,6 +141,79 @@ export interface IStorage {
   listReportingBoundaries(organizationId: number): Promise<ReportingBoundary[]>;
   updateReportingBoundary(organizationId: number, id: number, data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description">>): Promise<ReportingBoundary | undefined>;
   deleteReportingBoundary(organizationId: number, id: number): Promise<boolean>;
+
+  // -----------------------------------------------------------------------
+  // Facility-level MRV granularity layer. See shared/schema.ts "Facility-
+  // level MRV granularity layer" section header for provenance/context.
+  // -----------------------------------------------------------------------
+
+  // Facility identifiers (1:1 per facility, unique on facilityId)
+  getFacilityIdentifier(organizationId: number, facilityId: number): Promise<FacilityIdentifier | undefined>;
+  upsertFacilityIdentifier(data: InsertFacilityIdentifier): Promise<FacilityIdentifier>;
+
+  // Facility contacts (many per facility)
+  createFacilityContact(contact: InsertFacilityContact): Promise<FacilityContact>;
+  listFacilityContacts(organizationId: number, facilityId: number): Promise<FacilityContact[]>;
+  updateFacilityContact(organizationId: number, id: number, data: Partial<Omit<InsertFacilityContact, "organizationId" | "facilityId">>): Promise<FacilityContact | undefined>;
+  deleteFacilityContact(organizationId: number, id: number): Promise<boolean>;
+
+  // Facility products (many per facility)
+  createFacilityProduct(product: InsertFacilityProduct): Promise<FacilityProduct>;
+  listFacilityProducts(organizationId: number, facilityId: number): Promise<FacilityProduct[]>;
+  updateFacilityProduct(organizationId: number, id: number, data: Partial<Omit<InsertFacilityProduct, "organizationId" | "facilityId">>): Promise<FacilityProduct | undefined>;
+  deleteFacilityProduct(organizationId: number, id: number): Promise<boolean>;
+
+  // Source streams (many per facility+reportingBoundary) -- the core new entity
+  createSourceStream(stream: InsertSourceStream): Promise<SourceStream>;
+  listSourceStreams(organizationId: number, reportingBoundaryId: number): Promise<SourceStream[]>;
+  getSourceStream(organizationId: number, id: number): Promise<SourceStream | undefined>;
+  updateSourceStream(organizationId: number, id: number, data: Partial<Omit<InsertSourceStream, "organizationId" | "facilityId" | "reportingBoundaryId">>): Promise<SourceStream | undefined>;
+  deleteSourceStream(organizationId: number, id: number): Promise<boolean>;
+
+  // Calculation approaches (1:1 per source stream, unique on sourceStreamId)
+  upsertCalculationApproach(data: InsertCalculationApproach): Promise<CalculationApproach>;
+  getCalculationApproach(organizationId: number, sourceStreamId: number): Promise<CalculationApproach | undefined>;
+
+  // Measurement-based approaches (1:1 per source stream, unique on sourceStreamId)
+  upsertMeasurementBasedApproach(data: InsertMeasurementBasedApproach): Promise<MeasurementBasedApproach>;
+  getMeasurementBasedApproach(organizationId: number, sourceStreamId: number): Promise<MeasurementBasedApproach | undefined>;
+
+  // Fallback approaches (1:1 per source stream, unique on sourceStreamId)
+  upsertFallbackApproach(data: InsertFallbackApproach): Promise<FallbackApproach>;
+  getFallbackApproach(organizationId: number, sourceStreamId: number): Promise<FallbackApproach | undefined>;
+
+  // Methane reports (1 per facility+reportingBoundary, unique on the pair)
+  upsertMethaneReport(data: InsertMethaneReport): Promise<MethaneReport>;
+  getMethaneReport(organizationId: number, facilityId: number, reportingBoundaryId: number): Promise<MethaneReport | undefined>;
+
+  // Data quality records (1:1 per source stream, unique on sourceStreamId)
+  upsertDataQualityRecord(data: InsertDataQualityRecord): Promise<DataQualityRecord>;
+  getDataQualityRecord(organizationId: number, sourceStreamId: number): Promise<DataQualityRecord | undefined>;
+
+  // Verification findings (many per reportingBoundary)
+  createVerificationFinding(finding: InsertVerificationFinding): Promise<VerificationFinding>;
+  listVerificationFindings(organizationId: number, reportingBoundaryId: number): Promise<VerificationFinding[]>;
+  updateVerificationFinding(organizationId: number, id: number, data: Partial<Omit<InsertVerificationFinding, "organizationId" | "reportingBoundaryId">>): Promise<VerificationFinding | undefined>;
+  deleteVerificationFinding(organizationId: number, id: number): Promise<boolean>;
+
+  // Management QA records (many per reportingBoundary)
+  createManagementQaRecord(record: InsertManagementQaRecord): Promise<ManagementQaRecord>;
+  listManagementQaRecords(organizationId: number, reportingBoundaryId: number): Promise<ManagementQaRecord[]>;
+  updateManagementQaRecord(organizationId: number, id: number, data: Partial<Omit<InsertManagementQaRecord, "organizationId" | "reportingBoundaryId">>): Promise<ManagementQaRecord | undefined>;
+  deleteManagementQaRecord(organizationId: number, id: number): Promise<boolean>;
+
+  // Mitigation measures (many per facility)
+  createMitigationMeasure(measure: InsertMitigationMeasure): Promise<MitigationMeasure>;
+  listMitigationMeasures(organizationId: number, facilityId: number): Promise<MitigationMeasure[]>;
+  updateMitigationMeasure(organizationId: number, id: number, data: Partial<Omit<InsertMitigationMeasure, "organizationId" | "facilityId">>): Promise<MitigationMeasure | undefined>;
+  deleteMitigationMeasure(organizationId: number, id: number): Promise<boolean>;
+
+  // Reference data (global, not tenant-scoped, read-only)
+  listPrimaryActivityTypes(): Promise<PrimaryActivityType[]>;
+  listProductBenchmarks(): Promise<ProductBenchmark[]>;
+  listIsicDivisions(): Promise<IsicDivision[]>;
+  listIpccDefaultFactors(): Promise<IpccDefaultFactor[]>;
+  listGwpValues(): Promise<GwpValue[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -156,7 +290,34 @@ export class DbStorage implements IStorage {
   ): Promise<EmissionFactorRow[]> {
     if (factors.length === 0) return [];
     const rows = factors.map((f) => ({ ...f, organizationId }));
-    return db.insert(emissionFactorsTable).values(rows).returning();
+    // onConflictDoUpdate on (organizationId, name): re-uploading a file that
+    // repeats an activity name (fixing a typo, refreshing the same batch)
+    // updates that row in place instead of throwing a unique-constraint
+    // error. Safe without the extra setWhere org-scoping guard the other
+    // upsertX methods in this file need -- organizationId is itself part
+    // of this composite conflict target, so a conflict can only ever be
+    // against a row already scoped to the same org.
+    return db
+      .insert(emissionFactorsTable)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: [emissionFactorsTable.organizationId, emissionFactorsTable.name],
+        set: {
+          factor: sql`excluded.factor`,
+          unit: sql`excluded.unit`,
+          scope: sql`excluded.scope`,
+          category: sql`excluded.category`,
+          wasteType: sql`excluded.waste_type`,
+          disposalMethod: sql`excluded.disposal_method`,
+          source: sql`excluded.source`,
+          year: sql`excluded.year`,
+          sourceUrl: sql`excluded.source_url`,
+          authorityName: sql`excluded.authority_name`,
+          sourceTier: sql`excluded.source_tier`,
+          uploadedBy: sql`excluded.uploaded_by`,
+        },
+      })
+      .returning();
   }
 
   async listEmissionFactors(organizationId: number): Promise<EmissionFactorRow[]> {
@@ -190,6 +351,36 @@ export class DbStorage implements IStorage {
       .from(emissionRecordsTable)
       .where(eq(emissionRecordsTable.organizationId, organizationId))
       .orderBy(desc(emissionRecordsTable.createdAt));
+  }
+
+  async upsertEmissionRecordForCalculationApproach(data: {
+    organizationId: number;
+    facilityId: number;
+    sourceStreamId: number;
+    calculationApproachId: number;
+    reportingBoundaryId: number;
+    createdBy: number;
+    scope: string;
+    activity: string;
+    unit: string;
+    quantity: string;
+    factor: string;
+    emission: string;
+    gasBreakdown: unknown;
+  }): Promise<EmissionRecordRow> {
+    const [row] = await db
+      .insert(emissionRecordsTable)
+      .values(data)
+      .onConflictDoUpdate({
+        target: emissionRecordsTable.calculationApproachId,
+        set: data,
+        setWhere: eq(emissionRecordsTable.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertEmissionRecordForCalculationApproach: conflicting row belongs to a different organization");
+    }
+    return row;
   }
 
   // --- ISO 14064-1 boundary setup ---
@@ -310,6 +501,412 @@ export class DbStorage implements IStorage {
       .where(and(eq(reportingBoundaries.id, id), eq(reportingBoundaries.organizationId, organizationId)))
       .returning({ id: reportingBoundaries.id });
     return deleted.length > 0;
+  }
+
+  // --- Facility-level MRV granularity layer ---
+
+  async getFacilityIdentifier(organizationId: number, facilityId: number): Promise<FacilityIdentifier | undefined> {
+    const [row] = await db
+      .select()
+      .from(facilityIdentifiers)
+      .where(and(eq(facilityIdentifiers.facilityId, facilityId), eq(facilityIdentifiers.organizationId, organizationId)));
+    return row;
+  }
+
+  async upsertFacilityIdentifier(data: InsertFacilityIdentifier): Promise<FacilityIdentifier> {
+    const [row] = await db
+      .insert(facilityIdentifiers)
+      .values(data)
+      .onConflictDoUpdate({
+        target: facilityIdentifiers.facilityId,
+        set: data,
+        setWhere: eq(facilityIdentifiers.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertFacilityIdentifier: conflicting row belongs to a different organization");
+    }
+    return row;
+  }
+
+  async createFacilityContact(contact: InsertFacilityContact): Promise<FacilityContact> {
+    const [row] = await db.insert(facilityContacts).values(contact).returning();
+    return row;
+  }
+
+  async listFacilityContacts(organizationId: number, facilityId: number): Promise<FacilityContact[]> {
+    return db
+      .select()
+      .from(facilityContacts)
+      .where(and(eq(facilityContacts.facilityId, facilityId), eq(facilityContacts.organizationId, organizationId)))
+      .orderBy(desc(facilityContacts.createdAt));
+  }
+
+  async updateFacilityContact(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertFacilityContact, "organizationId" | "facilityId">>,
+  ): Promise<FacilityContact | undefined> {
+    const [row] = await db
+      .update(facilityContacts)
+      .set(data)
+      .where(and(eq(facilityContacts.id, id), eq(facilityContacts.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteFacilityContact(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(facilityContacts)
+      .where(and(eq(facilityContacts.id, id), eq(facilityContacts.organizationId, organizationId)))
+      .returning({ id: facilityContacts.id });
+    return deleted.length > 0;
+  }
+
+  async createFacilityProduct(product: InsertFacilityProduct): Promise<FacilityProduct> {
+    const [row] = await db.insert(facilityProducts).values(product).returning();
+    return row;
+  }
+
+  async listFacilityProducts(organizationId: number, facilityId: number): Promise<FacilityProduct[]> {
+    return db
+      .select()
+      .from(facilityProducts)
+      .where(and(eq(facilityProducts.facilityId, facilityId), eq(facilityProducts.organizationId, organizationId)))
+      .orderBy(desc(facilityProducts.createdAt));
+  }
+
+  async updateFacilityProduct(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertFacilityProduct, "organizationId" | "facilityId">>,
+  ): Promise<FacilityProduct | undefined> {
+    const [row] = await db
+      .update(facilityProducts)
+      .set(data)
+      .where(and(eq(facilityProducts.id, id), eq(facilityProducts.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteFacilityProduct(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(facilityProducts)
+      .where(and(eq(facilityProducts.id, id), eq(facilityProducts.organizationId, organizationId)))
+      .returning({ id: facilityProducts.id });
+    return deleted.length > 0;
+  }
+
+  async createSourceStream(stream: InsertSourceStream): Promise<SourceStream> {
+    const [row] = await db.insert(sourceStreams).values(stream).returning();
+    return row;
+  }
+
+  async listSourceStreams(organizationId: number, reportingBoundaryId: number): Promise<SourceStream[]> {
+    return db
+      .select()
+      .from(sourceStreams)
+      .where(and(eq(sourceStreams.reportingBoundaryId, reportingBoundaryId), eq(sourceStreams.organizationId, organizationId)))
+      .orderBy(desc(sourceStreams.createdAt));
+  }
+
+  async getSourceStream(organizationId: number, id: number): Promise<SourceStream | undefined> {
+    const [row] = await db
+      .select()
+      .from(sourceStreams)
+      .where(and(eq(sourceStreams.id, id), eq(sourceStreams.organizationId, organizationId)));
+    return row;
+  }
+
+  async updateSourceStream(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertSourceStream, "organizationId" | "facilityId" | "reportingBoundaryId">>,
+  ): Promise<SourceStream | undefined> {
+    const [row] = await db
+      .update(sourceStreams)
+      .set(data)
+      .where(and(eq(sourceStreams.id, id), eq(sourceStreams.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteSourceStream(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(sourceStreams)
+      .where(and(eq(sourceStreams.id, id), eq(sourceStreams.organizationId, organizationId)))
+      .returning({ id: sourceStreams.id });
+    return deleted.length > 0;
+  }
+
+  async upsertCalculationApproach(data: InsertCalculationApproach): Promise<CalculationApproach> {
+    const [row] = await db
+      .insert(calculationApproaches)
+      .values(data)
+      .onConflictDoUpdate({
+        target: calculationApproaches.sourceStreamId,
+        set: data,
+        setWhere: eq(calculationApproaches.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertCalculationApproach: conflicting row belongs to a different organization");
+    }
+    return row;
+  }
+
+  async getCalculationApproach(organizationId: number, sourceStreamId: number): Promise<CalculationApproach | undefined> {
+    const [row] = await db
+      .select()
+      .from(calculationApproaches)
+      .where(and(eq(calculationApproaches.sourceStreamId, sourceStreamId), eq(calculationApproaches.organizationId, organizationId)));
+    return row;
+  }
+
+  async upsertMeasurementBasedApproach(data: InsertMeasurementBasedApproach): Promise<MeasurementBasedApproach> {
+    const [row] = await db
+      .insert(measurementBasedApproaches)
+      .values(data)
+      .onConflictDoUpdate({
+        target: measurementBasedApproaches.sourceStreamId,
+        set: data,
+        setWhere: eq(measurementBasedApproaches.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertMeasurementBasedApproach: conflicting row belongs to a different organization");
+    }
+    return row;
+  }
+
+  async getMeasurementBasedApproach(
+    organizationId: number,
+    sourceStreamId: number,
+  ): Promise<MeasurementBasedApproach | undefined> {
+    const [row] = await db
+      .select()
+      .from(measurementBasedApproaches)
+      .where(
+        and(
+          eq(measurementBasedApproaches.sourceStreamId, sourceStreamId),
+          eq(measurementBasedApproaches.organizationId, organizationId),
+        ),
+      );
+    return row;
+  }
+
+  async upsertFallbackApproach(data: InsertFallbackApproach): Promise<FallbackApproach> {
+    const [row] = await db
+      .insert(fallbackApproaches)
+      .values(data)
+      .onConflictDoUpdate({
+        target: fallbackApproaches.sourceStreamId,
+        set: data,
+        setWhere: eq(fallbackApproaches.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertFallbackApproach: conflicting row belongs to a different organization");
+    }
+    return row;
+  }
+
+  async getFallbackApproach(organizationId: number, sourceStreamId: number): Promise<FallbackApproach | undefined> {
+    const [row] = await db
+      .select()
+      .from(fallbackApproaches)
+      .where(and(eq(fallbackApproaches.sourceStreamId, sourceStreamId), eq(fallbackApproaches.organizationId, organizationId)));
+    return row;
+  }
+
+  async upsertMethaneReport(data: InsertMethaneReport): Promise<MethaneReport> {
+    const [row] = await db
+      .insert(methaneReports)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [methaneReports.facilityId, methaneReports.reportingBoundaryId],
+        set: data,
+        setWhere: eq(methaneReports.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertMethaneReport: conflicting row belongs to a different organization");
+    }
+    return row;
+  }
+
+  async getMethaneReport(
+    organizationId: number,
+    facilityId: number,
+    reportingBoundaryId: number,
+  ): Promise<MethaneReport | undefined> {
+    const [row] = await db
+      .select()
+      .from(methaneReports)
+      .where(
+        and(
+          eq(methaneReports.organizationId, organizationId),
+          eq(methaneReports.facilityId, facilityId),
+          eq(methaneReports.reportingBoundaryId, reportingBoundaryId),
+        ),
+      );
+    return row;
+  }
+
+  async upsertDataQualityRecord(data: InsertDataQualityRecord): Promise<DataQualityRecord> {
+    const [row] = await db
+      .insert(dataQualityRecords)
+      .values(data)
+      .onConflictDoUpdate({
+        target: dataQualityRecords.sourceStreamId,
+        set: data,
+        setWhere: eq(dataQualityRecords.organizationId, data.organizationId),
+      })
+      .returning();
+    if (!row) {
+      throw new Error("upsertDataQualityRecord: conflicting row belongs to a different organization");
+    }
+    return row;
+  }
+
+  async getDataQualityRecord(organizationId: number, sourceStreamId: number): Promise<DataQualityRecord | undefined> {
+    const [row] = await db
+      .select()
+      .from(dataQualityRecords)
+      .where(and(eq(dataQualityRecords.sourceStreamId, sourceStreamId), eq(dataQualityRecords.organizationId, organizationId)));
+    return row;
+  }
+
+  async createVerificationFinding(finding: InsertVerificationFinding): Promise<VerificationFinding> {
+    const [row] = await db.insert(verificationFindings).values(finding).returning();
+    return row;
+  }
+
+  async listVerificationFindings(organizationId: number, reportingBoundaryId: number): Promise<VerificationFinding[]> {
+    return db
+      .select()
+      .from(verificationFindings)
+      .where(
+        and(
+          eq(verificationFindings.reportingBoundaryId, reportingBoundaryId),
+          eq(verificationFindings.organizationId, organizationId),
+        ),
+      )
+      .orderBy(desc(verificationFindings.createdAt));
+  }
+
+  async updateVerificationFinding(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertVerificationFinding, "organizationId" | "reportingBoundaryId">>,
+  ): Promise<VerificationFinding | undefined> {
+    const [row] = await db
+      .update(verificationFindings)
+      .set(data)
+      .where(and(eq(verificationFindings.id, id), eq(verificationFindings.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteVerificationFinding(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(verificationFindings)
+      .where(and(eq(verificationFindings.id, id), eq(verificationFindings.organizationId, organizationId)))
+      .returning({ id: verificationFindings.id });
+    return deleted.length > 0;
+  }
+
+  async createManagementQaRecord(record: InsertManagementQaRecord): Promise<ManagementQaRecord> {
+    const [row] = await db.insert(managementQaRecords).values(record).returning();
+    return row;
+  }
+
+  async listManagementQaRecords(organizationId: number, reportingBoundaryId: number): Promise<ManagementQaRecord[]> {
+    return db
+      .select()
+      .from(managementQaRecords)
+      .where(
+        and(
+          eq(managementQaRecords.reportingBoundaryId, reportingBoundaryId),
+          eq(managementQaRecords.organizationId, organizationId),
+        ),
+      )
+      .orderBy(desc(managementQaRecords.createdAt));
+  }
+
+  async updateManagementQaRecord(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertManagementQaRecord, "organizationId" | "reportingBoundaryId">>,
+  ): Promise<ManagementQaRecord | undefined> {
+    const [row] = await db
+      .update(managementQaRecords)
+      .set(data)
+      .where(and(eq(managementQaRecords.id, id), eq(managementQaRecords.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteManagementQaRecord(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(managementQaRecords)
+      .where(and(eq(managementQaRecords.id, id), eq(managementQaRecords.organizationId, organizationId)))
+      .returning({ id: managementQaRecords.id });
+    return deleted.length > 0;
+  }
+
+  async createMitigationMeasure(measure: InsertMitigationMeasure): Promise<MitigationMeasure> {
+    const [row] = await db.insert(mitigationMeasures).values(measure).returning();
+    return row;
+  }
+
+  async listMitigationMeasures(organizationId: number, facilityId: number): Promise<MitigationMeasure[]> {
+    return db
+      .select()
+      .from(mitigationMeasures)
+      .where(and(eq(mitigationMeasures.facilityId, facilityId), eq(mitigationMeasures.organizationId, organizationId)))
+      .orderBy(desc(mitigationMeasures.createdAt));
+  }
+
+  async updateMitigationMeasure(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertMitigationMeasure, "organizationId" | "facilityId">>,
+  ): Promise<MitigationMeasure | undefined> {
+    const [row] = await db
+      .update(mitigationMeasures)
+      .set(data)
+      .where(and(eq(mitigationMeasures.id, id), eq(mitigationMeasures.organizationId, organizationId)))
+      .returning();
+    return row;
+  }
+
+  async deleteMitigationMeasure(organizationId: number, id: number): Promise<boolean> {
+    const deleted = await db
+      .delete(mitigationMeasures)
+      .where(and(eq(mitigationMeasures.id, id), eq(mitigationMeasures.organizationId, organizationId)))
+      .returning({ id: mitigationMeasures.id });
+    return deleted.length > 0;
+  }
+
+  async listPrimaryActivityTypes(): Promise<PrimaryActivityType[]> {
+    return db.select().from(primaryActivityTypes);
+  }
+
+  async listProductBenchmarks(): Promise<ProductBenchmark[]> {
+    return db.select().from(productBenchmarks);
+  }
+
+  async listIsicDivisions(): Promise<IsicDivision[]> {
+    return db.select().from(isicDivisions).orderBy(isicDivisions.sectionCode, isicDivisions.divisionCode);
+  }
+
+  async listIpccDefaultFactors(): Promise<IpccDefaultFactor[]> {
+    return db.select().from(ipccDefaultFactors).orderBy(ipccDefaultFactors.category, ipccDefaultFactors.activityType);
+  }
+
+  async listGwpValues(): Promise<GwpValue[]> {
+    return db.select().from(gwpValues).orderBy(gwpValues.gas);
   }
 }
 
