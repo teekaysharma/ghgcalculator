@@ -1112,7 +1112,7 @@ export class DbStorage implements IStorage {
     const streamIdsForBoundary = await db
       .select({ id: sourceStreams.id })
       .from(sourceStreams)
-      .where(eq(sourceStreams.reportingBoundaryId, reportingBoundaryId));
+      .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
     const streamIds = streamIdsForBoundary.map((s) => s.id);
 
     const [dqRecords, findings, qaRecords] = await Promise.all([
