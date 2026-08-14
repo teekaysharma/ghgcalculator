@@ -12,6 +12,7 @@ import TeamPanel from "@/components/TeamPanel";
 import EmissionCalculator from "@/components/EmissionCalculator";
 import FacilityProfile from "@/components/FacilityProfile";
 import BoundaryWorkspace from "@/components/BoundaryWorkspace";
+import OrganizationReport from "@/components/OrganizationReport";
 
 // Top-level navigation shell for the whole app. No new wouter routes are added --
 // section switching is plain useState, matching the rest of this app (only
@@ -26,7 +27,7 @@ import BoundaryWorkspace from "@/components/BoundaryWorkspace";
 //   POST /api/reporting-boundaries   -> { boundary }  (singular "boundary", NOT "reportingBoundary" -- confirmed by
 //                                        reading the route handler's res.json call directly)
 
-type Section = "setup" | "facilities" | "boundary" | "calculator" | "team";
+type Section = "setup" | "facilities" | "boundary" | "report" | "calculator" | "team";
 
 interface ReportingEntity {
   id: number;
@@ -55,6 +56,7 @@ const NAV_ITEMS: { key: Section; label: string; description: string }[] = [
   { key: "setup", label: "Setup", description: "Create the reporting entity, first facility, and reporting boundary this inventory needs." },
   { key: "facilities", label: "Facilities", description: "Manage facilities and their identifiers, contacts, products, and mitigation measures." },
   { key: "boundary", label: "Boundary Workspace", description: "Source streams, methane reporting, verification findings, and management QA for one facility and reporting year." },
+  { key: "report", label: "Organization Report", description: "The consolidated, auditable emissions report across every facility for a reporting year." },
   { key: "calculator", label: "Scope 1/2/3 Calculator", description: "The original quick emissions calculator, usable independently of the facility-level model above." },
   { key: "team", label: "Team", description: "Manage who has access to your organization." },
 ];
@@ -97,6 +99,7 @@ export default function AppShell() {
         )}
         {section === "facilities" && <FacilitiesSection onNavigate={setSection} />}
         {section === "boundary" && <BoundaryWorkspaceSection onNavigate={setSection} />}
+        {section === "report" && <OrganizationReportSection />}
         {section === "calculator" && <EmissionCalculator />}
         {section === "team" && <TeamPanel />}
       </div>
@@ -371,6 +374,36 @@ function BoundaryWorkspaceSection({ onNavigate }: { onNavigate: (section: Sectio
           Select a reporting entity, year, and facility above to open the boundary workspace.
         </p>
       )}
+    </div>
+  );
+}
+
+function OrganizationReportSection() {
+  const boundariesQuery = useQuery<{ reportingBoundaries: ReportingBoundary[] }>({ queryKey: ["/api/reporting-boundaries"] });
+  const boundaries = boundariesQuery.data?.reportingBoundaries ?? [];
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  if (boundariesQuery.isLoading) return <div className="text-sm text-neutral-500 py-8 text-center">Loading...</div>;
+  if (boundaries.length === 0) {
+    return <p className="text-sm text-neutral-500">No reporting boundaries yet. Create one in Boundary Workspace first.</p>;
+  }
+
+  const activeId = selectedId ?? boundaries[0].id;
+
+  return (
+    <div className="space-y-4">
+      <select
+        className="border rounded-md px-3 py-2 text-sm"
+        value={activeId}
+        onChange={(e) => setSelectedId(Number(e.target.value))}
+      >
+        {boundaries.map((b) => (
+          <option key={b.id} value={b.id}>
+            Reporting year {b.reportingYear} ({b.consolidationApproach})
+          </option>
+        ))}
+      </select>
+      <OrganizationReport reportingBoundaryId={activeId} />
     </div>
   );
 }
