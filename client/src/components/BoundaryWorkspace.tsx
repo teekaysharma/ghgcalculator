@@ -14,6 +14,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { EmissionFactorPicker, type EmissionFactorSelection } from "@/components/EmissionFactorPicker";
+import type { GasComponent } from "@/types/emissions";
 
 // Route paths and response envelope keys below were confirmed by reading
 // server/routes.ts directly this session, not guessed. This includes the two
@@ -678,6 +679,24 @@ function DataQualitySection({ sourceStreamId }: { sourceStreamId: number }) {
   });
   const existing = query.data?.dataQualityRecord ?? null;
 
+  // Same queryKey as CalculationApproachForm's query above -- react-query
+  // dedupes/caches by key, so this doesn't issue a duplicate request when
+  // both sections are mounted for the same source stream.
+  const calcApproachQuery = useQuery<{ calculationApproach: { gasBreakdown?: GasComponent[] | null } | null }>({
+    queryKey: [`/api/source-streams/${sourceStreamId}/calculation-approach`],
+  });
+
+  // Suggested uncertainty from the CO2 component's published 95% CI (IPCC
+  // source table) -- CO2 dominates combustion CO2e and is the component
+  // most likely to carry a disclosed CI in this dataset. Never auto-filled
+  // into the field below: ISO 14064-3 6.1.3.6.3 expects verifiers to see a
+  // deliberate uncertainty figure, not one that appeared silently.
+  const suggestedUncertaintyPercent = (() => {
+    const co2 = calcApproachQuery.data?.calculationApproach?.gasBreakdown?.find((c) => c.gas === "CO2");
+    if (!co2 || co2.factorLower === undefined || co2.factorUpper === undefined || !co2.nativeFactor) return null;
+    return (((co2.factorUpper - co2.factorLower) / 2 / co2.nativeFactor) * 100).toFixed(1);
+  })();
+
   const [dataQualityTier, setDataQualityTier] = useState(existing?.dataQualityTier ?? "");
   const [uncertaintyPercent, setUncertaintyPercent] = useState(existing?.uncertaintyPercent ?? "");
   const [uncertaintyJustification, setUncertaintyJustification] = useState(existing?.uncertaintyJustification ?? "");
@@ -717,11 +736,22 @@ function DataQualitySection({ sourceStreamId }: { sourceStreamId: number }) {
             <SelectItem value="minimum">Minimum</SelectItem>
           </SelectContent>
         </Select>
-        <Input
-          placeholder="Uncertainty (%)"
-          value={uncertaintyPercent}
-          onChange={(e) => setUncertaintyPercent(e.target.value)}
-        />
+        <div className="space-y-1">
+          <Input
+            placeholder="Uncertainty (%)"
+            value={uncertaintyPercent}
+            onChange={(e) => setUncertaintyPercent(e.target.value)}
+          />
+          {!uncertaintyPercent && suggestedUncertaintyPercent && (
+            <button
+              type="button"
+              className="text-xs text-primary-600 hover:text-primary-800 underline"
+              onClick={() => setUncertaintyPercent(suggestedUncertaintyPercent)}
+            >
+              Use published IPCC uncertainty: ±{suggestedUncertaintyPercent}% (from the selected factor's source table)
+            </button>
+          )}
+        </div>
       </div>
       <Textarea
         placeholder="Uncertainty justification"

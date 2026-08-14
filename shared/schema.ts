@@ -414,6 +414,8 @@ export interface GasComponent {
   gwpVersion: string;
   gwpSource: string;
   co2ePerUnit: number;
+  factorLower?: number;
+  factorUpper?: number;
 }
 
 export interface EmissionFactor {

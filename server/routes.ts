@@ -168,6 +168,14 @@ const calculationApproachSchema = z.object({
         gwpVersion: z.string(),
         gwpSource: z.string(),
         co2ePerUnit: z.number(),
+        // Published 95% CI bounds for nativeFactor, carried through from
+        // ipccDefaultFactors.factorLower/factorUpper (see GasComponent in
+        // shared/schema.ts). Without declaring these here, Zod's default
+        // "strip unknown keys" behavior silently drops them on every save,
+        // which would make DataQualitySection's uncertainty suggestion
+        // permanently empty regardless of what the client sends.
+        factorLower: z.number().optional(),
+        factorUpper: z.number().optional(),
       }),
     )
     .optional(),
