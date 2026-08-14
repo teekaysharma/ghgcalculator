@@ -5,10 +5,7 @@ import rateLimit from "express-rate-limit";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
 import { requireAuth, requireOrg } from "./middleware/tenant";
-import { generateCSV } from "./utils/csv";
 import {
-  Emission,
-  GasComponent,
   ProductData,
   YearlyEmissions,
   ProductIntensity,
@@ -701,16 +698,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ report });
   });
 
-  // Per-facility CSV export of the consolidated report. NOTE: this
-  // deliberately does NOT reuse server/utils/csv.ts's `generateCSV` --
-  // that helper's signature (`generateCSV(emissions: Emission[]): string`)
-  // is hardcoded to the per-activity-line Emission shape (year/product/
-  // scope/scope3Category/activity/unit/quantity/factor/emission) used by
-  // the legacy calculator's download flow. Facility rollup rows here
-  // (facility/country/equityPercent/scope1/scope2/scope3) are a
-  // fundamentally different shape, so forcing them through that helper
-  // would produce a mislabeled/nonsensical CSV. A small local builder is
-  // used instead.
+  // Per-facility CSV export of the consolidated report. Facility rollup rows
+  // here (facility/country/equityPercent/scope1/scope2/scope3) are a
+  // different shape from the per-activity-line rows the retired legacy
+  // calculator's CSV export used to produce, so a small local builder is
+  // used instead of a shared helper.
   const buildFacilityRollupCsv = (rows: { facility: string; country: string; equityPercent: number | string; scope1: number; scope2: number; scope3: number }[]): string => {
     const escapeCsvValue = (value: string | number): string => {
       const stringValue = String(value);
@@ -1416,136 +1408,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/reference/gwp-values", requireAuth, async (_req, res) => {
     const gwpValues = await storage.listGwpValues();
     return res.json({ gwpValues });
-  });
-
-  // Calculate emissions endpoint. Unchanged calculation logic (kept exactly
-  // as verified working on main). What changed: it now requires auth, and
-  // optionally persists results when `persist: true` is sent, instead of
-  // always computing and discarding.
-  app.post("/api/calculate", requireAuth, requireOrg, async (req, res) => {
-    try {
-      const { inputs, emissionFactors, persist } = req.body;
-      
-      if (!inputs || !emissionFactors) {
-        return res.status(400).json({ message: "Missing inputs or emission factors" });
-      }
-
-      // Setup-completeness gate, ported from codex/review-code-for-gaps-and-
-      // improvements. NOTE: this will reject calculation requests from the
-      // existing calculator UI (EmissionCalculator.tsx) until it's updated
-      // to create a reporting entity/facility/boundary first -- that UI
-      // work has not been done yet, see PROJECT INSTRUCTIONS known gaps.
-      const [entities, facilitiesList, boundaries] = await Promise.all([
-        storage.listReportingEntities(req.organizationId!),
-        storage.listFacilities(req.organizationId!),
-        storage.listReportingBoundaries(req.organizationId!),
-      ]);
-      if (entities.length === 0 || facilitiesList.length === 0 || boundaries.length === 0) {
-        return res.status(400).json({
-          message: "Setup incomplete. Configure at least one reporting entity, facility, and reporting boundary before calculation.",
-        });
-      }
-      
-      const results = { scope1: 0, scope2: 0, scope3: 0 };
-      const emissions: Emission[] = [];
-      
-      // Calculate emissions for each scope
-      for (const scope of ['scope1', 'scope2', 'scope3'] as const) {
-        for (const input of inputs[scope]) {
-          // Skip incomplete entries
-          if (!input.activity || !input.unit || !input.qty) continue;
-          
-          const sourceFactor = emissionFactors[input.activity];
-          const factor = sourceFactor?.factor || 0;
-          const emission = factor * input.qty;
-
-          results[scope] += emission;
-
-          // Per-gas audit trail (ISO/TS 14064-4: quantity_i * GWP_i per
-          // gas, disclosed). Only present when the selected factor came
-          // from a multi-gas IPCC bundle (client/src/lib/ipccGasBundle.ts)
-          // -- simple single-number factors (org factors, non-combustion
-          // categories) have no breakdown to report, same as before.
-          const gasBreakdown = sourceFactor?.gasBreakdown?.map((component: GasComponent) => ({
-            gas: component.gas,
-            quantityOfGas: component.nativeFactor * input.qty,
-            gwpValue: component.gwpValue,
-            gwpVersion: component.gwpVersion,
-            gwpSource: component.gwpSource,
-            co2e: component.co2ePerUnit * input.qty,
-          }));
-
-          emissions.push({
-            scope: scope,
-            activity: input.activity,
-            unit: input.unit,
-            quantity: input.qty,
-            factor,
-            emission,
-            year: input.year,
-            product: input.product,
-            scope3Category: input.scope3Category || emissionFactors[input.activity]?.category,
-            gasBreakdown,
-          });
-        }
-      }
-
-      // Opt-in persistence. Existing calculator UI (EmissionCalculator.tsx)
-      // was not built with this in mind, so this defaults to off (compute
-      // and return, same as before) unless the caller explicitly asks for
-      // it. Wiring the calculator UI to pass persist: true is a follow-up,
-      // not done in this branch.
-      if (persist) {
-        const user = req.user as { id: number };
-        await storage.createEmissionRecords(
-          req.organizationId!,
-          emissions.map((e) => ({
-            createdBy: user.id,
-            scope: e.scope,
-            activity: e.activity,
-            unit: e.unit,
-            quantity: String(e.quantity),
-            factor: String(e.factor),
-            emission: String(e.emission),
-            year: e.year ?? null,
-            product: e.product ?? null,
-            wasteType: e.wasteType ?? null,
-            disposalMethod: e.disposalMethod ?? null,
-            scope3Category: e.scope3Category ?? null,
-            gasBreakdown: e.gasBreakdown ?? null,
-          })),
-        );
-      }
-      
-      return res.json({ 
-        results, 
-        emissions 
-      });
-    } catch (error) {
-      console.error("Calculation error:", error);
-      return res.status(500).json({ message: "Failed to calculate emissions" });
-    }
-  });
-  
-  // Download CSV endpoint
-  app.post("/api/download-csv", requireAuth, requireOrg, (req, res) => {
-    try {
-      const { emissions } = req.body;
-      
-      if (!emissions || !Array.isArray(emissions)) {
-        return res.status(400).json({ message: "Invalid emissions data" });
-      }
-      
-      const csv = generateCSV(emissions);
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=GHG_Emissions_Report.csv');
-      
-      return res.send(csv);
-    } catch (error) {
-      console.error("CSV generation error:", error);
-      return res.status(500).json({ message: "Failed to generate CSV" });
-    }
   });
 
   // Calculate yearly comparison

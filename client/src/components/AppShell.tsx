@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import SetupPanel from "@/components/SetupPanel";
 import TeamPanel from "@/components/TeamPanel";
-import EmissionCalculator from "@/components/EmissionCalculator";
 import FacilityProfile from "@/components/FacilityProfile";
 import BoundaryWorkspace from "@/components/BoundaryWorkspace";
 import OrganizationReport from "@/components/OrganizationReport";
@@ -27,7 +26,7 @@ import OrganizationReport from "@/components/OrganizationReport";
 //   POST /api/reporting-boundaries   -> { boundary }  (singular "boundary", NOT "reportingBoundary" -- confirmed by
 //                                        reading the route handler's res.json call directly)
 
-type Section = "setup" | "facilities" | "boundary" | "report" | "calculator" | "team";
+type Section = "setup" | "facilities" | "boundary" | "report" | "team";
 
 interface ReportingEntity {
   id: number;
@@ -57,7 +56,6 @@ const NAV_ITEMS: { key: Section; label: string; description: string }[] = [
   { key: "facilities", label: "Facilities", description: "Manage facilities and their identifiers, contacts, products, and mitigation measures." },
   { key: "boundary", label: "Boundary Workspace", description: "Source streams, methane reporting, verification findings, and management QA for one facility and reporting year." },
   { key: "report", label: "Organization Report", description: "The consolidated, auditable emissions report across every facility for a reporting year." },
-  { key: "calculator", label: "Scope 1/2/3 Calculator", description: "The original quick emissions calculator, usable independently of the facility-level model above." },
   { key: "team", label: "Team", description: "Manage who has access to your organization." },
 ];
 
@@ -92,15 +90,10 @@ export default function AppShell() {
           <p className="text-sm text-neutral-500">{activeItem.description}</p>
         </div>
 
-        {section === "setup" && (
-          <SetupPanel>
-            <EmissionCalculator />
-          </SetupPanel>
-        )}
+        {section === "setup" && <SetupPanel>{null}</SetupPanel>}
         {section === "facilities" && <FacilitiesSection onNavigate={setSection} />}
         {section === "boundary" && <BoundaryWorkspaceSection onNavigate={setSection} />}
         {section === "report" && <OrganizationReportSection />}
-        {section === "calculator" && <EmissionCalculator />}
         {section === "team" && <TeamPanel />}
       </div>
     </div>
