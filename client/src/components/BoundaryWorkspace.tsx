@@ -58,6 +58,7 @@ const SCOPE_3_CATEGORIES = [
 
 interface SourceStream {
   id: number;
+  facilityId: number;
   name: string;
   description: string | null;
   ghgSourceCategory: string | null;
@@ -440,6 +441,11 @@ function SourceStreamDetail({
   const queryClient = useQueryClient();
   const [approach, setApproach] = useState<string>(stream.quantificationApproach ?? "");
 
+  const facilitiesQuery = useQuery<{ facilities: { id: number; country: string | null }[] }>({
+    queryKey: ["/api/facilities"],
+  });
+  const facilityCountry = facilitiesQuery.data?.facilities.find((f) => f.id === stream.facilityId)?.country ?? null;
+
   return (
     <Card className="border-primary-200">
       <CardHeader className="flex flex-row items-start justify-between">
@@ -482,7 +488,7 @@ function SourceStreamDetail({
         )}
 
         {approach === "calculation_based" && (
-          <CalculationApproachForm sourceStreamId={stream.id} scope={stream.scope} />
+          <CalculationApproachForm sourceStreamId={stream.id} scope={stream.scope} facilityCountry={facilityCountry} />
         )}
         {approach === "measurement_based" && <MeasurementApproachForm sourceStreamId={stream.id} />}
         {approach === "fallback" && (
@@ -514,9 +520,11 @@ function SourceStreamDetail({
 function CalculationApproachForm({
   sourceStreamId,
   scope,
+  facilityCountry,
 }: {
   sourceStreamId: number;
   scope: string | null;
+  facilityCountry: string | null;
 }) {
   const { toast } = useToast();
   const query = useQuery<{ calculationApproach: CalculationApproach | null }>({
@@ -574,6 +582,7 @@ function CalculationApproachForm({
 
       <EmissionFactorPicker
         scope={scope}
+        facilityCountry={facilityCountry}
         onSelect={(selection) => {
           setFields((f) => ({
             ...f,

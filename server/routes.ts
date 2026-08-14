@@ -464,6 +464,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceUrl: String(f.sourceUrl).trim(),
         authorityName: String(f.authorityName).trim(),
         sourceTier: f.sourceTier ? String(f.sourceTier) : null,
+        // ISO country code this factor applies to -- see
+        // shared/schema.ts emissionFactorsTable.country. Powers the
+        // country-tiered picker in EmissionFactorPicker.tsx; optional
+        // because not every org factor is country-specific.
+        country: f.country ? String(f.country) : null,
         uploadedBy: user.id,
       }));
       const created = await storage.createEmissionFactors(req.organizationId!, rows);

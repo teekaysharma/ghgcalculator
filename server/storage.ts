@@ -353,6 +353,7 @@ export class DbStorage implements IStorage {
           sourceUrl: sql`excluded.source_url`,
           authorityName: sql`excluded.authority_name`,
           sourceTier: sql`excluded.source_tier`,
+          country: sql`excluded.country`,
           uploadedBy: sql`excluded.uploaded_by`,
         },
       })
