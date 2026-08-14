@@ -23,6 +23,8 @@ interface ConsolidatedReport {
   }[];
   intensity: { revenuePerTco2e: number | null; fteEmployeesPerTco2e: number | null; productionPerTco2e: number | null };
   gasCoverage: { gas: string; covered: boolean }[];
+  verificationFindings: { id: number; findingType: string; description: string; severity: string | null; status: string }[];
+  managementQaRecords: { id: number; qaProcedureDescription: string | null; responsiblePerson: string | null; reviewFrequency: string | null }[];
   baseYearComparison: { baseYearTotal: number | null; currentYearTotal: number; changePercent: number | null } | null;
 }
 
@@ -48,21 +50,30 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
               Consolidation: {report.reportingBoundary.consolidationApproach} · Status: {report.reportingBoundary.status}
             </p>
           </div>
-          {report.reportingBoundary.status === "draft" ? (
+          <div className="flex items-center gap-2">
             <Button
               size="sm"
-              onClick={async () => {
-                await apiRequest("PATCH", `/api/reporting-boundaries/${reportingBoundaryId}/finalize`, {});
-                queryClient.invalidateQueries({ queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report`] });
-              }}
+              variant="outline"
+              onClick={() => window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.csv`, "_blank")}
             >
-              Finalize report
+              Export CSV
             </Button>
-          ) : (
-            <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
-              Finalized {report.reportingBoundary.finalizedAt ? new Date(report.reportingBoundary.finalizedAt).toLocaleDateString() : ""}
-            </span>
-          )}
+            {report.reportingBoundary.status === "draft" ? (
+              <Button
+                size="sm"
+                onClick={async () => {
+                  await apiRequest("PATCH", `/api/reporting-boundaries/${reportingBoundaryId}/finalize`, {});
+                  queryClient.invalidateQueries({ queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report`] });
+                }}
+              >
+                Finalize report
+              </Button>
+            ) : (
+              <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
+                Finalized {report.reportingBoundary.finalizedAt ? new Date(report.reportingBoundary.finalizedAt).toLocaleDateString() : ""}
+              </span>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -162,6 +173,36 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
             {report.intensity.revenuePerTco2e && <p>Revenue per tCO2e: {report.intensity.revenuePerTco2e.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>}
             {report.intensity.fteEmployeesPerTco2e && <p>FTE employees per tCO2e: {report.intensity.fteEmployeesPerTco2e.toFixed(3)}</p>}
             {report.intensity.productionPerTco2e && <p>Production units per tCO2e: {report.intensity.productionPerTco2e.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>}
+          </CardContent>
+        </Card>
+      )}
+
+      {report.verificationFindings.length > 0 && (
+        <Card className="bg-white">
+          <CardContent className="pt-6">
+            <h4 className="text-sm font-medium mb-3">Verification findings</h4>
+            <ul className="space-y-2 text-sm">
+              {report.verificationFindings.map((f) => (
+                <li key={f.id} className="border-b border-neutral-100 pb-2">
+                  <span className="font-medium">{f.findingType}</span>{f.severity ? ` (${f.severity})` : ""} — {f.description}{" "}
+                  <span className="text-xs text-neutral-400">[{f.status}]</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {report.managementQaRecords.length > 0 && (
+        <Card className="bg-white">
+          <CardContent className="pt-6 text-sm">
+            <h4 className="text-sm font-medium mb-2">Management QA procedure</h4>
+            {report.managementQaRecords.map((q) => (
+              <p key={q.id} className="text-neutral-600">
+                {q.qaProcedureDescription} {q.responsiblePerson ? `— reviewed by ${q.responsiblePerson}` : ""}{" "}
+                {q.reviewFrequency ? `(${q.reviewFrequency})` : ""}
+              </p>
+            ))}
           </CardContent>
         </Card>
       )}

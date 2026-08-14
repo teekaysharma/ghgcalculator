@@ -696,6 +696,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ report });
   });
 
+  // Per-facility CSV export of the consolidated report. NOTE: this
+  // deliberately does NOT reuse server/utils/csv.ts's `generateCSV` --
+  // that helper's signature (`generateCSV(emissions: Emission[]): string`)
+  // is hardcoded to the per-activity-line Emission shape (year/product/
+  // scope/scope3Category/activity/unit/quantity/factor/emission) used by
+  // the legacy calculator's download flow. Facility rollup rows here
+  // (facility/country/equityPercent/scope1/scope2/scope3) are a
+  // fundamentally different shape, so forcing them through that helper
+  // would produce a mislabeled/nonsensical CSV. A small local builder is
+  // used instead.
+  const buildFacilityRollupCsv = (rows: { facility: string; country: string; equityPercent: number | string; scope1: number; scope2: number; scope3: number }[]): string => {
+    const escapeCsvValue = (value: string | number): string => {
+      const stringValue = String(value);
+      if (/[",\n]/.test(stringValue)) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    };
+    const header = "Facility,Country,Equity %,Scope 1,Scope 2,Scope 3";
+    const lines = rows.map((r) =>
+      [r.facility, r.country, r.equityPercent, r.scope1, r.scope2, r.scope3].map(escapeCsvValue).join(","),
+    );
+    return [header, ...lines].join("\n");
+  };
+
+  app.get("/api/reporting-boundaries/:id/consolidated-report/export.csv", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const report = await storage.getConsolidatedReport(req.organizationId!, id);
+    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+
+    const rows = report.facilities.map((f) => ({
+      facility: f.name,
+      country: f.country ?? "",
+      equityPercent: f.equityShareOwnershipPercent ?? "",
+      scope1: f.scope1,
+      scope2: f.scope2,
+      scope3: f.scope3,
+    }));
+    const csv = buildFacilityRollupCsv(rows);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}.csv"`);
+    return res.send(csv);
+  });
+
   const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });
 
   app.patch("/api/reporting-boundaries/:id/recalculate", requireAuth, requireOrg, async (req, res) => {
