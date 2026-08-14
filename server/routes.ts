@@ -656,12 +656,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/reporting-boundaries/:id/finalize", requireAuth, requireOrg, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+
+    const existing = await storage.getReportingBoundary(req.organizationId!, id);
+    if (!existing) return res.status(404).json({ message: "Reporting boundary not found" });
+
+    // Equity-share consolidation requires an ownership percentage for
+    // every facility under the entity -- otherwise the rollup (Plan 3's
+    // getConsolidatedReport) can't apply a meaningful multiplier and would
+    // silently zero out any facility missing one. Caught here, at the
+    // finalize gate, rather than left to be discovered in the report.
+    if (existing.consolidationApproach === "equity_share") {
+      const entityFacilities = await storage.listFacilities(req.organizationId!);
+      const missingEquity = entityFacilities.filter(
+        (f) => f.reportingEntityId === existing.reportingEntityId && f.equityShareOwnershipPercent === null,
+      );
+      if (missingEquity.length > 0) {
+        return res.status(400).json({
+          message: `Cannot finalize: equity share consolidation requires an ownership percentage for every facility. Missing for: ${missingEquity.map((f) => f.name).join(", ")}.`,
+        });
+      }
+    }
+
     const boundary = await storage.updateReportingBoundary(req.organizationId!, id, {
       status: "finalized",
       finalizedAt: new Date(),
     });
-    if (!boundary) return res.status(404).json({ message: "Reporting boundary not found" });
     return res.json({ reportingBoundary: boundary });
+  });
+
+  // Consolidated multi-facility rollup report (Plan 3's auditable global
+  // data sheet): sums every facility under the boundary's reporting
+  // entity for that year, applying equity-share percentages when that's
+  // the declared consolidation approach.
+  app.get("/api/reporting-boundaries/:id/consolidated-report", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const report = await storage.getConsolidatedReport(req.organizationId!, id);
+    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+    return res.json({ report });
   });
 
   const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });

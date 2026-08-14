@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   organizations,
@@ -72,6 +72,38 @@ import {
   type IpccDefaultFactor,
   type GwpValue,
 } from "@shared/schema";
+
+// -----------------------------------------------------------------------
+// ConsolidatedReport
+//
+// Response shape for GET /api/reporting-boundaries/:id/consolidated-report
+// (Plan 3's auditable global data sheet). Kept here rather than in
+// shared/schema.ts because it's a computed/aggregated response shape, not
+// a table -- no prior endpoint in this project returns something this
+// large, so there's no established convention to follow either way.
+// -----------------------------------------------------------------------
+export interface ConsolidatedReport {
+  reportingBoundary: { id: number; reportingYear: number; consolidationApproach: string; status: string; finalizedAt: string | null };
+  reportingEntity: { id: number; name: string; baseYear: number | null; baseYearRationale: string | null };
+  totals: { scope1: number; scope2: number; scope3: number; biogenicCo2: number };
+  gasBreakdown: { gas: string; co2e: number; pctOfTotal: number }[];
+  facilities: {
+    id: number;
+    name: string;
+    country: string | null;
+    equityShareOwnershipPercent: number | null;
+    incomplete: boolean;
+    scope1: number;
+    scope2: number;
+    scope3: number;
+  }[];
+  intensity: { revenuePerTco2e: number | null; fteEmployeesPerTco2e: number | null; productionPerTco2e: number | null };
+  gasCoverage: { gas: string; covered: boolean }[];
+  dataQualityRecords: unknown[];
+  verificationFindings: unknown[];
+  managementQaRecords: unknown[];
+  baseYearComparison: { baseYearTotal: number | null; currentYearTotal: number; changePercent: number | null } | null;
+}
 
 // -----------------------------------------------------------------------
 // IStorage
@@ -215,6 +247,12 @@ export interface IStorage {
   listIsicDivisions(): Promise<IsicDivision[]>;
   listIpccDefaultFactors(): Promise<IpccDefaultFactor[]>;
   listGwpValues(): Promise<GwpValue[]>;
+
+  // Consolidated multi-facility rollup report (Plan 3's auditable global
+  // data sheet) -- sums every facility under a reporting entity for a
+  // given reporting boundary/year, applying equity-share percentages when
+  // that's the declared consolidation approach.
+  getConsolidatedReport(organizationId: number, reportingBoundaryId: number): Promise<ConsolidatedReport | undefined>;
 }
 
 export class DbStorage implements IStorage {
@@ -916,6 +954,217 @@ export class DbStorage implements IStorage {
 
   async listGwpValues(): Promise<GwpValue[]> {
     return db.select().from(gwpValues).orderBy(gwpValues.gas);
+  }
+
+  async getConsolidatedReport(organizationId: number, reportingBoundaryId: number): Promise<ConsolidatedReport | undefined> {
+    const boundary = await this.getReportingBoundary(organizationId, reportingBoundaryId);
+    if (!boundary) return undefined;
+    const entity = await this.getReportingEntity(organizationId, boundary.reportingEntityId);
+    if (!entity) return undefined;
+
+    const allFacilities = await this.listFacilities(organizationId);
+    const entityFacilities = allFacilities.filter((f) => f.reportingEntityId === entity.id);
+
+    const records = await db
+      .select()
+      .from(emissionRecordsTable)
+      .where(
+        and(
+          eq(emissionRecordsTable.organizationId, organizationId),
+          eq(emissionRecordsTable.reportingBoundaryId, reportingBoundaryId),
+        ),
+      );
+
+    const isEquityShare = boundary.consolidationApproach === "equity_share";
+
+    function facilityMultiplier(facilityId: number): number {
+      if (!isEquityShare) return 1;
+      const f = entityFacilities.find((x) => x.id === facilityId);
+      const pct = f?.equityShareOwnershipPercent;
+      return pct !== null && pct !== undefined ? Number(pct) / 100 : 0;
+    }
+
+    const scopeTotals = { scope1: 0, scope2: 0, scope3: 0 };
+    const gasTotals = new Map<string, number>();
+    const perFacilityScopeTotals = new Map<number, { scope1: number; scope2: number; scope3: number }>();
+
+    for (const record of records) {
+      if (!record.facilityId) continue;
+      const multiplier = facilityMultiplier(record.facilityId);
+      const emissionKg = Number(record.emission) * multiplier;
+      const emissionTonnes = emissionKg / 1000;
+
+      const scopeKey = record.scope as "scope1" | "scope2" | "scope3";
+      if (scopeKey === "scope1" || scopeKey === "scope2" || scopeKey === "scope3") {
+        scopeTotals[scopeKey] += emissionTonnes;
+        const existing = perFacilityScopeTotals.get(record.facilityId) ?? { scope1: 0, scope2: 0, scope3: 0 };
+        existing[scopeKey] += emissionTonnes;
+        perFacilityScopeTotals.set(record.facilityId, existing);
+      }
+
+      // gasBreakdown is stored in two shapes depending on which pipeline
+      // wrote the record: the facility-MRV calculation-approach pipeline
+      // (server/routes.ts PUT /api/source-streams/:id/calculation-approach,
+      // the only pipeline that sets facilityId -- see the `continue` above)
+      // persists shared/schema.ts's GasComponent[], a per-unit rate
+      // (`co2ePerUnit`, kg CO2e per unit of activity data) that must be
+      // multiplied by this record's quantity to get an absolute
+      // contribution. The legacy /api/calculate pipeline persists
+      // EmissionGasContribution[], an already-absolute `co2e` -- but those
+      // records never set facilityId, so they're filtered out above and
+      // this branch is defensive/future-proofing rather than reachable
+      // today.
+      const breakdown = (record.gasBreakdown as { gas: string; co2e?: number; co2ePerUnit?: number }[] | null) ?? [];
+      const quantity = Number(record.quantity);
+      for (const component of breakdown) {
+        const componentEmissionKg =
+          component.co2e !== undefined ? component.co2e : quantity * (component.co2ePerUnit ?? 0);
+        gasTotals.set(component.gas, (gasTotals.get(component.gas) ?? 0) + (componentEmissionKg * multiplier) / 1000);
+      }
+    }
+
+    const gasTotal = Array.from(gasTotals.values()).reduce((sum, v) => sum + v, 0);
+    const gasBreakdown = Array.from(gasTotals.entries()).map(([gas, co2e]) => ({
+      gas,
+      co2e,
+      pctOfTotal: gasTotal > 0 ? (co2e / gasTotal) * 100 : 0,
+    }));
+
+    const facilitySourceStreams = await db
+      .select({ facilityId: sourceStreams.facilityId })
+      .from(sourceStreams)
+      .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
+    const facilitiesWithStreams = new Set(facilitySourceStreams.map((s) => s.facilityId));
+
+    const facilitiesOut = entityFacilities.map((f) => {
+      const totals = perFacilityScopeTotals.get(f.id) ?? { scope1: 0, scope2: 0, scope3: 0 };
+      return {
+        id: f.id,
+        name: f.name,
+        country: f.country,
+        equityShareOwnershipPercent: f.equityShareOwnershipPercent ? Number(f.equityShareOwnershipPercent) : null,
+        incomplete: !facilitiesWithStreams.has(f.id),
+        ...totals,
+      };
+    });
+
+    const totalTco2e = scopeTotals.scope1 + scopeTotals.scope2 + scopeTotals.scope3;
+
+    const facilityProductRows =
+      entityFacilities.length > 0
+        ? await db
+            .select()
+            .from(facilityProducts)
+            .where(
+              and(
+                eq(facilityProducts.organizationId, organizationId),
+                inArray(
+                  facilityProducts.facilityId,
+                  entityFacilities.map((f) => f.id),
+                ),
+              ),
+            )
+        : [];
+    const totalProduction = facilityProductRows.reduce((sum, p) => sum + (p.actualProduction ? Number(p.actualProduction) : 0), 0);
+
+    const intensity = {
+      revenuePerTco2e:
+        boundary.revenueAmount && totalTco2e > 0 ? Number(boundary.revenueAmount) / totalTco2e : null,
+      fteEmployeesPerTco2e:
+        boundary.fullTimeEquivalentEmployees && totalTco2e > 0
+          ? Number(boundary.fullTimeEquivalentEmployees) / totalTco2e
+          : null,
+      productionPerTco2e: totalProduction > 0 && totalTco2e > 0 ? totalProduction / totalTco2e : null,
+    };
+
+    // Explicit gas-coverage disclosure (Section 2b) -- states which of the
+    // 7 Kyoto gases are backed by real data in THIS period's records versus
+    // not yet covered by this system at all, rather than silently omitting
+    // gases with no data.
+    const allKyotoGases = ["CO2", "CH4", "N2O", "HFCs", "PFCs", "SF6", "NF3"];
+    const gasCoverage = allKyotoGases.map((gas) => ({ gas, covered: gasTotals.has(gas) }));
+
+    let baseYearComparison: ConsolidatedReport["baseYearComparison"] = null;
+    if (entity.baseYear && entity.baseYear !== boundary.reportingYear) {
+      const baseYearBoundaries = await db
+        .select()
+        .from(reportingBoundaries)
+        .where(
+          and(
+            eq(reportingBoundaries.organizationId, organizationId),
+            eq(reportingBoundaries.reportingEntityId, entity.id),
+            eq(reportingBoundaries.reportingYear, entity.baseYear),
+          ),
+        );
+      if (baseYearBoundaries[0]) {
+        const baseYearReport = await this.getConsolidatedReport(organizationId, baseYearBoundaries[0].id);
+        const baseYearTotal = baseYearReport
+          ? baseYearReport.totals.scope1 + baseYearReport.totals.scope2 + baseYearReport.totals.scope3
+          : null;
+        baseYearComparison = {
+          baseYearTotal,
+          currentYearTotal: totalTco2e,
+          changePercent: baseYearTotal && baseYearTotal > 0 ? ((totalTco2e - baseYearTotal) / baseYearTotal) * 100 : null,
+        };
+      }
+    }
+
+    const streamIdsForBoundary = await db
+      .select({ id: sourceStreams.id })
+      .from(sourceStreams)
+      .where(eq(sourceStreams.reportingBoundaryId, reportingBoundaryId));
+    const streamIds = streamIdsForBoundary.map((s) => s.id);
+
+    const [dqRecords, findings, qaRecords] = await Promise.all([
+      streamIds.length > 0
+        ? db
+            .select()
+            .from(dataQualityRecords)
+            .where(and(eq(dataQualityRecords.organizationId, organizationId), inArray(dataQualityRecords.sourceStreamId, streamIds)))
+        : Promise.resolve([]),
+      db
+        .select()
+        .from(verificationFindings)
+        .where(and(eq(verificationFindings.organizationId, organizationId), eq(verificationFindings.reportingBoundaryId, reportingBoundaryId))),
+      db
+        .select()
+        .from(managementQaRecords)
+        .where(and(eq(managementQaRecords.organizationId, organizationId), eq(managementQaRecords.reportingBoundaryId, reportingBoundaryId))),
+    ]);
+
+    return {
+      reportingBoundary: {
+        id: boundary.id,
+        reportingYear: boundary.reportingYear,
+        consolidationApproach: boundary.consolidationApproach,
+        status: boundary.status,
+        finalizedAt: boundary.finalizedAt ? boundary.finalizedAt.toISOString() : null,
+      },
+      reportingEntity: {
+        id: entity.id,
+        name: entity.name,
+        baseYear: entity.baseYear,
+        baseYearRationale: entity.baseYearRationale,
+      },
+      // biogenicCo2 is hardcoded to 0: no biogenic-flagged factors are
+      // seeded yet (per the design spec's Section 1 note on `isBiogenic`),
+      // so there's nothing to sum. When biogenic fuels are added in a
+      // future session, this needs a real aggregation step (sum
+      // emission_records where the gas breakdown's source factor has
+      // isBiogenic = true, which requires joining back to
+      // ipccDefaultFactors/emissionFactorsTable by name -- not possible
+      // from emission_records.gasBreakdown alone, since that JSON blob
+      // doesn't currently carry an isBiogenic flag per component).
+      totals: { ...scopeTotals, biogenicCo2: 0 },
+      gasBreakdown,
+      facilities: facilitiesOut,
+      intensity,
+      gasCoverage,
+      dataQualityRecords: dqRecords,
+      verificationFindings: findings,
+      managementQaRecords: qaRecords,
+      baseYearComparison,
+    };
   }
 }
 
