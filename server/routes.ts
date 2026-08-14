@@ -648,6 +648,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.status(204).end();
   });
 
+  // Finalize/recalculate snapshot mechanic (ISO 14064-3: verification
+  // applies to a fixed, dated statement). Finalizing locks the boundary's
+  // numbers; recalculating requires a stated reason, logged as a
+  // verification finding so it's part of the same audit trail a verifier
+  // already reviews (ISO 14064-1 / GRI 102 recalculation-disclosure).
+  app.patch("/api/reporting-boundaries/:id/finalize", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const boundary = await storage.updateReportingBoundary(req.organizationId!, id, {
+      status: "finalized",
+      finalizedAt: new Date(),
+    });
+    if (!boundary) return res.status(404).json({ message: "Reporting boundary not found" });
+    return res.json({ reportingBoundary: boundary });
+  });
+
+  const recalculateSchema = z.object({ reason: z.string().min(1, "A reason is required to recalculate a finalized report") });
+
+  app.patch("/api/reporting-boundaries/:id/recalculate", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    try {
+      const { reason } = parseBody(recalculateSchema, req.body);
+      const existing = await storage.getReportingBoundary(req.organizationId!, id);
+      if (!existing) return res.status(404).json({ message: "Reporting boundary not found" });
+
+      // Record the recalculation as a verification finding so it's part of
+      // the same audit trail a verifier already reviews (ISO 14064-1's
+      // recalculation-disclosure requirement), then reopen the boundary to
+      // draft so edits + recompute (Task 1's pipeline) can proceed; the
+      // caller re-finalizes when done. "observation" is the closest fit in
+      // verificationFindingTypes for a neutral, descriptive audit note (no
+      // "recalculation" value exists); "minor"/"closed" are the closest
+      // fits in verificationSeverities/verificationStatuses for a routine,
+      // already-resolved event (no "informational"/"resolved" values exist).
+      await storage.createVerificationFinding({
+        organizationId: req.organizationId!,
+        reportingBoundaryId: id,
+        findingType: "observation",
+        description: `Report reopened for recalculation. Reason: ${reason}`,
+        severity: "minor",
+        status: "closed",
+        resolutionNotes: null,
+      });
+      const updated = await storage.updateReportingBoundary(req.organizationId!, id, {
+        status: "draft",
+        finalizedAt: null,
+      });
+      return res.json({ reportingBoundary: updated });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid recalculate payload" });
+    }
+  });
+
   // Setup completeness for the caller's tenant. Same readyForCalculation
   // logic as codex/review-code-for-gaps-and-improvements: at least one
   // reporting entity, one facility, and one reporting boundary must exist

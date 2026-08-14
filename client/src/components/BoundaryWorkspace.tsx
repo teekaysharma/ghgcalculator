@@ -138,18 +138,53 @@ interface ManagementQaRecord {
   lastReviewDate: string | null;
 }
 
+// Minimal shape needed for the finalize/recalculate snapshot mechanic --
+// the caller (AppShell.tsx's BoundaryWorkspaceSection) already holds the
+// full reporting boundary object from its /api/reporting-boundaries list
+// query, so it's passed down rather than re-fetched here.
+interface ReportingBoundarySummary {
+  id: number;
+  status: string;
+  finalizedAt: string | null;
+}
+
 export default function BoundaryWorkspace({
   facilityId,
   reportingBoundaryId,
+  reportingBoundary,
 }: {
   facilityId: number;
   reportingBoundaryId: number;
+  reportingBoundary: ReportingBoundarySummary;
 }) {
+  const queryClient = useQueryClient();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Boundary workspace</CardTitle>
-        <CardDescription>Source streams, methane reporting, verification findings, and management QA for this facility and reporting year.</CardDescription>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-base">Boundary workspace</CardTitle>
+            <CardDescription>Source streams, methane reporting, verification findings, and management QA for this facility and reporting year.</CardDescription>
+          </div>
+          {reportingBoundary.status === "draft" ? (
+            <Button
+              size="sm"
+              onClick={async () => {
+                await apiRequest("PATCH", `/api/reporting-boundaries/${reportingBoundary.id}/finalize`, {});
+                queryClient.invalidateQueries({ queryKey: ["/api/reporting-boundaries"] });
+              }}
+            >
+              Finalize report
+            </Button>
+          ) : (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
+                Finalized {reportingBoundary.finalizedAt ? new Date(reportingBoundary.finalizedAt).toLocaleDateString() : ""}
+              </span>
+              <RecalculateButton reportingBoundaryId={reportingBoundary.id} />
+            </div>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="streams" className="space-y-4">
@@ -174,6 +209,43 @@ export default function BoundaryWorkspace({
         </Tabs>
       </CardContent>
     </Card>
+  );
+}
+
+function RecalculateButton({ reportingBoundaryId }: { reportingBoundaryId: number }) {
+  const queryClient = useQueryClient();
+  const [reason, setReason] = useState("");
+  const [open, setOpen] = useState(false);
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Recalculate
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        placeholder="Reason for recalculation (required)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        className="w-64"
+      />
+      <Button
+        size="sm"
+        disabled={!reason.trim()}
+        onClick={async () => {
+          await apiRequest("PATCH", `/api/reporting-boundaries/${reportingBoundaryId}/recalculate`, { reason });
+          queryClient.invalidateQueries({ queryKey: ["/api/reporting-boundaries"] });
+          setOpen(false);
+          setReason("");
+        }}
+      >
+        Confirm
+      </Button>
+    </div>
   );
 }
 

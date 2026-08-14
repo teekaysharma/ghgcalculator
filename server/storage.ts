@@ -139,7 +139,8 @@ export interface IStorage {
 
   createReportingBoundary(boundary: InsertReportingBoundary): Promise<ReportingBoundary>;
   listReportingBoundaries(organizationId: number): Promise<ReportingBoundary[]>;
-  updateReportingBoundary(organizationId: number, id: number, data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description">>): Promise<ReportingBoundary | undefined>;
+  getReportingBoundary(organizationId: number, id: number): Promise<ReportingBoundary | undefined>;
+  updateReportingBoundary(organizationId: number, id: number, data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description" | "status" | "finalizedAt" | "revenueAmount" | "revenueCurrency" | "fullTimeEquivalentEmployees">>): Promise<ReportingBoundary | undefined>;
   deleteReportingBoundary(organizationId: number, id: number): Promise<boolean>;
 
   // -----------------------------------------------------------------------
@@ -482,10 +483,18 @@ export class DbStorage implements IStorage {
       .orderBy(desc(reportingBoundaries.createdAt));
   }
 
+  async getReportingBoundary(organizationId: number, id: number): Promise<ReportingBoundary | undefined> {
+    const [row] = await db
+      .select()
+      .from(reportingBoundaries)
+      .where(and(eq(reportingBoundaries.id, id), eq(reportingBoundaries.organizationId, organizationId)));
+    return row;
+  }
+
   async updateReportingBoundary(
     organizationId: number,
     id: number,
-    data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description">>,
+    data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description" | "status" | "finalizedAt" | "revenueAmount" | "revenueCurrency" | "fullTimeEquivalentEmployees">>,
   ): Promise<ReportingBoundary | undefined> {
     const [row] = await db
       .update(reportingBoundaries)
