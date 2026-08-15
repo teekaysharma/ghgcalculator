@@ -1,7 +1,5 @@
 import { useState } from "react";
-import EmissionCalculator from "@/components/EmissionCalculator";
-import SetupPanel from "@/components/SetupPanel";
-import TeamPanel from "@/components/TeamPanel";
+import AppShell from "@/components/AppShell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -39,10 +37,7 @@ export default function Home() {
 
         {/* Main Content */}
         <main className="space-y-8">
-          <SetupPanel>
-            <EmissionCalculator />
-          </SetupPanel>
-          <TeamPanel />
+          <AppShell />
         </main>
 
         {/* Footer */}
