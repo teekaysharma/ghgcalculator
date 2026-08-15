@@ -28,6 +28,17 @@ import { useToast } from "@/hooks/use-toast";
 // (list/create for mitigation measures). Reference lists DO use the prefixed
 // form: { primaryActivityTypes }, { productBenchmarks }.
 
+// The facility's own row (as opposed to its identifier/contact/product
+// children). AppShell already holds this list, so the query below is a cache
+// hit in practice; it is re-declared here so the tab is self-contained.
+interface Facility {
+  id: number;
+  reportingEntityId: number;
+  name: string;
+  country: string | null;
+  equityShareOwnershipPercent: string | null;
+}
+
 interface FacilityIdentifier {
   id: number;
   facilityId: number;
@@ -100,13 +111,17 @@ export default function FacilityProfile({ facilityId }: { facilityId: number }) 
         <CardDescription>Identifiers, contacts, products, and mitigation measures for this facility.</CardDescription>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="identifiers" className="space-y-4">
+        <Tabs defaultValue="details" className="space-y-4">
           <TabsList>
+            <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="identifiers">Identifiers</TabsTrigger>
             <TabsTrigger value="contacts">Contacts</TabsTrigger>
             <TabsTrigger value="products">Products</TabsTrigger>
             <TabsTrigger value="mitigation">Mitigation Measures</TabsTrigger>
           </TabsList>
+          <TabsContent value="details">
+            <DetailsTab facilityId={facilityId} />
+          </TabsContent>
           <TabsContent value="identifiers">
             <IdentifiersTab facilityId={facilityId} />
           </TabsContent>
@@ -122,6 +137,94 @@ export default function FacilityProfile({ facilityId }: { facilityId: number }) 
         </Tabs>
       </CardContent>
     </Card>
+  );
+}
+
+// The facility record itself: name, country, and the equity share ownership %
+// that equity_share consolidation multiplies this facility's emissions by.
+// Before this tab existed the column had no way in at all -- it could only be
+// read back, via the consolidated report's "Equity share % not set" warning.
+function DetailsTab({ facilityId }: { facilityId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const facilitiesQuery = useQuery<{ facilities: Facility[] }>({ queryKey: ["/api/facilities"] });
+  const facility = facilitiesQuery.data?.facilities.find((f) => f.id === facilityId) ?? null;
+
+  const [name, setName] = useState("");
+  const [country, setCountry] = useState("");
+  const [equityShare, setEquityShare] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+
+  // One-time hydrate from the server row, matching IdentifiersTab's pattern
+  // above. The parent remounts this component per facility (the Facilities
+  // list keys on the selected id), so a single latch is enough.
+  if (facility && !hydrated) {
+    setName(facility.name);
+    setCountry(facility.country ?? "");
+    setEquityShare(facility.equityShareOwnershipPercent ?? "");
+    setHydrated(true);
+  }
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/facilities/${facilityId}`, {
+        name: name.trim(),
+        country: country.trim() || undefined,
+        // null, not undefined: an emptied box means "no ownership % recorded",
+        // which the server must persist as NULL rather than skip over.
+        equityShareOwnershipPercent: equityShare.trim() === "" ? null : Number(equityShare),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/facilities"] });
+      toast({ title: "Facility details saved" });
+    },
+    onError: (err) => toast({ title: "Could not save", description: err.message, variant: "destructive" }),
+  });
+
+  if (facilitiesQuery.isLoading) {
+    return <div className="text-sm text-neutral-500 py-4">Loading...</div>;
+  }
+  if (!facility) {
+    return <div className="text-sm text-neutral-500 py-4">Facility not found.</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <Label>Facility name</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label>Country</Label>
+          <Input value={country} onChange={(e) => setCountry(e.target.value)} />
+        </div>
+        <div className="space-y-1 md:col-span-2">
+          <Label>Equity share ownership (%)</Label>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            step="0.01"
+            placeholder="e.g. 51"
+            value={equityShare}
+            onChange={(e) => setEquityShare(e.target.value)}
+            className="max-w-xs"
+          />
+          <p className="text-xs text-neutral-500">
+            Only used when the reporting boundary's consolidation approach is <strong>equity share</strong> — under
+            operational or financial control this facility is consolidated at 100% and this figure is ignored. Leave
+            blank if not applicable; under equity share a blank excludes the facility from the consolidated totals.
+          </p>
+        </div>
+      </div>
+      <Button onClick={() => save.mutate()} disabled={!name.trim() || save.isPending}>
+        {save.isPending ? "Saving..." : "Save details"}
+      </Button>
+    </div>
   );
 }
 

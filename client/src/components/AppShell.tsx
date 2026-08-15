@@ -32,6 +32,8 @@ interface ReportingEntity {
   id: number;
   name: string;
   legalEntity: string | null;
+  baseYear: number | null;
+  baseYearRationale: string | null;
 }
 
 interface Facility {
@@ -49,10 +51,21 @@ interface ReportingBoundary {
   description: string | null;
   status: string;
   finalizedAt: string | null;
+  // numeric columns come back from the API as strings
+  revenueAmount: string | null;
+  revenueCurrency: string | null;
+  fullTimeEquivalentEmployees: string | null;
+}
+
+interface SetupStatus {
+  reportingEntityCount: number;
+  facilityCount: number;
+  boundaryCount: number;
+  readyForCalculation: boolean;
 }
 
 const NAV_ITEMS: { key: Section; label: string; description: string }[] = [
-  { key: "setup", label: "Setup", description: "Create the reporting entity, first facility, and reporting boundary this inventory needs." },
+  { key: "setup", label: "Setup", description: "Create the reporting entity, first facility, and reporting boundary this inventory needs, and set each entity's base year." },
   { key: "facilities", label: "Facilities", description: "Manage facilities and their identifiers, contacts, products, and mitigation measures." },
   { key: "boundary", label: "Boundary Workspace", description: "Source streams, methane reporting, verification findings, and management QA for one facility and reporting year." },
   { key: "report", label: "Organization Report", description: "The consolidated, auditable emissions report across every facility for a reporting year." },
@@ -90,12 +103,159 @@ export default function AppShell() {
           <p className="text-sm text-neutral-500">{activeItem.description}</p>
         </div>
 
-        {section === "setup" && <SetupPanel>{null}</SetupPanel>}
+        {section === "setup" && (
+          <SetupPanel>
+            <SetupCompleteSection onNavigate={setSection} />
+          </SetupPanel>
+        )}
         {section === "facilities" && <FacilitiesSection onNavigate={setSection} />}
         {section === "boundary" && <BoundaryWorkspaceSection onNavigate={setSection} />}
         {section === "report" && <OrganizationReportSection />}
         {section === "team" && <TeamPanel />}
       </div>
+    </div>
+  );
+}
+
+// What the Setup section shows once SetupPanel's three steps are all done.
+// SetupPanel renders its children in place of the wizard at that point; this
+// used to be literally `{null}`, leaving the section heading above an empty
+// body. It confirms what is configured, and hosts the one reporting-entity
+// setting that has no other home (the base year), which is deliberately not
+// part of the create wizard: an entity is created before any inventory exists,
+// so there is nothing to pick a base year against yet.
+function SetupCompleteSection({ onNavigate }: { onNavigate: (section: Section) => void }) {
+  const statusQuery = useQuery<{ setupStatus: SetupStatus }>({ queryKey: ["/api/setup-status"] });
+  const entitiesQuery = useQuery<{ reportingEntities: ReportingEntity[] }>({ queryKey: ["/api/reporting-entities"] });
+
+  const status = statusQuery.data?.setupStatus;
+  const entities = entitiesQuery.data?.reportingEntities ?? [];
+
+  return (
+    <div className="space-y-6">
+      <Card className="border-green-200 bg-green-50">
+        <CardHeader>
+          <CardTitle className="text-base text-green-900">Setup complete</CardTitle>
+          <CardDescription className="text-green-800">
+            Your organizational and reporting boundaries are defined, so quantification can proceed (ISO 14064-1
+            requires both before any inventory is calculated).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-4 max-w-md">
+            <SetupStat label="Reporting entities" value={status?.reportingEntityCount ?? entities.length} />
+            <SetupStat label="Facilities" value={status?.facilityCount ?? 0} />
+            <SetupStat label="Reporting years" value={status?.boundaryCount ?? 0} />
+          </div>
+          {entities.length > 0 && (
+            <p className="text-sm text-green-900">
+              Reporting for {entities.map((e) => e.name).join(", ")}.
+            </p>
+          )}
+          <div className="flex gap-2 flex-wrap">
+            <Button size="sm" onClick={() => onNavigate("facilities")}>
+              Go to Facilities
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => onNavigate("boundary")}>
+              Enter activity data
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => onNavigate("report")}>
+              View the report
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Reporting entity settings</CardTitle>
+          <CardDescription>
+            The base year each entity's emissions are tracked against, and the rationale for choosing it (GHG Protocol
+            Corporate Standard Ch.5 / ISO 14064-1 5.3).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {entitiesQuery.isLoading && <p className="text-sm text-neutral-500">Loading...</p>}
+          {entities.map((entity) => (
+            <ReportingEntitySettings key={entity.id} entity={entity} />
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function SetupStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="text-2xl font-semibold text-green-900">{value}</div>
+      <div className="text-xs text-green-800">{label}</div>
+    </div>
+  );
+}
+
+// Base year + rationale for one reporting entity. The server requires a
+// rationale whenever a base year is set, and rejects a base-year CHANGE while
+// any of the entity's reporting years is finalized -- both surface here as the
+// mutation's error toast rather than being duplicated as client-side rules.
+function ReportingEntitySettings({ entity }: { entity: ReportingEntity }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const currentYear = new Date().getFullYear();
+
+  const [baseYear, setBaseYear] = useState(entity.baseYear ? String(entity.baseYear) : "");
+  const [rationale, setRationale] = useState(entity.baseYearRationale ?? "");
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/reporting-entities/${entity.id}`, {
+        // The route is a full replace, so name/legalEntity are re-sent
+        // unchanged; only the base-year pair is edited here.
+        name: entity.name,
+        legalEntity: entity.legalEntity ?? undefined,
+        baseYear: baseYear.trim() === "" ? null : Number(baseYear),
+        baseYearRationale: rationale.trim() === "" ? null : rationale.trim(),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reporting-entities"] });
+      toast({ title: "Base year saved" });
+    },
+    onError: (err) => toast({ title: "Could not save base year", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="space-y-3 border-t border-neutral-100 pt-4 first:border-t-0 first:pt-0">
+      <div className="text-sm font-medium">{entity.name}</div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="space-y-1">
+          <Label className="text-xs text-neutral-500">Base year</Label>
+          <Input
+            type="number"
+            min={1990}
+            max={currentYear}
+            placeholder="e.g. 2022"
+            value={baseYear}
+            onChange={(e) => setBaseYear(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1 md:col-span-3">
+          <Label className="text-xs text-neutral-500">Base year rationale</Label>
+          <Input
+            placeholder="Why this year was chosen, or why it was recalculated"
+            value={rationale}
+            onChange={(e) => setRationale(e.target.value)}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-neutral-500">
+        The report compares each reporting year against the base year automatically, using the boundary already
+        recorded for that year. Setting a base year with no reporting boundary behind it simply shows no comparison.
+      </p>
+      <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+        {save.isPending ? "Saving..." : "Save base year"}
+      </Button>
     </div>
   );
 }

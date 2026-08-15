@@ -147,6 +147,11 @@ interface ReportingBoundarySummary {
   id: number;
   status: string;
   finalizedAt: string | null;
+  // Intensity denominators (GRI 305-4 / IFRS S2), edited by
+  // ReportingMetricsPanel below. numeric columns arrive as strings.
+  revenueAmount: string | null;
+  revenueCurrency: string | null;
+  fullTimeEquivalentEmployees: string | null;
 }
 
 export default function BoundaryWorkspace({
@@ -187,7 +192,8 @@ export default function BoundaryWorkspace({
           )}
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        <ReportingMetricsPanel reportingBoundary={reportingBoundary} />
         <Tabs defaultValue="streams" className="space-y-4">
           <TabsList>
             <TabsTrigger value="streams">Source Streams</TabsTrigger>
@@ -210,6 +216,101 @@ export default function BoundaryWorkspace({
         </Tabs>
       </CardContent>
     </Card>
+  );
+}
+
+// Annual revenue and headcount for THIS reporting year -- the denominators
+// getConsolidatedReport divides total tCO2e by to produce the GRI 305-4 /
+// IFRS S2 intensity ratios. The report only renders that block when at least
+// one denominator is non-null, so until these are entered the intensity card
+// is silently absent; this panel is the only way to fill them in.
+//
+// Editing is blocked while the boundary is finalized, mirroring the server's
+// 409 on PATCH .../reporting-metrics. Disabling the inputs rather than hiding
+// the panel keeps the recorded figures visible on a finalized report, which is
+// what a verifier reading the statement wants to see.
+function ReportingMetricsPanel({ reportingBoundary }: { reportingBoundary: ReportingBoundarySummary }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const isFinalized = reportingBoundary.status !== "draft";
+
+  const [revenueAmount, setRevenueAmount] = useState(reportingBoundary.revenueAmount ?? "");
+  const [revenueCurrency, setRevenueCurrency] = useState(reportingBoundary.revenueCurrency ?? "");
+  const [fte, setFte] = useState(reportingBoundary.fullTimeEquivalentEmployees ?? "");
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/reporting-boundaries/${reportingBoundary.id}/reporting-metrics`, {
+        // null (not undefined) so clearing a box really clears the column --
+        // the server treats undefined as "leave this one alone".
+        revenueAmount: revenueAmount.trim() === "" ? null : Number(revenueAmount),
+        revenueCurrency: revenueCurrency.trim() === "" ? null : revenueCurrency.trim(),
+        fullTimeEquivalentEmployees: fte.trim() === "" ? null : Number(fte),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reporting-boundaries"] });
+      toast({ title: "Intensity denominators saved" });
+    },
+    onError: (err) => toast({ title: "Could not save", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="border rounded-md p-4 space-y-3">
+      <div>
+        <h4 className="text-sm font-medium">Intensity denominators</h4>
+        <p className="text-xs text-neutral-500">
+          Annual revenue and full-time-equivalent headcount for this reporting year. Used for the GRI 305-4 / IFRS S2
+          intensity ratios on the Organization Report — leave blank to omit them.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <Label className="text-xs text-neutral-500">Revenue amount</Label>
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="e.g. 25000000"
+            value={revenueAmount}
+            onChange={(e) => setRevenueAmount(e.target.value)}
+            disabled={isFinalized}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs text-neutral-500">Currency (ISO 4217)</Label>
+          <Input
+            placeholder="e.g. AED"
+            maxLength={3}
+            value={revenueCurrency}
+            onChange={(e) => setRevenueCurrency(e.target.value.toUpperCase())}
+            disabled={isFinalized}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs text-neutral-500">Full-time equivalent employees</Label>
+          <Input
+            type="number"
+            min={0}
+            step="0.1"
+            placeholder="e.g. 240"
+            value={fte}
+            onChange={(e) => setFte(e.target.value)}
+            disabled={isFinalized}
+          />
+        </div>
+      </div>
+      {isFinalized ? (
+        <p className="text-xs text-amber-700">
+          This report is finalized — use Recalculate above to reopen it before changing these figures.
+        </p>
+      ) : (
+        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+          {save.isPending ? "Saving..." : "Save denominators"}
+        </Button>
+      )}
+    </div>
   );
 }
 
