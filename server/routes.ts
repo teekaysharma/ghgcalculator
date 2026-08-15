@@ -175,6 +175,16 @@ const calculationApproachSchema = z.object({
         // permanently empty regardless of what the client sends.
         factorLower: z.number().optional(),
         factorUpper: z.number().optional(),
+        // Same "declare it or Zod strips it" reasoning as factorLower/
+        // factorUpper above, and both of these are load-bearing rather than
+        // informational: isBiogenic is what lets getConsolidatedReport pull
+        // biogenic CO2 out of gross Scope 1/2/3 into its memo item, and
+        // netCalorificValue (TJ/Gg, present on CO2 components only) is what
+        // the weight-basis unit conversion below reads. Dropping either
+        // silently would look exactly like "no biogenic data" / "no
+        // conversion available".
+        isBiogenic: z.boolean().optional(),
+        netCalorificValue: z.number().optional(),
       }),
     )
     // Nullable AND optional, and the two mean different things downstream:
@@ -1091,27 +1101,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Compute the emission server-side whenever we have both an
       // activity-data quantity and a factor, so the persisted number can
       // never drift from its stated inputs (Section 2 of the design spec).
-      // activityDataUnit must match emissionFactorUnit exactly -- native-
-      // unit conversion (liters/kg -> TJ) is out of scope for this plan
-      // (see Global Constraints above); reject with a clear message rather
-      // than silently computing something wrong.
+      //
+      // The emission factor is expressed per unit of activity data in the
+      // factor's own native unit (kg CO2/TJ for every IPCC stationary-
+      // combustion default), so the quantity fed to the multiplication has
+      // to be in that same unit. Two paths:
+      //
+      //   1. Units already match -> multiply directly.
+      //   2. WEIGHT-basis activity data (kg / tonnes) against a TJ factor
+      //      -> convert using the fuel's net calorific value, which arrives
+      //      on the selected bundle's CO2 component
+      //      (ipccDefaultFactors.netCalorificValue, TJ/Gg == GJ/tonne,
+      //      2006 IPCC Guidelines Vol.2 Ch.1 Table 1.2). 1 Gg = 1e6 kg =
+      //      1e3 tonnes, hence the divisors in WEIGHT_UNITS_PER_GG.
+      //
+      // VOLUME-basis units (litres, m3, gallons) are deliberately NOT
+      // converted: going from volume to energy needs a fuel-density dataset
+      // that has not been sourced for this project yet, and guessing a
+      // density would put an unsourced number inside a number a verifier is
+      // meant to be able to reconstruct. Those still fall through to the
+      // reject below -- a disclosed scope boundary, not an oversight.
+      // Anything else that does not match (and any fuel whose factor row
+      // carries no NCV, e.g. the biogenic fuels seeded by
+      // manual-migration-008.mjs) also falls through unchanged.
+      const WEIGHT_UNITS_PER_GG: Record<string, number> = {
+        kg: 1_000_000,
+        kgs: 1_000_000,
+        kilogram: 1_000_000,
+        kilograms: 1_000_000,
+        t: 1_000,
+        tonne: 1_000,
+        tonnes: 1_000,
+        ton: 1_000,
+        tons: 1_000,
+        "metric tonne": 1_000,
+        "metric tonnes": 1_000,
+      };
+
       let computedEmissionKg: number | null = null;
+      // The activity quantity actually used in the multiplication, in the
+      // FACTOR's unit (TJ) -- equal to activityDataValue when no conversion
+      // was needed. Persisted on the emission record so that record's
+      // `quantity x gasBreakdown[].co2ePerUnit` per-gas rollup (see
+      // server/storage.ts getConsolidatedReport) stays arithmetically valid.
+      let activityValueInFactorUnit: number | null = null;
+      // The NCV actually applied, recorded on the calculation approach so an
+      // auditor can reconstruct kg -> TJ from the stored row alone.
+      let appliedNetCalorificValue: number | null = null;
       if (
         data.activityDataValue !== undefined &&
         data.activityDataValue !== null &&
         data.emissionFactorValue !== undefined &&
         data.emissionFactorValue !== null
       ) {
-        if (
-          data.activityDataUnit &&
-          data.emissionFactorUnit &&
-          data.activityDataUnit.trim().toLowerCase() !== data.emissionFactorUnit.trim().toLowerCase()
-        ) {
-          return res.status(400).json({
-            message: `Activity data unit ("${data.activityDataUnit}") must match the emission factor's unit ("${data.emissionFactorUnit}"). Unit conversion is not yet supported -- enter the activity quantity directly in ${data.emissionFactorUnit}.`,
-          });
+        activityValueInFactorUnit = Number(data.activityDataValue);
+        const activityUnit = data.activityDataUnit?.trim().toLowerCase() ?? "";
+        const factorUnit = data.emissionFactorUnit?.trim().toLowerCase() ?? "";
+
+        if (activityUnit && factorUnit && activityUnit !== factorUnit) {
+          // NCV lives on the CO2 row only (CH4/N2O rows for the same fuel
+          // leave it null rather than repeat it) -- see
+          // ipccDefaultFactors.netCalorificValue in shared/schema.ts.
+          const co2Component = (data.gasBreakdown ?? []).find(
+            (c) => c.gas === "CO2" && typeof c.netCalorificValue === "number" && c.netCalorificValue > 0,
+          );
+          const unitsPerGg = WEIGHT_UNITS_PER_GG[activityUnit];
+          if (factorUnit === "tj" && unitsPerGg !== undefined && co2Component?.netCalorificValue) {
+            appliedNetCalorificValue = co2Component.netCalorificValue;
+            activityValueInFactorUnit = (Number(data.activityDataValue) * appliedNetCalorificValue) / unitsPerGg;
+          } else {
+            return res.status(400).json({
+              message: `Activity data unit ("${data.activityDataUnit}") must match the emission factor's unit ("${data.emissionFactorUnit}"). Unit conversion is only available for weight-basis quantities (kg/tonnes) against an energy-basis factor when the selected fuel has a published net calorific value -- otherwise enter the activity quantity directly in ${data.emissionFactorUnit}.`,
+            });
+          }
         }
-        computedEmissionKg = Number(data.activityDataValue) * Number(data.emissionFactorValue);
+
+        computedEmissionKg = activityValueInFactorUnit * Number(data.emissionFactorValue);
       }
 
       const approach = await storage.upsertCalculationApproach({
@@ -1119,7 +1184,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         activityDataValue: toNumericField(data.activityDataValue),
         emissionFactorValue: toNumericField(data.emissionFactorValue),
         oxidationOrCarbonationFactor: toNumericField(data.oxidationOrCarbonationFactor),
-        netCalorificValue: toNumericField(data.netCalorificValue),
+        // activityDataValue/activityDataUnit ride along in `...data` exactly
+        // as the user entered them (e.g. 5000 kg) -- the kg -> TJ conversion
+        // above is applied to the arithmetic only, never written back over
+        // what the user typed. What IS recorded here is the NCV that
+        // conversion used, so the stored row is self-contained for an
+        // auditor: entered quantity, unit, NCV, factor, result. A
+        // user-supplied netCalorificValue wins if present (site-specific
+        // NCV outranks an IPCC default in the tier hierarchy) and is left
+        // untouched.
+        netCalorificValue:
+          data.netCalorificValue !== undefined && data.netCalorificValue !== null
+            ? toNumericField(data.netCalorificValue)
+            : appliedNetCalorificValue !== null
+              ? String(appliedNetCalorificValue)
+              : toNumericField(data.netCalorificValue),
         // computedEmissionKg is kg CO2e; calculatedEmissionsTco2e is tonnes
         // -- divide by 1000. Falls back to whatever the client sent
         // (manual entry) when there isn't enough data to compute.
@@ -1149,8 +1228,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Guaranteed non-null by the guard above.
           scope: sourceStream.scope,
           activity: data.fuelOrMaterialType || sourceStream.name,
-          unit: data.activityDataUnit ?? "",
-          quantity: String(data.activityDataValue),
+          // The emission record is the calculation ledger the consolidated
+          // report reads, and that rollup computes each gas's contribution
+          // as `quantity x gasBreakdown[].co2ePerUnit` -- co2ePerUnit being
+          // per unit of the FACTOR's unit. So quantity/unit here are stored
+          // post-conversion (TJ), not as typed. The as-entered kg quantity
+          // and the NCV used are preserved on the calculation_approach row
+          // above, which is where the "what did the user actually declare"
+          // question is answered; storing the converted value here instead
+          // of the raw kg is what keeps the per-gas rollup from multiplying
+          // kilograms by a per-TJ rate.
+          unit: (appliedNetCalorificValue !== null ? data.emissionFactorUnit : data.activityDataUnit) ?? "",
+          quantity: String(activityValueInFactorUnit),
           factor: String(data.emissionFactorValue),
           emission: String(computedEmissionKg),
           // Same undefined-vs-null reasoning as the calculation-approach
