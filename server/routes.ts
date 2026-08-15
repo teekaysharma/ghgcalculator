@@ -665,6 +665,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const boundaries = await storage.listReportingBoundaries(req.organizationId!);
       const target = boundaries.find((b) => b.id === id);
       if (!target) return res.status(404).json({ message: "Reporting boundary not found" });
+      const lock = await finalizedLockMessage(req.organizationId!, id);
+      if (lock) return res.status(409).json({ message: lock });
 
       const duplicate = boundaries.some(
         (b) => b.id !== id && b.reportingEntityId === target.reportingEntityId && b.reportingYear === data.reportingYear,
@@ -681,6 +683,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/reporting-boundaries/:id", requireAuth, requireOrg, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+
+    const target = await storage.getReportingBoundary(req.organizationId!, id);
+    if (!target) return res.status(404).json({ message: "Reporting boundary not found" });
+    const lock = await finalizedLockMessage(req.organizationId!, id);
+    if (lock) return res.status(409).json({ message: lock });
+
     const deleted = await storage.deleteReportingBoundary(req.organizationId!, id);
     if (!deleted) return res.status(404).json({ message: "Reporting boundary not found" });
     return res.status(204).end();
