@@ -496,7 +496,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const organizations = await Promise.all(
       memberships.map(async (m) => {
         const org = await storage.getOrganization(m.organizationId);
-        return { organizationId: m.organizationId, role: m.role, name: org?.name ?? null, slug: org?.slug ?? null };
+        const enabledModules = await storage.getEnabledModuleKeys(m.organizationId);
+        return {
+          organizationId: m.organizationId,
+          role: m.role,
+          name: org?.name ?? null,
+          slug: org?.slug ?? null,
+          enabledModules,
+        };
       }),
     );
     return res.json({ user: { id: user.id, email: user.email, name: user.name }, memberships, organizations });

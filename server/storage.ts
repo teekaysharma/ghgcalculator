@@ -1,9 +1,11 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
+import { MODULE_REGISTRY } from "./modules";
 import {
   organizations,
   users,
   memberships,
+  organizationModules,
   emissionFactorsTable,
   emissionRecordsTable,
   reportingEntities,
@@ -157,6 +159,7 @@ export interface IStorage {
   getMembershipsForUser(userId: number): Promise<Membership[]>;
   getMembership(userId: number, organizationId: number): Promise<Membership | undefined>;
   listMembershipsForOrganization(organizationId: number): Promise<(Membership & { userEmail: string; userName: string | null })[]>;
+  getEnabledModuleKeys(organizationId: number): Promise<string[]>;
 
   // Emission factors (tenant-scoped)
   createEmissionFactors(organizationId: number, factors: Omit<InsertEmissionFactorRow, "organizationId">[]): Promise<EmissionFactorRow[]>;
@@ -332,6 +335,18 @@ export class DbStorage implements IStorage {
       .from(memberships)
       .where(and(eq(memberships.userId, userId), eq(memberships.organizationId, organizationId)));
     return row;
+  }
+
+  async getEnabledModuleKeys(organizationId: number): Promise<string[]> {
+    const rows = await db
+      .select({ moduleKey: organizationModules.moduleKey })
+      .from(organizationModules)
+      .where(eq(organizationModules.organizationId, organizationId));
+    const grantedKeys = rows.map((r) => r.moduleKey);
+    const alwaysEnabledKeys = Object.entries(MODULE_REGISTRY)
+      .filter(([, def]) => def.alwaysEnabled)
+      .map(([key]) => key);
+    return Array.from(new Set([...alwaysEnabledKeys, ...grantedKeys]));
   }
 
   async listMembershipsForOrganization(
