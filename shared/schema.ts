@@ -96,6 +96,40 @@ export const insertMembershipSchema = createInsertSchema(memberships).pick({
 export type InsertMembership = z.infer<typeof insertMembershipSchema>;
 export type Membership = typeof memberships.$inferSelect;
 
+// Per-organization entitlement for future add-on report/output modules
+// (CBAM-shaped view, GRI-table view, etc.) -- see
+// docs/superpowers/specs/2026-08-15-report-module-architecture-design.md.
+// Deliberately has no HTTP route for org owners/admins to write to --
+// grants happen only via scripts/grant-module.mjs, run directly by the
+// vendor, since no billing/self-serve system exists yet. moduleKey
+// matches a key declared in server/modules.ts's MODULE_REGISTRY.
+export const organizationModules = pgTable(
+  "organization_modules",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    moduleKey: text("module_key").notNull(),
+    enabledAt: timestamp("enabled_at").defaultNow().notNull(),
+    // Free-text note of who/how this was granted (e.g. an email or invoice
+    // reference) -- this is a vendor-run script action, not necessarily
+    // tied to an authenticated user session, so this is not a foreign key.
+    enabledBy: text("enabled_by"),
+  },
+  (table) => ({
+    orgModuleUnique: unique("organization_modules_org_module_unique").on(table.organizationId, table.moduleKey),
+    orgIdx: index("organization_modules_org_idx").on(table.organizationId),
+  }),
+);
+
+export const insertOrganizationModuleSchema = createInsertSchema(organizationModules).pick({
+  organizationId: true,
+  moduleKey: true,
+  enabledBy: true,
+});
+
+export type InsertOrganizationModule = z.infer<typeof insertOrganizationModuleSchema>;
+export type OrganizationModule = typeof organizationModules.$inferSelect;
+
 // GHG Emission types
 export type ScopeType = 'scope1' | 'scope2' | 'scope3';
 
