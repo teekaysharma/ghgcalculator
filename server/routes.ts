@@ -177,6 +177,12 @@ const calculationApproachSchema = z.object({
         factorUpper: z.number().optional(),
       }),
     )
+    // Nullable AND optional, and the two mean different things downstream:
+    // an absent key leaves the stored breakdown alone (Drizzle drops
+    // `undefined` from its SET clause), while an explicit null clears it --
+    // which is what the client sends when the user swaps an IPCC multi-gas
+    // bundle for a plain single-value factor.
+    .nullable()
     .optional(),
   oxidationOrCarbonationFactor: numericInput,
   oxidationFactorTier: z.string().optional(),
@@ -277,6 +283,34 @@ function slugify(name: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "") || "org"
   );
+}
+
+// ---------------------------------------------------------------------------
+// Finalized-boundary write lock
+//
+// ISO 14064-3 verification applies to a fixed, dated statement: once a
+// reporting boundary is finalized, the numbers behind it must not change
+// underneath the badge. getConsolidatedReport recomputes live from the
+// current rows every time it is called, so any write that survives
+// finalization silently changes what a "Finalized" report says, with no
+// audit trail -- exactly the property the finalize/recalculate mechanic
+// exists to provide. Every route that can move those numbers therefore
+// calls this FIRST and returns 409 before touching the database. The
+// documented way back in is PATCH .../recalculate, which reopens the
+// boundary to draft and logs the reason as a verification finding.
+// ---------------------------------------------------------------------------
+const FINALIZED_LOCK_MESSAGE =
+  "This report is finalized — use Recalculate to reopen it before making changes.";
+
+/**
+ * Returns the 409 message when the given reporting boundary is finalized,
+ * or null when it is editable. A missing boundary returns null: 404/ownership
+ * handling stays with the caller, which already does it.
+ */
+async function finalizedLockMessage(organizationId: number, reportingBoundaryId: number): Promise<string | null> {
+  const boundary = await storage.getReportingBoundary(organizationId, reportingBoundaryId);
+  if (!boundary) return null;
+  return boundary.status === "finalized" ? FINALIZED_LOCK_MESSAGE : null;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -953,6 +987,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const boundaries = await storage.listReportingBoundaries(req.organizationId!);
       const boundary = boundaries.find((b) => b.id === boundaryId);
       if (!boundary) return res.status(404).json({ message: "Reporting boundary not found" });
+      if (boundary.status === "finalized") return res.status(409).json({ message: FINALIZED_LOCK_MESSAGE });
 
       const facility = await storage.getFacility(req.organizationId!, data.facilityId);
       if (!facility) return res.status(404).json({ message: "Facility not found" });
@@ -982,6 +1017,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid source stream id" });
     try {
       const data = parseBody(sourceStreamUpdateSchema, req.body);
+
+      const target = await storage.getSourceStream(req.organizationId!, id);
+      if (!target) return res.status(404).json({ message: "Source stream not found" });
+      const lock = await finalizedLockMessage(req.organizationId!, target.reportingBoundaryId);
+      if (lock) return res.status(409).json({ message: lock });
+
       const sourceStream = await storage.updateSourceStream(req.organizationId!, id, {
         ...data,
         estimatedAnnualEmissionsTco2e: toNumericField(data.estimatedAnnualEmissionsTco2e),
@@ -996,6 +1037,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/source-streams/:id", requireAuth, requireOrg, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+
+    const target = await storage.getSourceStream(req.organizationId!, id);
+    if (!target) return res.status(404).json({ message: "Source stream not found" });
+    const lock = await finalizedLockMessage(req.organizationId!, target.reportingBoundaryId);
+    if (lock) return res.status(409).json({ message: lock });
+
     const deleted = await storage.deleteSourceStream(req.organizationId!, id);
     if (!deleted) return res.status(404).json({ message: "Source stream not found" });
     return res.status(204).end();
@@ -1016,6 +1063,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = parseBody(calculationApproachSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
       if (!sourceStream) return res.status(404).json({ message: "Source stream not found" });
+
+      const lock = await finalizedLockMessage(req.organizationId!, sourceStream.reportingBoundaryId);
+      if (lock) return res.status(409).json({ message: lock });
+
+      // Scope is optional on the source-stream schema (and null on rows
+      // created before the create form started requiring it), but the
+      // emission record this handler writes is what the consolidated report
+      // buckets by scope. Defaulting a missing scope to "scope1" would book
+      // e.g. purchased electricity as Scope 1 with no warning anywhere, so
+      // the save is rejected instead -- the user has to state the scope.
+      if (!sourceStream.scope) {
+        return res.status(400).json({
+          message:
+            "This source stream has no scope assigned — set Scope 1/2/3 on the source stream before saving a calculation approach.",
+        });
+      }
 
       // Compute the emission server-side whenever we have both an
       // activity-data quantity and a factor, so the persisted number can
@@ -1054,7 +1117,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // (manual entry) when there isn't enough data to compute.
         calculatedEmissionsTco2e:
           computedEmissionKg !== null ? String(computedEmissionKg / 1000) : toNumericField(data.calculatedEmissionsTco2e),
-        gasBreakdown: data.gasBreakdown ?? null,
+        // gasBreakdown intentionally rides along in `...data` rather than
+        // being restated with `?? null`. Drizzle's onConflictDoUpdate drops
+        // `undefined` fields from its SET clause but writes an explicit
+        // `null` as-is, so coercing an absent key to null would wipe the
+        // persisted per-gas audit trail whenever the user re-saves this row
+        // after editing an unrelated field (e.g. a note) -- and leave the
+        // already-persisted emission_records.gasBreakdown disagreeing with
+        // it. Zod omits the key entirely when the client does not send it.
         organizationId: req.organizationId!,
         sourceStreamId,
       });
@@ -1068,13 +1138,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           calculationApproachId: approach.id,
           reportingBoundaryId: sourceStream.reportingBoundaryId,
           createdBy: user.id,
-          scope: sourceStream.scope ?? "scope1",
+          // Guaranteed non-null by the guard above.
+          scope: sourceStream.scope,
           activity: data.fuelOrMaterialType || sourceStream.name,
           unit: data.activityDataUnit ?? "",
           quantity: String(data.activityDataValue),
           factor: String(data.emissionFactorValue),
           emission: String(computedEmissionKg),
-          gasBreakdown: data.gasBreakdown ?? null,
+          // Same undefined-vs-null reasoning as the calculation-approach
+          // upsert above: omit the key when the client did not send one, so
+          // the two rows' gasBreakdown values stay in agreement.
+          ...(data.gasBreakdown !== undefined ? { gasBreakdown: data.gasBreakdown } : {}),
         });
       }
 
@@ -1099,6 +1173,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = parseBody(measurementApproachSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
       if (!sourceStream) return res.status(404).json({ message: "Source stream not found" });
+
+      const lock = await finalizedLockMessage(req.organizationId!, sourceStream.reportingBoundaryId);
+      if (lock) return res.status(409).json({ message: lock });
 
       const approach = await storage.upsertMeasurementBasedApproach({
         ...data,
@@ -1127,6 +1204,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = parseBody(fallbackApproachSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
       if (!sourceStream) return res.status(404).json({ message: "Source stream not found" });
+
+      const lock = await finalizedLockMessage(req.organizationId!, sourceStream.reportingBoundaryId);
+      if (lock) return res.status(409).json({ message: lock });
 
       const estimatedEmissionsTco2e = toNumericField(data.estimatedEmissionsTco2e);
       const approach = await storage.upsertFallbackApproach({
@@ -1200,6 +1280,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = parseBody(dataQualityRecordSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
       if (!sourceStream) return res.status(404).json({ message: "Source stream not found" });
+
+      const lock = await finalizedLockMessage(req.organizationId!, sourceStream.reportingBoundaryId);
+      if (lock) return res.status(409).json({ message: lock });
 
       const record = await storage.upsertDataQualityRecord({
         ...data,

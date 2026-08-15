@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -550,16 +550,36 @@ function CalculationApproachForm({
     notes: existing?.notes ?? "",
   });
   const [isIpccDefault, setIsIpccDefault] = useState(existing?.isIpccDefault ?? false);
-  const [gasBreakdown, setGasBreakdown] = useState<EmissionFactorSelection["gasBreakdown"]>(
+  // Tri-state on purpose: undefined = "not known yet / do not touch the
+  // stored value", null = "the user picked a factor with no per-gas bundle,
+  // clear the stored value", array = a real breakdown to persist.
+  const [gasBreakdown, setGasBreakdown] = useState<EmissionFactorSelection["gasBreakdown"] | null | undefined>(
     existing?.gasBreakdown ?? undefined,
   );
+
+  // `existing` comes from an in-flight query that is null on the first
+  // render, so the useState initializer above always misses the persisted
+  // value -- leaving gasBreakdown undefined for anyone who did not re-pick a
+  // factor in this session. Hydrate it once the query resolves. A fresh
+  // picker selection always wins over the stored value, hence the ref: it is
+  // deliberately not state, since flipping it must not re-run this effect.
+  const pickerTouchedRef = useRef(false);
+  useEffect(() => {
+    if (pickerTouchedRef.current) return;
+    const persisted = query.data?.calculationApproach?.gasBreakdown;
+    if (persisted) setGasBreakdown(persisted);
+  }, [query.data]);
 
   const save = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("PUT", `/api/source-streams/${sourceStreamId}/calculation-approach`, {
         ...Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v || undefined])),
         isIpccDefault,
-        gasBreakdown,
+        // Omit the key entirely when there is nothing to send. Sending an
+        // explicit undefined lets the server coerce it to null, which
+        // Drizzle then writes over the stored per-gas audit trail -- so a
+        // user editing an unrelated field would silently destroy it.
+        ...(gasBreakdown !== undefined ? { gasBreakdown } : {}),
       });
       return res.json();
     },
@@ -593,13 +613,21 @@ function CalculationApproachForm({
             emissionFactorAuthorityName: selection.factorAuthorityName,
           }));
           setIsIpccDefault(selection.isIpccDefault);
-          setGasBreakdown(selection.gasBreakdown);
+          pickerTouchedRef.current = true;
+          // `?? null` (not undefined): switching from an IPCC multi-gas
+          // bundle to a plain org factor must actively clear the old
+          // breakdown, not leave the previous bundle's gases attached to a
+          // factor they no longer describe.
+          setGasBreakdown(selection.gasBreakdown ?? null);
         }}
       />
       {fields.emissionFactorValue && (
         <div className="text-xs text-neutral-500 bg-white border rounded-md p-2 space-y-0.5">
           <div>
-            Using: <span className="font-medium">{fields.emissionFactorValue} {fields.emissionFactorUnit}</span>
+            {/* State the kg CO2e basis explicitly: the server's
+                quantity x factor / 1000 computation assumes it, and a
+                factor entered in tonnes would be a silent 1000x error. */}
+            Using: <span className="font-medium">{fields.emissionFactorValue} kg CO2e/{fields.emissionFactorUnit}</span>
             {isIpccDefault && <span className="ml-2 text-amber-700 font-medium">IPCC default</span>}
           </div>
           {fields.emissionFactorAuthorityName && <div>Authority: {fields.emissionFactorAuthorityName}</div>}

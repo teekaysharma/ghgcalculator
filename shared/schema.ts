@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, numeric, timestamp, unique, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, numeric, timestamp, unique, uniqueIndex, index, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -225,6 +225,16 @@ export const emissionRecordsTable = pgTable(
   (table) => ({
     orgIdx: index("emission_records_org_idx").on(table.organizationId),
     orgYearIdx: index("emission_records_org_year_idx").on(table.organizationId, table.year),
+    // Conflict target for upsertEmissionRecordForCalculationApproach's
+    // onConflictDoUpdate (server/storage.ts) -- one emission record per
+    // calculation approach. Created live by
+    // scripts/manual-migration-007.mjs as a plain `CREATE UNIQUE INDEX`
+    // (not a table constraint), which is why this is uniqueIndex(...) and
+    // not the unique(...) helper used elsewhere in this file: Postgres
+    // excludes NULLs from a unique index by default, so the legacy
+    // /api/calculate rows (calculation_approach_id IS NULL) are unaffected.
+    // Declared here so schema.ts stays the source of truth for the live DB.
+    calcApproachUnique: uniqueIndex("emission_records_calc_approach_unique").on(table.calculationApproachId),
   }),
 );
 

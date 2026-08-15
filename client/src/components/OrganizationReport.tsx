@@ -17,12 +17,28 @@ interface ConsolidatedReport {
     country: string | null;
     equityShareOwnershipPercent: number | null;
     incomplete: boolean;
+    missingEquityShare: boolean;
     scope1: number;
     scope2: number;
     scope3: number;
   }[];
-  intensity: { revenuePerTco2e: number | null; fteEmployeesPerTco2e: number | null; productionPerTco2e: number | null };
+  intensity: {
+    tco2ePerRevenue: number | null;
+    tco2ePerFte: number | null;
+    tco2ePerProductionUnit: number | null;
+    revenueCurrency: string | null;
+  };
   gasCoverage: { gas: string; covered: boolean }[];
+  dataQualityRecords: {
+    id: number;
+    sourceStreamId: number;
+    sourceStreamName: string | null;
+    dataQualityTier: string | null;
+    uncertaintyPercent: string | null;
+    uncertaintyJustification: string | null;
+    usedIpccDefaultFactor: boolean | null;
+    ipccDefaultSubstitutionReason: string | null;
+  }[];
   verificationFindings: { id: number; findingType: string; description: string; severity: string | null; status: string }[];
   managementQaRecords: { id: number; qaProcedureDescription: string | null; responsiblePerson: string | null; reviewFrequency: string | null }[];
   baseYearComparison: { baseYearTotal: number | null; currentYearTotal: number; changePercent: number | null } | null;
@@ -135,10 +151,19 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
             </thead>
             <tbody className="divide-y divide-neutral-200">
               {report.facilities.map((f) => (
-                <tr key={f.id} className={f.incomplete ? "bg-amber-50" : ""}>
+                <tr key={f.id} className={f.incomplete || f.missingEquityShare ? "bg-amber-50" : ""}>
                   <td className="px-3 py-2">
                     {f.name}
                     {f.incomplete && <span className="ml-2 text-xs text-amber-700">No activity data yet</span>}
+                    {/* Distinct from "no activity data": this facility may
+                        have real activity data, but under equity-share
+                        consolidation a missing ownership % makes its
+                        multiplier 0, so it contributes nothing to the
+                        totals. An unexplained 0.00 is a completeness
+                        finding in its own right, so say why. */}
+                    {f.missingEquityShare && (
+                      <span className="ml-2 text-xs text-amber-700">Equity share % not set — excluded from totals</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">{f.country ?? "-"}</td>
                   <td className="px-3 py-2">{f.equityShareOwnershipPercent ?? "-"}</td>
@@ -166,13 +191,74 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
         </Card>
       )}
 
-      {(report.intensity.revenuePerTco2e || report.intensity.fteEmployeesPerTco2e || report.intensity.productionPerTco2e) && (
+      {/* GRI 305-4 / IFRS S2 GHG intensity: emissions per unit of the
+          organization-specific denominator. Null checks are explicit rather
+          than truthiness checks because 0 is a legitimate intensity (a
+          zero-emissions inventory) that must still be disclosed. */}
+      {(report.intensity.tco2ePerRevenue !== null ||
+        report.intensity.tco2ePerFte !== null ||
+        report.intensity.tco2ePerProductionUnit !== null) && (
         <Card className="bg-white">
           <CardContent className="pt-6 text-sm space-y-1">
-            <h4 className="text-sm font-medium mb-2">Intensity</h4>
-            {report.intensity.revenuePerTco2e && <p>Revenue per tCO2e: {report.intensity.revenuePerTco2e.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>}
-            {report.intensity.fteEmployeesPerTco2e && <p>FTE employees per tCO2e: {report.intensity.fteEmployeesPerTco2e.toFixed(3)}</p>}
-            {report.intensity.productionPerTco2e && <p>Production units per tCO2e: {report.intensity.productionPerTco2e.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>}
+            <h4 className="text-sm font-medium mb-2">GHG intensity (GRI 305-4 / IFRS S2)</h4>
+            {report.intensity.tco2ePerRevenue !== null && (
+              <p>
+                tCO2e per {report.intensity.revenueCurrency ?? "unit"} of revenue:{" "}
+                {report.intensity.tco2ePerRevenue.toLocaleString(undefined, { maximumSignificantDigits: 4 })}
+              </p>
+            )}
+            {report.intensity.tco2ePerFte !== null && (
+              <p>tCO2e per FTE employee: {report.intensity.tco2ePerFte.toLocaleString(undefined, { maximumFractionDigits: 3 })}</p>
+            )}
+            {report.intensity.tco2ePerProductionUnit !== null && (
+              <p>
+                tCO2e per unit of production:{" "}
+                {report.intensity.tco2ePerProductionUnit.toLocaleString(undefined, { maximumSignificantDigits: 4 })}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Data quality / uncertainty summary. ISO 14064-3 6.1.3.6.3 expects a
+          verifier to see the stated uncertainty and its justification per
+          source, and the design spec calls for it in this report -- the data
+          was already being returned by getConsolidatedReport but never
+          rendered anywhere. */}
+      {report.dataQualityRecords.length > 0 && (
+        <Card className="bg-white">
+          <CardContent className="pt-6">
+            <h4 className="text-sm font-medium mb-3">Data quality and uncertainty</h4>
+            <table className="min-w-full divide-y divide-neutral-200 text-sm">
+              <thead>
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-neutral-500 uppercase">Source stream</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-neutral-500 uppercase">Tier</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-neutral-500 uppercase">Uncertainty</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-neutral-500 uppercase">Justification</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-neutral-500 uppercase">IPCC default</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-200">
+                {report.dataQualityRecords.map((d) => (
+                  <tr key={d.id}>
+                    <td className="px-3 py-2">{d.sourceStreamName ?? `#${d.sourceStreamId}`}</td>
+                    <td className="px-3 py-2">{d.dataQualityTier ?? "-"}</td>
+                    <td className="px-3 py-2">{d.uncertaintyPercent !== null ? `±${d.uncertaintyPercent}%` : "-"}</td>
+                    <td className="px-3 py-2 text-neutral-600">{d.uncertaintyJustification ?? "-"}</td>
+                    <td className="px-3 py-2">
+                      {d.usedIpccDefaultFactor ? (
+                        <span className="text-amber-700">
+                          Yes{d.ipccDefaultSubstitutionReason ? ` — ${d.ipccDefaultSubstitutionReason}` : ""}
+                        </span>
+                      ) : (
+                        "No"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       )}

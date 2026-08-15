@@ -93,13 +93,40 @@ export interface ConsolidatedReport {
     country: string | null;
     equityShareOwnershipPercent: number | null;
     incomplete: boolean;
+    // True only under equity_share consolidation, when this facility has no
+    // ownership percentage recorded. facilityMultiplier() below returns 0 in
+    // that case (deliberately, to avoid overcounting), which makes the
+    // facility's scope totals read as a flat 0.00 even when it has real
+    // activity data. An unexplained zero is itself a completeness finding a
+    // verifier would raise, so the reason is surfaced explicitly rather than
+    // left to be inferred. Kept separate from `incomplete` (which means "no
+    // source streams") so the report can explain each cause on its own.
+    missingEquityShare: boolean;
     scope1: number;
     scope2: number;
     scope3: number;
   }[];
-  intensity: { revenuePerTco2e: number | null; fteEmployeesPerTco2e: number | null; productionPerTco2e: number | null };
+  // GHG intensity per GRI 305-4 / IFRS S2: emissions DIVIDED BY the
+  // organization-specific denominator (tCO2e per unit of revenue, per FTE,
+  // per unit of production) -- not the reciprocal. revenueCurrency is
+  // carried through so the revenue ratio can be labelled with its unit.
+  intensity: {
+    tco2ePerRevenue: number | null;
+    tco2ePerFte: number | null;
+    tco2ePerProductionUnit: number | null;
+    revenueCurrency: string | null;
+  };
   gasCoverage: { gas: string; covered: boolean }[];
-  dataQualityRecords: unknown[];
+  dataQualityRecords: {
+    id: number;
+    sourceStreamId: number;
+    sourceStreamName: string | null;
+    dataQualityTier: string | null;
+    uncertaintyPercent: string | null;
+    uncertaintyJustification: string | null;
+    usedIpccDefaultFactor: boolean | null;
+    ipccDefaultSubstitutionReason: string | null;
+  }[];
   verificationFindings: unknown[];
   managementQaRecords: unknown[];
   baseYearComparison: { baseYearTotal: number | null; currentYearTotal: number; changePercent: number | null } | null;
@@ -152,7 +179,11 @@ export interface IStorage {
     quantity: string;
     factor: string;
     emission: string;
-    gasBreakdown: unknown;
+    // Optional on purpose: Drizzle's onConflictDoUpdate filters `undefined`
+    // fields out of its SET clause but writes an explicit `null` as-is.
+    // Omitting the key on a partial re-save therefore preserves the stored
+    // per-gas audit trail, where passing null would destroy it.
+    gasBreakdown?: unknown;
   }): Promise<EmissionRecordRow>;
 
   // ISO 14064-1 boundary setup (tenant-scoped). See PROJECT INSTRUCTIONS ->
@@ -406,7 +437,8 @@ export class DbStorage implements IStorage {
     quantity: string;
     factor: string;
     emission: string;
-    gasBreakdown: unknown;
+    // See IStorage for why this is optional rather than `unknown`.
+    gasBreakdown?: unknown;
   }): Promise<EmissionRecordRow> {
     const [row] = await db
       .insert(emissionRecordsTable)
@@ -1045,6 +1077,10 @@ export class DbStorage implements IStorage {
         country: f.country,
         equityShareOwnershipPercent: f.equityShareOwnershipPercent ? Number(f.equityShareOwnershipPercent) : null,
         incomplete: !facilitiesWithStreams.has(f.id),
+        // Same null test facilityMultiplier() uses above, so this flag is
+        // true exactly when the multiplier silently collapsed to 0.
+        missingEquityShare:
+          isEquityShare && (f.equityShareOwnershipPercent === null || f.equityShareOwnershipPercent === undefined),
         ...totals,
       };
     });
@@ -1068,14 +1104,18 @@ export class DbStorage implements IStorage {
         : [];
     const totalProduction = facilityProductRows.reduce((sum, p) => sum + (p.actualProduction ? Number(p.actualProduction) : 0), 0);
 
+    // GRI 305-4 and IFRS S2 both define GHG intensity as emissions per unit
+    // of the organization-specific denominator (tCO2e / revenue, tCO2e /
+    // FTE, tCO2e / production unit). The denominator is what has to be
+    // non-zero here; a zero-emissions inventory still yields a valid 0
+    // intensity, so totalTco2e is deliberately NOT part of the guard.
+    const revenueAmount = boundary.revenueAmount ? Number(boundary.revenueAmount) : 0;
+    const fteEmployees = boundary.fullTimeEquivalentEmployees ? Number(boundary.fullTimeEquivalentEmployees) : 0;
     const intensity = {
-      revenuePerTco2e:
-        boundary.revenueAmount && totalTco2e > 0 ? Number(boundary.revenueAmount) / totalTco2e : null,
-      fteEmployeesPerTco2e:
-        boundary.fullTimeEquivalentEmployees && totalTco2e > 0
-          ? Number(boundary.fullTimeEquivalentEmployees) / totalTco2e
-          : null,
-      productionPerTco2e: totalProduction > 0 && totalTco2e > 0 ? totalProduction / totalTco2e : null,
+      tco2ePerRevenue: revenueAmount > 0 ? totalTco2e / revenueAmount : null,
+      tco2ePerFte: fteEmployees > 0 ? totalTco2e / fteEmployees : null,
+      tco2ePerProductionUnit: totalProduction > 0 ? totalTco2e / totalProduction : null,
+      revenueCurrency: boundary.revenueCurrency ?? null,
     };
 
     // Explicit gas-coverage disclosure (Section 2b) -- states which of the
@@ -1110,11 +1150,16 @@ export class DbStorage implements IStorage {
       }
     }
 
+    // Name is selected alongside the id so the report's data-quality /
+    // uncertainty table can label each row with the source stream it
+    // belongs to -- a bare sourceStreamId is not something a verifier can
+    // read (ISO 14064-3 6.1.3.6.3 expects uncertainty to be attributable).
     const streamIdsForBoundary = await db
-      .select({ id: sourceStreams.id })
+      .select({ id: sourceStreams.id, name: sourceStreams.name })
       .from(sourceStreams)
       .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
     const streamIds = streamIdsForBoundary.map((s) => s.id);
+    const streamNamesById = new Map(streamIdsForBoundary.map((s) => [s.id, s.name]));
 
     const [dqRecords, findings, qaRecords] = await Promise.all([
       streamIds.length > 0
@@ -1161,7 +1206,16 @@ export class DbStorage implements IStorage {
       facilities: facilitiesOut,
       intensity,
       gasCoverage,
-      dataQualityRecords: dqRecords,
+      dataQualityRecords: dqRecords.map((r) => ({
+        id: r.id,
+        sourceStreamId: r.sourceStreamId,
+        sourceStreamName: streamNamesById.get(r.sourceStreamId) ?? null,
+        dataQualityTier: r.dataQualityTier,
+        uncertaintyPercent: r.uncertaintyPercent,
+        uncertaintyJustification: r.uncertaintyJustification,
+        usedIpccDefaultFactor: r.usedIpccDefaultFactor,
+        ipccDefaultSubstitutionReason: r.ipccDefaultSubstitutionReason,
+      })),
       verificationFindings: findings,
       managementQaRecords: qaRecords,
       baseYearComparison,

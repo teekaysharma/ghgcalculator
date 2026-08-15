@@ -209,7 +209,7 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
               <SelectLabel>Your organization's factors for {facilityCountry}</SelectLabel>
               {orgFactorsForCountry.map((f) => (
                 <SelectItem key={f.id} value={`org:${f.id}`}>
-                  {f.name} ({f.factor} {f.unit})
+                  {f.name} ({f.factor} kg CO2e/{f.unit})
                 </SelectItem>
               ))}
             </SelectGroup>
@@ -219,7 +219,7 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
               <SelectLabel>Your organization's other factors</SelectLabel>
               {orgFactorsOther.map((f) => (
                 <SelectItem key={f.id} value={`org:${f.id}`}>
-                  {f.name} ({f.factor} {f.unit})
+                  {f.name} ({f.factor} kg CO2e/{f.unit})
                 </SelectItem>
               ))}
             </SelectGroup>
@@ -278,18 +278,30 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
             value={newFactor.name}
             onChange={(e) => setNewFactor((f) => ({ ...f, name: e.target.value }))}
           />
+          {/* The calculation pipeline (server/routes.ts PUT
+              .../calculation-approach) computes quantity x factor and
+              divides by 1000 to reach tCO2e -- i.e. it assumes every factor
+              is expressed in kg CO2e per unit of activity data. Many public
+              datasets publish factors in TONNES CO2e per unit, and entering
+              one of those here would overstate every downstream total by
+              1000x with nothing to catch it. So the basis is stated on the
+              field itself, not left implicit. */}
           <div className="grid grid-cols-2 gap-2">
             <Input
-              placeholder="Factor value"
+              placeholder="Factor value (kg CO2e per unit)"
               value={newFactor.factor}
               onChange={(e) => setNewFactor((f) => ({ ...f, factor: e.target.value }))}
             />
             <Input
-              placeholder="Unit"
+              placeholder="Unit of activity data (e.g. TJ, litre, kWh)"
               value={newFactor.unit}
               onChange={(e) => setNewFactor((f) => ({ ...f, unit: e.target.value }))}
             />
           </div>
+          <p className="text-xs text-amber-700">
+            The factor value must be in <strong>kg CO2e per unit</strong>. If your source publishes it in tonnes CO2e
+            per unit, multiply by 1000 before entering it here.
+          </p>
           <Input
             placeholder="Source link (https://...) -- required"
             value={newFactor.sourceUrl}
