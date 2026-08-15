@@ -195,9 +195,11 @@ function SetupStat({ label, value }: { label: string; value: number }) {
 }
 
 // Base year + rationale for one reporting entity. The server requires a
-// rationale whenever a base year is set, and rejects a base-year CHANGE while
-// any of the entity's reporting years is finalized -- both surface here as the
-// mutation's error toast rather than being duplicated as client-side rules.
+// rationale whenever a base year is set, and restricts a base-year CHANGE to
+// an owner/admin role (it's a governed policy decision, not a number-moving
+// edit, so it isn't gated by any reporting boundary's finalize lock) -- both
+// surface here as the mutation's error toast rather than being duplicated as
+// client-side rules.
 function ReportingEntitySettings({ entity }: { entity: ReportingEntity }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();

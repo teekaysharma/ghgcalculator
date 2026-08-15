@@ -698,13 +698,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "A base year rationale is required when a base year is set" });
       }
 
-      // Changing the base year changes the base-year comparison block that
-      // every finalized report for this entity publishes, so it is gated the
-      // same way boundary-scoped edits are. Renaming the entity or rewording
-      // the rationale moves no numbers and is deliberately never gated.
+      // Setting/changing the base year is a policy designation, not a
+      // recalculation -- it tags which year is the trend-comparison
+      // reference point, it does not alter that year's already-computed,
+      // already-finalized emissions total (GHG Protocol Ch.5 / ISO 14064-1
+      // 5.3: base year selection criterion is verifiable data availability,
+      // routinely chosen years after first reporting once target-setting
+      // begins). Gating it behind a finalize-lock/reopen would block that
+      // ordinary sequence for no standards-required reason -- reopening a
+      // report is for changes that touch its numbers (see equity share on
+      // facilities, which does feed the consolidation total and stays
+      // finalize-locked). What the standard does require is that the
+      // *decision* be governed: "the organization may change its base year,
+      // but shall justify any change" (ISO 14064-1 5.3). That's a role
+      // check, not a period lock -- only owner/admin may change it; the
+      // rationale field is the justification the standard asks for.
       if (data.baseYear !== undefined && data.baseYear !== existing.baseYear) {
-        const lock = await finalizedEntityLockMessage(req.organizationId!, id, () => true);
-        if (lock) return res.status(409).json({ message: lock });
+        if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+          return res.status(403).json({ message: "Only an organization owner or admin can change the base year" });
+        }
       }
 
       const entity = await storage.updateReportingEntity(req.organizationId!, id, {
