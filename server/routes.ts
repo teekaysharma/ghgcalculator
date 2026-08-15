@@ -11,6 +11,7 @@ import {
   ProductData,
   YearlyEmissions,
   ProductIntensity,
+  ReportingBoundary,
   registerSchema,
   loginSchema,
   consolidationApproaches,
@@ -40,7 +41,24 @@ const reportingEntityCreateSchema = z.object({
   legalEntity: z.string().optional(),
 });
 
-const reportingEntityUpdateSchema = reportingEntityCreateSchema;
+// The base year is a per-entity setting (GHG Protocol Corporate Standard Ch.5,
+// ISO 14064-1 5.3): a historic year emissions are tracked against, which must
+// carry a documented rationale for the choice and for any later
+// recalculation. It is deliberately NOT part of the create schema -- an entity
+// is created in the Setup flow before any inventory exists, so there is
+// nothing to pick a base year against yet. It is set later, from the entity
+// settings panel, once at least one reporting year has been built.
+//
+// null is a meaningful value here (clears the base year), so both fields are
+// nullable AND optional: undefined means "key absent, leave the column alone",
+// null means "explicitly cleared". Drizzle's mapUpdateSet drops undefined keys
+// and keeps nulls, so that distinction survives all the way to the UPDATE.
+// The upper bound is validated in the route, not here, so it tracks the real
+// current year rather than the year the module was first loaded.
+const reportingEntityUpdateSchema = reportingEntityCreateSchema.extend({
+  baseYear: z.number().int().nullable().optional(),
+  baseYearRationale: z.string().nullable().optional(),
+});
 
 const facilityCreateSchema = z.object({
   reportingEntityId: z.number().int().positive(),
@@ -51,6 +69,11 @@ const facilityCreateSchema = z.object({
 const facilityUpdateSchema = z.object({
   name: z.string().min(1),
   country: z.string().optional(),
+  // Only consumed when the reporting boundary's consolidationApproach is
+  // 'equity_share' (see schema.ts) -- under operational/financial control it is
+  // inert metadata. Nullable so it can be cleared back to "not recorded",
+  // which is what getConsolidatedReport reports as missingEquityShare.
+  equityShareOwnershipPercent: z.union([z.number(), z.string()]).nullable().optional(),
 });
 
 const consolidationApproachSchema = z.enum(consolidationApproaches);
@@ -68,6 +91,18 @@ const reportingBoundaryUpdateSchema = z.object({
   description: z.string().optional(),
 });
 
+// Intensity denominators for GRI 305-4 / IFRS S2 (tCO2e per unit of revenue,
+// per FTE). Kept as its own PATCH sub-resource rather than folded into the
+// boundary PUT above: that PUT is a full replace that requires reportingYear
+// and consolidationApproach and re-runs the entity+year duplicate check, none
+// of which a "set the revenue figure" edit should have to round-trip.
+// Matches the existing PATCH .../finalize and PATCH .../recalculate style.
+const reportingBoundaryMetricsSchema = z.object({
+  revenueAmount: z.union([z.number(), z.string()]).nullable().optional(),
+  revenueCurrency: z.string().nullable().optional(),
+  fullTimeEquivalentEmployees: z.union([z.number(), z.string()]).nullable().optional(),
+});
+
 function parseBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -78,6 +113,29 @@ function parseBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
 
 function toNumericField(value: number | string | undefined): string | undefined {
   return value === undefined ? undefined : String(value);
+}
+
+/**
+ * Optional + nullable variant of toNumericField, for `numeric` columns where
+ * null genuinely means "not recorded" rather than "unchanged". Preserves the
+ * undefined/null distinction drizzle relies on, and folds an empty or
+ * whitespace-only string into null so a cleared text input reads as "not
+ * recorded" instead of silently becoming the number 0.
+ */
+function toNullableNumericField(value: number | string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  return String(value);
+}
+
+/** Throws (caught by the route's 400 handler) when a supplied numeric is out of range. */
+function assertNumericRange(value: string | null | undefined, label: string, min: number, max: number): void {
+  if (value === null || value === undefined) return;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${label} must be a number between ${min} and ${max}`);
+  }
 }
 
 const numericInput = z.union([z.number(), z.string()]).optional();
@@ -321,6 +379,41 @@ async function finalizedLockMessage(organizationId: number, reportingBoundaryId:
   const boundary = await storage.getReportingBoundary(organizationId, reportingBoundaryId);
   if (!boundary) return null;
   return boundary.status === "finalized" ? FINALIZED_LOCK_MESSAGE : null;
+}
+
+/**
+ * Entity-scoped variant of the lock above, for edits that are NOT scoped to a
+ * single reporting boundary but still move a finalized boundary's published
+ * numbers -- facility equity share % and the entity's base year both feed
+ * getConsolidatedReport, which recomputes live for every year of the entity.
+ *
+ * The single-boundary helper cannot express this: one facility or entity can
+ * sit under many reporting years at once, some finalized and some still in
+ * draft. `matches` narrows which finalized boundaries actually care (equity %
+ * only bites under equity_share consolidation; the base year bites for all of
+ * them), so the block lands only where a number would really change. The
+ * returned message names the offending years, because "recalculate first" is
+ * useless advice if the caller can't tell WHICH report to reopen.
+ *
+ * Callers must only invoke this when the value is genuinely changing --
+ * relabelling a facility, or rewording a rationale, moves no numbers and must
+ * stay editable regardless of what has been finalized.
+ */
+async function finalizedEntityLockMessage(
+  organizationId: number,
+  reportingEntityId: number,
+  matches: (boundary: ReportingBoundary) => boolean,
+): Promise<string | null> {
+  const boundaries = await storage.listReportingBoundaries(organizationId);
+  const blocking = boundaries.filter(
+    (b) => b.reportingEntityId === reportingEntityId && b.status === "finalized" && matches(b),
+  );
+  if (blocking.length === 0) return null;
+  const years = blocking
+    .map((b) => b.reportingYear)
+    .sort((a, b) => a - b)
+    .join(", ");
+  return `This change would alter a finalized report (reporting year ${years}) — use Recalculate to reopen it first.`;
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -574,7 +667,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting entity id" });
     try {
       const data = parseBody(reportingEntityUpdateSchema, req.body);
-      const entity = await storage.updateReportingEntity(req.organizationId!, id, data);
+      const existing = await storage.getReportingEntity(req.organizationId!, id);
+      if (!existing) return res.status(404).json({ message: "Reporting entity not found" });
+
+      // Base year bounds are checked here rather than in the zod schema so the
+      // upper bound is the real current year at request time. A base year in
+      // the future has no inventory behind it; 1990 is the earliest year the
+      // reporting boundary schema accepts, so the two stay consistent.
+      const currentYear = new Date().getFullYear();
+      if (data.baseYear !== undefined && data.baseYear !== null) {
+        if (data.baseYear < 1990 || data.baseYear > currentYear) {
+          return res.status(400).json({ message: `Base year must be between 1990 and ${currentYear}` });
+        }
+      }
+
+      const rationale =
+        data.baseYearRationale === undefined
+          ? undefined
+          : data.baseYearRationale === null || data.baseYearRationale.trim() === ""
+            ? null
+            : data.baseYearRationale.trim();
+
+      // ISO 14064-1 5.3 / GHG Protocol Ch.5: a base year is only meaningful
+      // alongside a documented rationale for choosing it. Checked against the
+      // effective post-update state, not just the payload, so setting a base
+      // year against an already-stored rationale is allowed.
+      const effectiveBaseYear = data.baseYear === undefined ? existing.baseYear : data.baseYear;
+      const effectiveRationale = rationale === undefined ? existing.baseYearRationale : rationale;
+      if (effectiveBaseYear !== null && !effectiveRationale) {
+        return res.status(400).json({ message: "A base year rationale is required when a base year is set" });
+      }
+
+      // Changing the base year changes the base-year comparison block that
+      // every finalized report for this entity publishes, so it is gated the
+      // same way boundary-scoped edits are. Renaming the entity or rewording
+      // the rationale moves no numbers and is deliberately never gated.
+      if (data.baseYear !== undefined && data.baseYear !== existing.baseYear) {
+        const lock = await finalizedEntityLockMessage(req.organizationId!, id, () => true);
+        if (lock) return res.status(409).json({ message: lock });
+      }
+
+      const entity = await storage.updateReportingEntity(req.organizationId!, id, {
+        name: data.name,
+        legalEntity: data.legalEntity,
+        baseYear: data.baseYear,
+        baseYearRationale: rationale,
+      });
       if (!entity) return res.status(404).json({ message: "Reporting entity not found" });
       return res.json({ reportingEntity: entity });
     } catch (error) {
@@ -628,7 +766,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       if (duplicate) return res.status(409).json({ message: "Facility name already exists for this reporting entity" });
 
-      const facility = await storage.updateFacility(req.organizationId!, id, data);
+      const equityShareOwnershipPercent = toNullableNumericField(data.equityShareOwnershipPercent);
+      assertNumericRange(equityShareOwnershipPercent, "Equity share ownership percent", 0, 100);
+
+      // Under equity_share consolidation this percentage IS the facility's
+      // multiplier in getConsolidatedReport, so changing it silently restates
+      // every finalized equity-share report for the entity. Gated only when
+      // the value actually changes, and only against finalized boundaries that
+      // use equity_share -- under operational/financial control the column is
+      // never read, so blocking a name/country edit there would be gratuitous.
+      // Compared as numbers, since the column round-trips as a scaled string
+      // ("50" in, "50.00" out) and a string compare would report a false change.
+      const storedEquity = target.equityShareOwnershipPercent;
+      const equityChanged =
+        equityShareOwnershipPercent !== undefined &&
+        (equityShareOwnershipPercent === null || storedEquity === null
+          ? equityShareOwnershipPercent !== storedEquity
+          : Number(equityShareOwnershipPercent) !== Number(storedEquity));
+      if (equityChanged) {
+        const lock = await finalizedEntityLockMessage(
+          req.organizationId!,
+          target.reportingEntityId,
+          (b) => b.consolidationApproach === "equity_share",
+        );
+        if (lock) return res.status(409).json({ message: lock });
+      }
+
+      const facility = await storage.updateFacility(req.organizationId!, id, {
+        name: data.name,
+        country: data.country,
+        equityShareOwnershipPercent,
+      });
       return res.json({ facility });
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility payload" });
@@ -738,6 +906,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
       finalizedAt: new Date(),
     });
     return res.json({ reportingBoundary: boundary });
+  });
+
+  // Intensity denominators for this reporting year (GRI 305-4 / IFRS S2).
+  // These feed getConsolidatedReport's `intensity` block directly, so this is
+  // squarely a "write that can move a finalized report's numbers" and carries
+  // the same finalize lock as the boundary PUT/DELETE above.
+  app.patch("/api/reporting-boundaries/:id/reporting-metrics", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    try {
+      const data = parseBody(reportingBoundaryMetricsSchema, req.body);
+      const target = await storage.getReportingBoundary(req.organizationId!, id);
+      if (!target) return res.status(404).json({ message: "Reporting boundary not found" });
+      const lock = await finalizedLockMessage(req.organizationId!, id);
+      if (lock) return res.status(409).json({ message: lock });
+
+      const revenueAmount = toNullableNumericField(data.revenueAmount);
+      assertNumericRange(revenueAmount, "Revenue amount", 0, Number.MAX_SAFE_INTEGER);
+      const fullTimeEquivalentEmployees = toNullableNumericField(data.fullTimeEquivalentEmployees);
+      assertNumericRange(fullTimeEquivalentEmployees, "Full-time equivalent employees", 0, 10_000_000);
+
+      // ISO 4217 alphabetic codes are exactly three letters. Normalised to
+      // upper case so "aed" and "AED" don't become two different denominators
+      // in the report's "tCO2e per <currency> of revenue" label.
+      let revenueCurrency: string | null | undefined;
+      if (data.revenueCurrency === undefined) {
+        revenueCurrency = undefined;
+      } else if (data.revenueCurrency === null || data.revenueCurrency.trim() === "") {
+        revenueCurrency = null;
+      } else {
+        const code = data.revenueCurrency.trim().toUpperCase();
+        if (!/^[A-Z]{3}$/.test(code)) {
+          return res.status(400).json({ message: "Revenue currency must be a 3-letter ISO 4217 code, for example USD or AED" });
+        }
+        revenueCurrency = code;
+      }
+
+      // A revenue intensity ratio with no stated currency is not a disclosure
+      // anyone can use (GRI 305-4 requires the metric's unit to be stated), and
+      // the report would fall back to labelling it "per unit". Checked against
+      // the effective post-update state so supplying only one of the pair on a
+      // later edit still works.
+      const effectiveRevenue = revenueAmount === undefined ? target.revenueAmount : revenueAmount;
+      const effectiveCurrency = revenueCurrency === undefined ? target.revenueCurrency : revenueCurrency;
+      if (effectiveRevenue !== null && !effectiveCurrency) {
+        return res.status(400).json({ message: "A revenue currency is required when a revenue amount is recorded" });
+      }
+
+      const update = { revenueAmount, revenueCurrency, fullTimeEquivalentEmployees };
+      if (Object.values(update).every((v) => v === undefined)) {
+        return res.status(400).json({ message: "No reporting metrics supplied" });
+      }
+
+      const boundary = await storage.updateReportingBoundary(req.organizationId!, id, update);
+      return res.json({ reportingBoundary: boundary });
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid reporting metrics payload" });
+    }
   });
 
   // Consolidated multi-facility rollup report (Plan 3's auditable global

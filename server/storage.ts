@@ -191,13 +191,13 @@ export interface IStorage {
   createReportingEntity(entity: InsertReportingEntity): Promise<ReportingEntity>;
   listReportingEntities(organizationId: number): Promise<ReportingEntity[]>;
   getReportingEntity(organizationId: number, id: number): Promise<ReportingEntity | undefined>;
-  updateReportingEntity(organizationId: number, id: number, data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity">>): Promise<ReportingEntity | undefined>;
+  updateReportingEntity(organizationId: number, id: number, data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity" | "baseYear" | "baseYearRationale">>): Promise<ReportingEntity | undefined>;
   deleteReportingEntity(organizationId: number, id: number): Promise<boolean>;
 
   createFacility(facility: InsertFacility): Promise<Facility>;
   listFacilities(organizationId: number): Promise<Facility[]>;
   getFacility(organizationId: number, id: number): Promise<Facility | undefined>;
-  updateFacility(organizationId: number, id: number, data: Partial<Pick<InsertFacility, "name" | "country">>): Promise<Facility | undefined>;
+  updateFacility(organizationId: number, id: number, data: Partial<Pick<InsertFacility, "name" | "country" | "equityShareOwnershipPercent">>): Promise<Facility | undefined>;
   deleteFacility(organizationId: number, id: number): Promise<boolean>;
 
   createReportingBoundary(boundary: InsertReportingBoundary): Promise<ReportingBoundary>;
@@ -481,7 +481,7 @@ export class DbStorage implements IStorage {
   async updateReportingEntity(
     organizationId: number,
     id: number,
-    data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity">>,
+    data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity" | "baseYear" | "baseYearRationale">>,
   ): Promise<ReportingEntity | undefined> {
     const [row] = await db
       .update(reportingEntities)
@@ -523,7 +523,7 @@ export class DbStorage implements IStorage {
   async updateFacility(
     organizationId: number,
     id: number,
-    data: Partial<Pick<InsertFacility, "name" | "country">>,
+    data: Partial<Pick<InsertFacility, "name" | "country" | "equityShareOwnershipPercent">>,
   ): Promise<Facility | undefined> {
     const [row] = await db
       .update(facilities)
