@@ -6,6 +6,16 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 
+// Mirrors server/modules.ts's MODULE_REGISTRY labels for display purposes
+// only. If a second real module is ever added there, add its label here
+// too -- this project's existing convention already duplicates small
+// shared shapes between client/server (see GasComponent in
+// shared/schema.ts vs client/src/types/emissions.ts) rather than sharing
+// server-only files with the client bundle.
+const MODULE_LABELS: Record<string, string> = {
+  standard: "Standard (GHG Protocol / ISO 14064-1)",
+};
+
 interface ConsolidatedReport {
   reportingBoundary: { id: number; reportingYear: number; consolidationApproach: string; status: string; finalizedAt: string | null };
   reportingEntity: { id: number; name: string; baseYear: number | null; baseYearRationale: string | null };
@@ -49,6 +59,18 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
   const query = useQuery<{ report: ConsolidatedReport }>({
     queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report`],
   });
+  const meQuery = useQuery<{ organizations: { organizationId: number; enabledModules: string[] }[] }>({
+    queryKey: ["/api/auth/me"],
+  });
+
+  const [reportView, setReportView] = useState("standard");
+
+  // Every org has at least "standard" (always enabled, no row needed in
+  // organization_modules). With only one entitled key, there's nothing to
+  // choose between yet, so the selector stays hidden rather than showing a
+  // single-option dropdown to every customer until a real second module
+  // exists.
+  const enabledModules = meQuery.data?.organizations[0]?.enabledModules ?? ["standard"];
 
   if (query.isLoading) return <div className="text-sm text-neutral-500 py-8 text-center">Loading report...</div>;
   if (!query.data) return <div className="text-sm text-neutral-500 py-8 text-center">Report not found.</div>;
@@ -58,6 +80,22 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
 
   return (
     <div className="space-y-4">
+      {enabledModules.length > 1 && (
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-neutral-600">Report view</label>
+          <select
+            className="border rounded-md px-2 py-1 text-sm"
+            value={reportView}
+            onChange={(e) => setReportView(e.target.value)}
+          >
+            {enabledModules.map((key) => (
+              <option key={key} value={key}>
+                {MODULE_LABELS[key] ?? key}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <Card className="bg-white">
         <CardContent className="pt-6 flex items-center justify-between">
           <div>
