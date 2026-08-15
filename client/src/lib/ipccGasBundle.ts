@@ -19,6 +19,13 @@ export interface IpccDefaultFactorRow {
   sourceUrl?: string | null;
   factorLower?: string | null;
   factorUpper?: string | null;
+  // Both columns already come back from GET /api/reference/ipcc-default-factors
+  // (the route selects the whole row); they just need to be declared here to
+  // be usable. isBiogenic drives the biogenic-CO2 memo split in the
+  // consolidated report; netCalorificValue (TJ/Gg, CO2 rows only) drives
+  // weight-basis unit conversion server-side.
+  isBiogenic?: boolean;
+  netCalorificValue?: string | null;
 }
 
 export interface GwpValueRow {
@@ -40,15 +47,15 @@ export interface IpccGasBundle {
   factor: EmissionFactor;
 }
 
-// CH4 emitted by combustion of the fossil fuels this dataset covers (coal,
-// oil, natural gas, LPG) is fossil-origin CH4 -- AR6 gives fossil and
-// non-fossil CH4 different GWP-100 values (29.8 vs 27). Every fuel currently
-// seeded in ipcc_default_factors (manual-migration-006.mjs) is fossil, so
-// 'CH4 (fossil)' is the correct lookup for all of them today. If a biomass
-// fuel is ever added to this category, its bundle needs 'CH4 (non-fossil)'
-// instead -- update this mapping when that happens rather than assuming.
-function gwpGasKeyFor(gasType: string): string {
-  if (gasType === "CH4") return "CH4 (fossil)";
+// AR6 gives fossil and non-fossil CH4 different GWP-100 values (29.8 vs 27),
+// because fossil CH4 oxidises to CO2 that is itself a net addition to the
+// atmosphere. The fossil fuels seeded by manual-migration-006.mjs take
+// 'CH4 (fossil)'; the biomass fuels seeded by manual-migration-008.mjs
+// (isBiogenic = true) take 'CH4 (non-fossil)' -- this is the switch the
+// original version of this comment said to make "when a biomass fuel is ever
+// added", and manual-migration-008 is when that happened.
+function gwpGasKeyFor(gasType: string, isBiogenic: boolean): string {
+  if (gasType === "CH4") return isBiogenic ? "CH4 (non-fossil)" : "CH4 (fossil)";
   return gasType; // 'CO2' and 'N2O' match directly
 }
 
@@ -95,7 +102,8 @@ export function groupIpccFactorsByGasBundle(
   }
 
   function buildComponent(row: IpccDefaultFactorRow): GasComponent {
-    const gwpGasKey = gwpGasKeyFor(row.gasType);
+    const isBiogenic = row.isBiogenic === true;
+    const gwpGasKey = gwpGasKeyFor(row.gasType, isBiogenic);
     const gwp = gwpByGas.get(gwpGasKey);
     const nativeFactor = Number(row.factor);
     const gwpValue = gwp ? Number(gwp.gwpValue) : 1;
@@ -108,6 +116,8 @@ export function groupIpccFactorsByGasBundle(
       co2ePerUnit: nativeFactor * gwpValue,
       factorLower: row.factorLower != null ? Number(row.factorLower) : undefined,
       factorUpper: row.factorUpper != null ? Number(row.factorUpper) : undefined,
+      isBiogenic,
+      netCalorificValue: row.netCalorificValue != null ? Number(row.netCalorificValue) : undefined,
     };
   }
 

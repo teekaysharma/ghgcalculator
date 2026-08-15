@@ -1020,20 +1020,19 @@ export class DbStorage implements IStorage {
     const scopeTotals = { scope1: 0, scope2: 0, scope3: 0 };
     const gasTotals = new Map<string, number>();
     const perFacilityScopeTotals = new Map<number, { scope1: number; scope2: number; scope3: number }>();
+    // GRI 305-1 / GHG Protocol: CO2 from combusting biomass is reported as a
+    // separate memo item, NOT inside gross Scope 1/2/3 (it is part of the
+    // biological carbon cycle). This is a CO2-only rule -- CH4 and N2O from
+    // the same biomass combustion are anthropogenic-forcing emissions like
+    // any other and stay in the gross totals. Accumulated in tonnes, same
+    // basis as scopeTotals.
+    let biogenicCo2Tonnes = 0;
 
     for (const record of records) {
       if (!record.facilityId) continue;
       const multiplier = facilityMultiplier(record.facilityId);
       const emissionKg = Number(record.emission) * multiplier;
       const emissionTonnes = emissionKg / 1000;
-
-      const scopeKey = record.scope as "scope1" | "scope2" | "scope3";
-      if (scopeKey === "scope1" || scopeKey === "scope2" || scopeKey === "scope3") {
-        scopeTotals[scopeKey] += emissionTonnes;
-        const existing = perFacilityScopeTotals.get(record.facilityId) ?? { scope1: 0, scope2: 0, scope3: 0 };
-        existing[scopeKey] += emissionTonnes;
-        perFacilityScopeTotals.set(record.facilityId, existing);
-      }
 
       // gasBreakdown is stored in two shapes depending on which pipeline
       // wrote the record: the facility-MRV calculation-approach pipeline
@@ -1047,12 +1046,45 @@ export class DbStorage implements IStorage {
       // records never set facilityId, so they're filtered out above and
       // this branch is defensive/future-proofing rather than reachable
       // today.
-      const breakdown = (record.gasBreakdown as { gas: string; co2e?: number; co2ePerUnit?: number }[] | null) ?? [];
+      //
+      // This loop runs BEFORE the scope accumulation below because the
+      // biogenic-CO2 share it computes has to be netted out of the record's
+      // scope contribution. record.emission stays the authoritative gross
+      // number for the record (it is what the calculation handler actually
+      // computed and persisted); the components are used only to work out
+      // how much of it is biogenic CO2, so no rounding drift is introduced
+      // into the non-biogenic case -- a record with no biogenic component
+      // contributes exactly record.emission as before.
+      const breakdown =
+        (record.gasBreakdown as { gas: string; co2e?: number; co2ePerUnit?: number; isBiogenic?: boolean }[] | null) ?? [];
       const quantity = Number(record.quantity);
+      let recordBiogenicCo2Tonnes = 0;
       for (const component of breakdown) {
         const componentEmissionKg =
           component.co2e !== undefined ? component.co2e : quantity * (component.co2ePerUnit ?? 0);
-        gasTotals.set(component.gas, (gasTotals.get(component.gas) ?? 0) + (componentEmissionKg * multiplier) / 1000);
+        const componentTonnes = (componentEmissionKg * multiplier) / 1000;
+        if (component.gas === "CO2" && component.isBiogenic === true) {
+          recordBiogenicCo2Tonnes += componentTonnes;
+          // Held out of gasTotals too, so the "Emissions by gas" table and
+          // its % column reconcile to the same gross total the scope cards
+          // show. Biogenic CO2 is disclosed on its own line rather than
+          // folded into the CO2 row.
+          continue;
+        }
+        gasTotals.set(component.gas, (gasTotals.get(component.gas) ?? 0) + componentTonnes);
+      }
+      biogenicCo2Tonnes += recordBiogenicCo2Tonnes;
+
+      const scopeKey = record.scope as "scope1" | "scope2" | "scope3";
+      if (scopeKey === "scope1" || scopeKey === "scope2" || scopeKey === "scope3") {
+        // Gross scope total = the record's emission LESS its biogenic-CO2
+        // component only. Biogenic CH4/N2O were never subtracted above, so
+        // they remain in here, which is the intended treatment.
+        const grossTonnes = emissionTonnes - recordBiogenicCo2Tonnes;
+        scopeTotals[scopeKey] += grossTonnes;
+        const existing = perFacilityScopeTotals.get(record.facilityId) ?? { scope1: 0, scope2: 0, scope3: 0 };
+        existing[scopeKey] += grossTonnes;
+        perFacilityScopeTotals.set(record.facilityId, existing);
       }
     }
 
@@ -1192,16 +1224,14 @@ export class DbStorage implements IStorage {
         baseYear: entity.baseYear,
         baseYearRationale: entity.baseYearRationale,
       },
-      // biogenicCo2 is hardcoded to 0: no biogenic-flagged factors are
-      // seeded yet (per the design spec's Section 1 note on `isBiogenic`),
-      // so there's nothing to sum. When biogenic fuels are added in a
-      // future session, this needs a real aggregation step (sum
-      // emission_records where the gas breakdown's source factor has
-      // isBiogenic = true, which requires joining back to
-      // ipccDefaultFactors/emissionFactorsTable by name -- not possible
-      // from emission_records.gasBreakdown alone, since that JSON blob
-      // doesn't currently carry an isBiogenic flag per component).
-      totals: { ...scopeTotals, biogenicCo2: 0 },
+      // biogenicCo2 is a real aggregation now that biogenic-flagged factors
+      // are seeded (manual-migration-008.mjs) and every persisted
+      // gasBreakdown component carries isBiogenic (shared/schema.ts
+      // GasComponent). It is a memo item: already netted OUT of
+      // scope1/2/3 above, so adding it to the three scopes would double
+      // count. Biogenic CH4/N2O are NOT in this figure -- they stay in the
+      // gross scope totals, per GRI 305-1 / GHG Protocol.
+      totals: { ...scopeTotals, biogenicCo2: biogenicCo2Tonnes },
       gasBreakdown,
       facilities: facilitiesOut,
       intensity,

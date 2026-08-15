@@ -19,6 +19,22 @@ export interface GasComponent {
   // pre-fill -- dataQualityRecords.uncertaintyPercent.
   factorLower?: number;
   factorUpper?: number;
+  // True when this component came from a factor row flagged
+  // ipccDefaultFactors.isBiogenic (biomass/waste-derived fuel). Carried on
+  // the component -- not just the record -- because the GRI 305 / GHG
+  // Protocol treatment is gas-specific: biogenic CO2 is reported as a
+  // separate memo item OUTSIDE gross Scope 1/2/3, while biogenic CH4/N2O
+  // stay INSIDE gross totals (burning biomass still emits anthropogenic
+  // -forcing CH4/N2O). The consolidated-report rollup
+  // (server/storage.ts getConsolidatedReport) can only make that split if
+  // each component says whether it is biogenic.
+  isBiogenic?: boolean;
+  // Net calorific value of the fuel in TJ/Gg (== GJ/tonne), copied from
+  // ipccDefaultFactors.netCalorificValue. Present only on CO2 components
+  // (the only row the value is stored on). Enables the weight-basis
+  // (kg/tonne -> TJ) activity-data conversion in server/routes.ts's
+  // calculation-approach handler.
+  netCalorificValue?: number;
 }
 
 export interface EmissionFactor {

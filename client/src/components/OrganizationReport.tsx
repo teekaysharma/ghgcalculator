@@ -111,6 +111,29 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
         <SummaryCard label="Total" value={total} highlight />
       </div>
 
+      {/* GRI 305-1 / GHG Protocol: CO2 from biomass combustion is reported
+          separately from gross Scope 1/2/3, not inside it. Shown
+          unconditionally (including at 0.00) rather than hidden when empty --
+          "no biogenic CO2 in this inventory" is itself a disclosure a
+          verifier looks for, and a silently absent line is indistinguishable
+          from a line that was never computed. The CH4/N2O caveat is spelled
+          out because it is the part readers most often get wrong. */}
+      <Card className="bg-white border-neutral-200">
+        <CardContent className="pt-4 pb-4 flex items-baseline justify-between gap-4">
+          <div className="text-sm">
+            <span className="font-medium">Biogenic CO2</span>{" "}
+            <span className="text-neutral-500">
+              — memo item, excluded from gross Scope 1/2/3 above. Biogenic CH4 and N2O are NOT excluded; they remain in the
+              scope totals.
+            </span>
+          </div>
+          <div className="text-lg font-semibold whitespace-nowrap">
+            {report.totals.biogenicCo2.toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+            <span className="text-xs font-normal text-neutral-400">tCO2</span>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="bg-white">
         <CardContent className="pt-6">
           <h4 className="text-sm font-medium mb-3">Emissions by gas</h4>
