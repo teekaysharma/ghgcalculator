@@ -1178,6 +1178,16 @@ export const ipccDefaultFactors = pgTable("ipcc_default_factors", {
   // pre-fill in dataQualityRecords (Plan 2): +/-(factorUpper-factorLower)/2/factor*100.
   factorLower: numeric("factor_lower", { precision: 20, scale: 8 }),
   factorUpper: numeric("factor_upper", { precision: 20, scale: 8 }),
+  // Real IPCC Table 1.2 default net calorific value (TJ/Gg, numerically
+  // equal to GJ/tonne). Nullable, and only meaningful on CO2 rows
+  // (sector='all', one per fuel) -- CH4/N2O rows for the same fuel leave
+  // this null rather than repeat it. Enables weight-basis unit conversion
+  // (kg/tonne activity data -> TJ) for the calculation trigger: TJ =
+  // quantity_tonnes * netCalorificValue / 1000. Deliberately does NOT
+  // cover volume-basis units (liters/m3) -- that needs a separately
+  // sourced fuel-density dataset not yet gathered; entering activity data
+  // in liters/m3 still requires the factor's native unit directly.
+  netCalorificValue: numeric("net_calorific_value", { precision: 10, scale: 4 }),
   scope: text("scope"),
   sourceDocument: text("source_document").notNull(),
   sourceUrl: text("source_url"),
