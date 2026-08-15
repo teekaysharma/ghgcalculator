@@ -231,11 +231,19 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
                 No IPCC default factors loaded yet — dataset pending
               </div>
             ) : (
-              ipccBundles.map((b) => (
-                <SelectItem key={b.key} value={`ipcc:${b.key}`}>
-                  {b.factor.name} ({b.factor.factor.toFixed(1)} kg CO2e/{b.unit})
-                </SelectItem>
-              ))
+              ipccBundles.map((b) => {
+                const isBiogenic = b.factor.gasBreakdown?.some((c) => c.isBiogenic) ?? false;
+                return (
+                  <SelectItem key={b.key} value={`ipcc:${b.key}`}>
+                    {isBiogenic && (
+                      <span className="mr-1.5 rounded bg-green-100 px-1 py-0.5 text-[10px] font-medium uppercase text-green-700">
+                        Biogenic
+                      </span>
+                    )}
+                    {b.factor.name} ({b.factor.factor.toFixed(1)} kg CO2e/{b.unit})
+                  </SelectItem>
+                );
+              })
             )}
           </SelectGroup>
         </SelectContent>
@@ -246,6 +254,10 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
           const bundle = ipccBundles.find((b) => `ipcc:${b.key}` === selectedKey);
           const breakdown = bundle?.factor.gasBreakdown;
           if (!breakdown || breakdown.length === 0) return null;
+          const isBiogenic = breakdown.some((c) => c.isBiogenic);
+          const biogenicCo2PerUnit = breakdown
+            .filter((c) => c.gas === "CO2" && c.isBiogenic)
+            .reduce((sum, c) => sum + c.co2ePerUnit, 0);
           return (
             <div className="text-xs border rounded-md p-2 bg-neutral-50 space-y-1">
               <p className="font-medium text-neutral-600">
@@ -255,10 +267,19 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
                 <div key={c.gas} className="flex justify-between text-neutral-500">
                   <span>
                     {c.gas}: {c.nativeFactor} native x GWP {c.gwpValue} ({c.gwpVersion})
+                    {c.isBiogenic && c.gas === "CO2" && " — biogenic"}
                   </span>
                   <span>{c.co2ePerUnit.toFixed(1)} kg CO2e/{bundle?.unit}</span>
                 </div>
               ))}
+              {isBiogenic && biogenicCo2PerUnit > 0 && (
+                <p className="pt-1 text-amber-700">
+                  {((biogenicCo2PerUnit / (bundle?.factor.factor || 1)) * 100).toFixed(0)}% of the number shown in
+                  the dropdown above is biogenic CO2. It will NOT count toward this report's gross Scope 1/2/3
+                  totals — it is excluded and shown separately as a memo item, per GHG Protocol / GRI 305
+                  convention. Only the CH4/N2O share above stays in the gross total.
+                </p>
+              )}
             </div>
           );
         })()}
