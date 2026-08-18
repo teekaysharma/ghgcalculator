@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
-import { MODULE_REGISTRY } from "./modules";
+import { MODULE_REGISTRY, isKnownModuleKey } from "./modules";
 import {
   organizations,
   users,
@@ -342,7 +342,7 @@ export class DbStorage implements IStorage {
       .select({ moduleKey: organizationModules.moduleKey })
       .from(organizationModules)
       .where(eq(organizationModules.organizationId, organizationId));
-    const grantedKeys = rows.map((r) => r.moduleKey);
+    const grantedKeys = rows.map((r) => r.moduleKey).filter(isKnownModuleKey);
     const alwaysEnabledKeys = Object.entries(MODULE_REGISTRY)
       .filter(([, def]) => def.alwaysEnabled)
       .map(([key]) => key);

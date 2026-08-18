@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/hooks/use-auth";
 
 // Mirrors server/modules.ts's MODULE_REGISTRY labels for display purposes
 // only. If a second real module is ever added there, add its label here
@@ -59,9 +60,7 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
   const query = useQuery<{ report: ConsolidatedReport }>({
     queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report`],
   });
-  const meQuery = useQuery<{ organizations: { organizationId: number; enabledModules: string[] }[] }>({
-    queryKey: ["/api/auth/me"],
-  });
+  const { organizations } = useAuth();
 
   const [reportView, setReportView] = useState("standard");
 
@@ -70,7 +69,11 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
   // choose between yet, so the selector stays hidden rather than showing a
   // single-option dropdown to every customer until a real second module
   // exists.
-  const enabledModules = meQuery.data?.organizations[0]?.enabledModules ?? ["standard"];
+  const enabledModules = organizations[0]?.enabledModules ?? ["standard"];
+  // Reconcile against enabledModules in case a previously-selected module
+  // was revoked while it was the active view -- not consumed anywhere yet
+  // (no second renderer exists), but kept correct for when one does.
+  const activeView = enabledModules.includes(reportView) ? reportView : "standard";
 
   if (query.isLoading) return <div className="text-sm text-neutral-500 py-8 text-center">Loading report...</div>;
   if (!query.data) return <div className="text-sm text-neutral-500 py-8 text-center">Report not found.</div>;

@@ -21,6 +21,7 @@ interface OrgSummary {
   role: "owner" | "admin" | "member";
   name: string | null;
   slug: string | null;
+  enabledModules: string[];
 }
 
 interface MeResponse {
