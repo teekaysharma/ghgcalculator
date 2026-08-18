@@ -18,7 +18,7 @@ function Footer() {
   );
 }
 
-const styles = {
+const styles: { footer: React.CSSProperties; text: React.CSSProperties; link: React.CSSProperties } = {
   footer: {
     position: "fixed",
     bottom: 0,
