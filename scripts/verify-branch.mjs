@@ -280,7 +280,15 @@ async function step5_smokeTest() {
       headers: { "Content-Type": "application/json", Cookie: cookie },
       body: JSON.stringify({
         factors: [
-          { name: `${RUN_TAG}-diesel`, factor: 2.68, unit: "litre", scope: "scope1", category: "fuel" },
+          {
+            name: `${RUN_TAG}-diesel`,
+            factor: 2.68,
+            unit: "litre",
+            scope: "scope1",
+            category: "fuel",
+            sourceUrl: "https://www.gov.uk/government/publications/greenhouse-gas-reporting-conversion-factors-2026",
+            authorityName: "DESNZ (UK Government GHG Conversion Factors 2026)",
+          },
         ],
       }),
     });
