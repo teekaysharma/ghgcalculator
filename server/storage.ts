@@ -88,7 +88,7 @@ export interface ConsolidatedReport {
   reportingBoundary: { id: number; reportingYear: number; consolidationApproach: string; status: string; finalizedAt: string | null };
   reportingEntity: { id: number; name: string; baseYear: number | null; baseYearRationale: string | null };
   totals: { scope1: number; scope2: number; scope3: number; biogenicCo2: number };
-  gasBreakdown: { gas: string; co2e: number; pctOfTotal: number }[];
+  gasBreakdown: { gas: string; co2e: number; nativeMass: number; pctOfTotal: number }[];
   facilities: {
     id: number;
     name: string;
@@ -1034,6 +1034,11 @@ export class DbStorage implements IStorage {
 
     const scopeTotals = { scope1: 0, scope2: 0, scope3: 0 };
     const gasTotals = new Map<string, number>();
+    // Native mass (metric tonnes of the gas itself, not CO2e) per gas --
+    // GHG Protocol's required-reporting-content list states emissions
+    // "shall include... data for all six GHGs separately... in metric
+    // tonnes and in tonnes of CO2 equivalent," not CO2e alone.
+    const gasNativeMassTotals = new Map<string, number>();
     const perFacilityScopeTotals = new Map<number, { scope1: number; scope2: number; scope3: number }>();
     // GRI 305-1 / GHG Protocol: CO2 from combusting biomass is reported as a
     // separate memo item, NOT inside gross Scope 1/2/3 (it is part of the
@@ -1071,7 +1076,9 @@ export class DbStorage implements IStorage {
       // into the non-biogenic case -- a record with no biogenic component
       // contributes exactly record.emission as before.
       const breakdown =
-        (record.gasBreakdown as { gas: string; co2e?: number; co2ePerUnit?: number; isBiogenic?: boolean }[] | null) ?? [];
+        (record.gasBreakdown as
+          | { gas: string; co2e?: number; co2ePerUnit?: number; nativeFactor?: number; isBiogenic?: boolean }[]
+          | null) ?? [];
       const quantity = Number(record.quantity);
       let recordBiogenicCo2Tonnes = 0;
       for (const component of breakdown) {
@@ -1087,6 +1094,13 @@ export class DbStorage implements IStorage {
           continue;
         }
         gasTotals.set(component.gas, (gasTotals.get(component.gas) ?? 0) + componentTonnes);
+        // Native mass: quantity x nativeFactor is the native-unit
+        // contribution BEFORE any GWP multiplication (nativeFactor is
+        // "kg of this gas per unit of activity data"), same multiplier
+        // and biogenic-CO2 exclusion as the CO2e accumulation above so
+        // the two stay reconcilable.
+        const componentNativeTonnes = (quantity * (component.nativeFactor ?? 0) * multiplier) / 1000;
+        gasNativeMassTotals.set(component.gas, (gasNativeMassTotals.get(component.gas) ?? 0) + componentNativeTonnes);
       }
       biogenicCo2Tonnes += recordBiogenicCo2Tonnes;
 
@@ -1107,6 +1121,7 @@ export class DbStorage implements IStorage {
     const gasBreakdown = Array.from(gasTotals.entries()).map(([gas, co2e]) => ({
       gas,
       co2e,
+      nativeMass: gasNativeMassTotals.get(gas) ?? 0,
       pctOfTotal: gasTotal > 0 ? (co2e / gasTotal) * 100 : 0,
     }));
 
