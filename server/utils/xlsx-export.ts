@@ -15,7 +15,6 @@ import * as XLSX from "xlsx";
 import type { ConsolidatedReport, SourceStreamDetail } from "../storage";
 
 function summarySheet(report: ConsolidatedReport): XLSX.WorkSheet {
-  const total = report.totals.scope1 + report.totals.scope2 + report.totals.scope3;
   const rows: (string | number)[][] = [
     ["Reporting entity", report.reportingEntity.name],
     ["Reporting year", report.reportingBoundary.reportingYear],
@@ -104,61 +103,46 @@ function sourceStreamSheet(streamDetails: SourceStreamDetail[]): XLSX.WorkSheet 
   for (const s of streamDetails) {
     const calc = s.calculationApproach;
     const breakdown = (calc?.gasBreakdown as { gas: string; nativeFactor: number; gwpValue: number; gwpVersion: string; co2ePerUnit: number }[] | null) ?? [];
+    // Columns shared by every row for this source stream, regardless of
+    // whether it has a per-gas breakdown -- factored out so the two branches
+    // below don't restate the same 14-column prefix.
+    const base: (string | number)[] = [
+      s.facilityName,
+      s.name,
+      s.scope ?? "",
+      s.ghgSourceCategory ?? "",
+      s.approachTier,
+      calc?.activityDataSource ?? "",
+      calc?.activityDataTier ?? "",
+      calc?.activityDataValue ?? "",
+      calc?.activityDataUnit ?? "",
+      calc?.emissionFactorValue ?? "",
+      calc?.emissionFactorUnit ?? "",
+      calc?.emissionFactorSource ?? "",
+      s.materiality ?? "",
+      s.estimatedAnnualEmissionsTco2e ?? "",
+    ];
     if (breakdown.length === 0) {
-      rows.push([
-        s.facilityName,
-        s.name,
-        s.scope ?? "",
-        s.ghgSourceCategory ?? "",
-        s.approachTier,
-        calc?.activityDataSource ?? "",
-        calc?.activityDataTier ?? "",
-        calc?.activityDataValue ?? "",
-        calc?.activityDataUnit ?? "",
-        calc?.emissionFactorValue ?? "",
-        calc?.emissionFactorUnit ?? "",
-        calc?.emissionFactorSource ?? "",
-        s.materiality ?? "",
-        s.estimatedAnnualEmissionsTco2e ?? "",
-        "",
-        "",
-        "",
-        "",
-        "",
-      ]);
+      rows.push([...base, "", "", "", "", ""]);
       continue;
     }
     for (const c of breakdown) {
-      rows.push([
-        s.facilityName,
-        s.name,
-        s.scope ?? "",
-        s.ghgSourceCategory ?? "",
-        s.approachTier,
-        calc?.activityDataSource ?? "",
-        calc?.activityDataTier ?? "",
-        calc?.activityDataValue ?? "",
-        calc?.activityDataUnit ?? "",
-        calc?.emissionFactorValue ?? "",
-        calc?.emissionFactorUnit ?? "",
-        calc?.emissionFactorSource ?? "",
-        s.materiality ?? "",
-        s.estimatedAnnualEmissionsTco2e ?? "",
-        c.gas,
-        c.nativeFactor,
-        c.gwpValue,
-        c.gwpVersion,
-        0, // placeholder, overwritten with a live formula below
-      ]);
+      rows.push([...base, c.gas, c.nativeFactor, c.gwpValue, c.gwpVersion, 0]); // tCO2e placeholder, overwritten with a live formula below
     }
   }
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-  // tCO2e (this gas) = Native quantity (col P) x GWP value (col Q), live
-  // formula per row so a verifier can independently recheck the math.
+  // tCO2e (this gas) = Activity data value (col H) x Native quantity (col P)
+  // x GWP value (col Q), converted kg -> tonnes (/1000). Native quantity is a
+  // per-unit-of-activity-data RATE (kg of this gas per unit of activity
+  // data), not an absolute quantity, so it must be scaled by the activity
+  // data value -- same arithmetic as server/storage.ts's getConsolidatedReport
+  // aggregation loop (quantity x nativeFactor x multiplier / 1000 for native
+  // mass, quantity x co2ePerUnit / 1000 for co2e). Live formula per row so a
+  // verifier can independently recheck the math.
   for (let i = 0; i < rows.length; i++) {
     const excelRow = i + 2; // row 1 is header
     if (rows[i][14] === "") continue; // no gas breakdown row for this stream
-    ws[`S${excelRow}`] = { t: "n", f: `P${excelRow}*Q${excelRow}` };
+    ws[`S${excelRow}`] = { t: "n", f: `H${excelRow}*P${excelRow}*Q${excelRow}/1000` };
   }
   return ws;
 }
