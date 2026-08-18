@@ -135,6 +135,59 @@ export interface ConsolidatedReport {
 }
 
 // -----------------------------------------------------------------------
+// SourceStreamDetail
+//
+// The per-source-stream calculation trail neither export can get from
+// getConsolidatedReport (which only returns facility-level rollups).
+// One row per source stream, joined with whichever of the three approach
+// tables it actually has a row in (a source stream has at most one of
+// calculationApproach / measurementApproach / fallbackApproach -- each of
+// those tables' sourceStreamId column is unique).
+// -----------------------------------------------------------------------
+export interface SourceStreamDetail {
+  sourceStreamId: number;
+  facilityId: number;
+  facilityName: string;
+  streamCode: string | null;
+  name: string;
+  description: string | null;
+  ghgSourceCategory: string | null;
+  scope: string | null;
+  materiality: string | null;
+  estimatedAnnualEmissionsTco2e: number | null;
+  approachTier: "calculation" | "measurement" | "fallback" | "none";
+  calculationApproach: {
+    fuelOrMaterialType: string | null;
+    activityDataValue: number | null;
+    activityDataUnit: string | null;
+    activityDataSource: string | null;
+    activityDataTier: string | null;
+    emissionFactorValue: number | null;
+    emissionFactorUnit: string | null;
+    emissionFactorSource: string | null;
+    emissionFactorSourceUrl: string | null;
+    emissionFactorAuthorityName: string | null;
+    isIpccDefault: boolean;
+    gasBreakdown: unknown;
+    netCalorificValue: number | null;
+    calculatedEmissionsTco2e: number | null;
+  } | null;
+  measurementApproach: {
+    measurementMethod: string | null;
+    monitoringFrequency: string | null;
+    measurementUnit: string | null;
+    annualMeasuredQuantity: number | null;
+    qaqcProcedure: string | null;
+    calibrationFrequency: string | null;
+  } | null;
+  fallbackApproach: {
+    justification: string | null;
+    fallbackMethodDescription: string | null;
+    estimatedEmissionsTco2e: number | null;
+  } | null;
+}
+
+// -----------------------------------------------------------------------
 // IStorage
 //
 // Every method that touches a tenant-scoped table takes organizationId as
@@ -287,6 +340,10 @@ export interface IStorage {
   // given reporting boundary/year, applying equity-share percentages when
   // that's the declared consolidation approach.
   getConsolidatedReport(organizationId: number, reportingBoundaryId: number): Promise<ConsolidatedReport | undefined>;
+
+  // Per-source-stream calculation detail for Excel export: data neither the
+  // consolidated report nor any other existing query provides.
+  getSourceStreamDetailForBoundary(organizationId: number, reportingBoundaryId: number): Promise<SourceStreamDetail[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -1280,6 +1337,94 @@ export class DbStorage implements IStorage {
       managementQaRecords: qaRecords,
       baseYearComparison,
     };
+  }
+
+  async getSourceStreamDetailForBoundary(organizationId: number, reportingBoundaryId: number): Promise<SourceStreamDetail[]> {
+    const streams = await db
+      .select()
+      .from(sourceStreams)
+      .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
+    if (streams.length === 0) return [];
+
+    const streamIds = streams.map((s) => s.id);
+    const facilityIds = Array.from(new Set(streams.map((s) => s.facilityId)));
+
+    const [facilityRows, calcRows, measureRows, fallbackRows] = await Promise.all([
+      db.select().from(facilities).where(and(eq(facilities.organizationId, organizationId), inArray(facilities.id, facilityIds))),
+      db
+        .select()
+        .from(calculationApproaches)
+        .where(and(eq(calculationApproaches.organizationId, organizationId), inArray(calculationApproaches.sourceStreamId, streamIds))),
+      db
+        .select()
+        .from(measurementBasedApproaches)
+        .where(and(eq(measurementBasedApproaches.organizationId, organizationId), inArray(measurementBasedApproaches.sourceStreamId, streamIds))),
+      db
+        .select()
+        .from(fallbackApproaches)
+        .where(and(eq(fallbackApproaches.organizationId, organizationId), inArray(fallbackApproaches.sourceStreamId, streamIds))),
+    ]);
+
+    const facilityNameById = new Map(facilityRows.map((f) => [f.id, f.name]));
+    const calcByStream = new Map(calcRows.map((r) => [r.sourceStreamId, r]));
+    const measureByStream = new Map(measureRows.map((r) => [r.sourceStreamId, r]));
+    const fallbackByStream = new Map(fallbackRows.map((r) => [r.sourceStreamId, r]));
+
+    return streams.map((s) => {
+      const calc = calcByStream.get(s.id);
+      const measure = measureByStream.get(s.id);
+      const fallback = fallbackByStream.get(s.id);
+      const approachTier: SourceStreamDetail["approachTier"] = calc ? "calculation" : measure ? "measurement" : fallback ? "fallback" : "none";
+
+      return {
+        sourceStreamId: s.id,
+        facilityId: s.facilityId,
+        facilityName: facilityNameById.get(s.facilityId) ?? "",
+        streamCode: s.streamCode,
+        name: s.name,
+        description: s.description,
+        ghgSourceCategory: s.ghgSourceCategory,
+        scope: s.scope,
+        materiality: s.materiality,
+        estimatedAnnualEmissionsTco2e: s.estimatedAnnualEmissionsTco2e ? Number(s.estimatedAnnualEmissionsTco2e) : null,
+        approachTier,
+        calculationApproach: calc
+          ? {
+              fuelOrMaterialType: calc.fuelOrMaterialType,
+              activityDataValue: calc.activityDataValue ? Number(calc.activityDataValue) : null,
+              activityDataUnit: calc.activityDataUnit,
+              activityDataSource: calc.activityDataSource,
+              activityDataTier: calc.activityDataTier,
+              emissionFactorValue: calc.emissionFactorValue ? Number(calc.emissionFactorValue) : null,
+              emissionFactorUnit: calc.emissionFactorUnit,
+              emissionFactorSource: calc.emissionFactorSource,
+              emissionFactorSourceUrl: calc.emissionFactorSourceUrl,
+              emissionFactorAuthorityName: calc.emissionFactorAuthorityName,
+              isIpccDefault: calc.isIpccDefault,
+              gasBreakdown: calc.gasBreakdown,
+              netCalorificValue: calc.netCalorificValue ? Number(calc.netCalorificValue) : null,
+              calculatedEmissionsTco2e: calc.calculatedEmissionsTco2e ? Number(calc.calculatedEmissionsTco2e) : null,
+            }
+          : null,
+        measurementApproach: measure
+          ? {
+              measurementMethod: measure.measurementMethod,
+              monitoringFrequency: measure.monitoringFrequency,
+              measurementUnit: measure.measurementUnit,
+              annualMeasuredQuantity: measure.annualMeasuredQuantity ? Number(measure.annualMeasuredQuantity) : null,
+              qaqcProcedure: measure.qaqcProcedure,
+              calibrationFrequency: measure.calibrationFrequency,
+            }
+          : null,
+        fallbackApproach: fallback
+          ? {
+              justification: fallback.justification,
+              fallbackMethodDescription: fallback.fallbackMethodDescription,
+              estimatedEmissionsTco2e: fallback.estimatedEmissionsTco2e ? Number(fallback.estimatedEmissionsTco2e) : null,
+            }
+          : null,
+      };
+    });
   }
 }
 
