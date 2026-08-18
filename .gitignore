@@ -11,3 +11,8 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only project instructions -- must never be pushed to GitHub,
+# per standing instruction. Claude Code still reads it locally regardless
+# of git-tracking status; this only prevents it from being committed.
+CLAUDE.md
