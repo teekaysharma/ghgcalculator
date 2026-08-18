@@ -115,6 +115,13 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
             >
               Export CSV
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.xlsx`, "_blank")}
+            >
+              Export Excel (ISO 14064-3)
+            </Button>
             {report.reportingBoundary.status === "draft" ? (
               <Button
                 size="sm"

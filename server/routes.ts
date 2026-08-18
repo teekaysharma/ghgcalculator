@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { z } from "zod";
 import rateLimit from "express-rate-limit";
+import * as XLSX from "xlsx";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
 import { requireAuth, requireOrg } from "./middleware/tenant";
@@ -1035,6 +1036,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}.csv"`);
     return res.send(csv);
+  });
+
+  app.get("/api/reporting-boundaries/:id/consolidated-report/export.xlsx", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const report = await storage.getConsolidatedReport(req.organizationId!, id);
+    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+    const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+
+    const { buildGenericWorkbook } = await import("./utils/xlsx-export");
+    const wb = buildGenericWorkbook(report, streamDetails);
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-ISO14064.xlsx"`,
+    );
+    return res.send(buffer);
   });
 
   const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });
