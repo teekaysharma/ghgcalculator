@@ -13,6 +13,7 @@ import XLSX from "xlsx";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import type { SourceStreamDetail } from "../storage";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,4 +116,81 @@ export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
     if (cell && cell.f) continue;
     delete ws[address];
   }
+}
+
+// Row numbers below were re-derived directly (no blankrows-skipping) after
+// Task 4 caught the original derivation's drift -- see the comment above
+// ILLUSTRATIVE_CELLS for the root cause. 3d1_Source Streams (Calculated)
+// has exactly 25 pre-labeled rows (F01-F25): table 1 (description/
+// estimated-emissions/category) at Excel rows 10-34, table 2 (tier/
+// uncertainty) at rows 41-65. This is a hard limit in the official
+// template -- fill up to capacity, report how many were omitted so the
+// caller can warn.
+const SOURCE_STREAM_ROW_CAPACITY = 25;
+
+export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDetail[]): { omittedCount: number } {
+  const calcStreams = streamDetails.filter((s) => s.approachTier === "calculation");
+  const omittedCount = Math.max(0, calcStreams.length - SOURCE_STREAM_ROW_CAPACITY);
+  const toFill = calcStreams.slice(0, SOURCE_STREAM_ROW_CAPACITY);
+
+  const streamSheet = wb.Sheets["3d1_Source Streams (Calculated)"];
+  const approachSheet = wb.Sheets["3d2_ Calculation Approaches"];
+
+  toFill.forEach((s, i) => {
+    const row1 = 10 + i; // first table: description/estimated-emissions/category, rows 10-34
+    const row2 = 41 + i; // second table: tier/uncertainty, rows 41-65
+    const calc = s.calculationApproach;
+
+    // First table: Description, Estimated emissions, Selected category.
+    // Column B (source stream ID, F01/F02/...) is formula-linked back to
+    // 2c2_Facility Description and is never written here.
+    streamSheet[`C${row1}`] = { t: "s", v: s.description ?? s.name };
+    streamSheet[`E${row1}`] = { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 };
+    streamSheet[`F${row1}`] = { t: "s", v: s.materiality ?? "" };
+    streamSheet[`G${row1}`] = { t: "s", v: s.materiality ?? "" };
+
+    // Second table: Tier level, Category, Uncertainty, Fuel stream type,
+    // Source of accuracy. Column B is again formula-linked, not written.
+    streamSheet[`C${row2}`] = { t: "s", v: calc?.activityDataTier ?? "" };
+    streamSheet[`D${row2}`] = { t: "s", v: s.materiality ?? "" };
+    streamSheet[`F${row2}`] = { t: "s", v: calc?.fuelOrMaterialType ?? "" };
+    streamSheet[`G${row2}`] = { t: "s", v: calc?.activityDataSource ?? "" };
+
+    // 3d2_Calculation Approaches, "Fuel" sub-table: Fuel Type, Activity
+    // level, Unit, Source -- header at row 24, F01 example at row 25, so
+    // data rows are 25-49 (25-row capacity, same as above). This is the
+    // only sub-table of this sheet that gets filled -- see the comment
+    // above ILLUSTRATIVE_CELLS for the other two sub-tables this
+    // implementation deliberately doesn't touch.
+    const approachRow = 25 + i;
+    approachSheet[`C${approachRow}`] = { t: "s", v: calc?.fuelOrMaterialType ?? "" };
+    approachSheet[`D${approachRow}`] = { t: "n", v: calc?.activityDataValue ?? 0 };
+    approachSheet[`E${approachRow}`] = { t: "s", v: calc?.activityDataUnit ?? "" };
+    approachSheet[`F${approachRow}`] = { t: "s", v: calc?.activityDataSource ?? "" };
+  });
+
+  return { omittedCount };
+}
+
+// 4h_Verification and Data Gaps has exactly 10 rows: header at row 19,
+// data gap 1 at row 20, data gap 10 at row 29.
+const DATA_GAP_ROW_CAPACITY = 10;
+
+export function fillDataGapsSheet(
+  wb: XLSX.WorkBook,
+  gaps: { sourceStreamOrOtherId: string; from: string; until: string; description: string; estimatedEmissionsTco2e: number | null; source: string }[],
+): { omittedCount: number } {
+  const sheet = wb.Sheets["4h_Verification and Data Gaps"];
+  const omittedCount = Math.max(0, gaps.length - DATA_GAP_ROW_CAPACITY);
+  const toFill = gaps.slice(0, DATA_GAP_ROW_CAPACITY);
+  toFill.forEach((g, i) => {
+    const row = 20 + i; // column B (row number 1-10) is a static label, not written
+    sheet[`C${row}`] = { t: "s", v: g.sourceStreamOrOtherId };
+    sheet[`D${row}`] = { t: "s", v: g.from };
+    sheet[`E${row}`] = { t: "s", v: g.until };
+    sheet[`F${row}`] = { t: "s", v: g.description };
+    sheet[`H${row}`] = { t: "n", v: g.estimatedEmissionsTco2e ?? 0 };
+    sheet[`J${row}`] = { t: "s", v: g.source };
+  });
+  return { omittedCount };
 }
