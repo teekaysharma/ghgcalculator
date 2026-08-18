@@ -72,8 +72,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await apiRequest("POST", "/api/auth/login", input);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    // Awaited so mutateAsync doesn't resolve (and callers don't navigate)
+    // until the auth/me refetch has actually landed -- otherwise
+    // ProtectedRoute reads the still-stale unauthenticated cache and
+    // bounces straight back to /login even though the session is valid.
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     },
   });
 
@@ -82,8 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await apiRequest("POST", "/api/auth/register", input);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     },
   });
 
