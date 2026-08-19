@@ -101,7 +101,50 @@ const ILLUSTRATIVE_CELLS: [string, string][] = [
   ["2c2_Facility Description", "D44"],
   ["2c2_Facility Description", "E44"],
   ["2c2_Facility Description", "I44"],
+  // ADDED after Task 5's review surfaced a real gap: 2c2_Facility
+  // Description's own source-stream activity table (header row 74,
+  // columns C/G/H = Source Stream ID/level of activity/units), whose
+  // G/H values at row 75 are what 3d2_Calculation Approaches' D25/E25
+  // formulas (IFERROR(INDEX('2c2_Facility Description'!G$75:G$84,
+  // MATCH($B25,'2c2_Facility Description'!$C$75:$C$84,0)),"")) read.
+  // Per explicit instruction, this plan NEVER overwrites a template
+  // formula -- so D25/E25 (and every equivalent) are left alone, formula
+  // intact, in every fill task. That only produces a correct (blank)
+  // result if the value the formula's INDEX resolves to is actually
+  // cleared -- otherwise the untouched formula silently surfaces
+  // fabricated data through a cell that looks like a live lookup.
+  // VERIFIED DIRECTLY against the real template file (node + XLSX,
+  // cellFormula: true) before adding these addresses -- the only actual
+  // fabricated example VALUES in this table are G75=10000, H75="MWh".
+  // C75="F01" (and C76="F02" ... C90="F16") are NOT illustrative data --
+  // they are the template's own static row-ID scaffold that 3d1!B10 and
+  // 3e1!B9-equivalent cells formula-read from directly
+  // (3d1!B10.f === "'2c2_Facility Description'!C75"). Clearing C75 would
+  // have deleted a value a live formula elsewhere depends on -- a second,
+  // different way of "touching a formula" (breaking what it resolves to)
+  // that the "never overwrite a formula" rule equally forbids. Only the
+  // two fabricated values are listed below; the ID column is left
+  // completely untouched.
+  ["2c2_Facility Description", "G75"],
+  ["2c2_Facility Description", "H75"],
 ];
+
+// Shared write guard for every fill function (Tasks 5 and 6): never
+// overwrite a cell that already carries a formula, full stop -- no
+// exceptions, per explicit instruction. Where the real template ships a
+// convenience/default formula in what is otherwise a labeled data-entry
+// cell (e.g. 3d2_Calculation Approaches' D/E columns), that cell is
+// simply left as-is; the real value is not written there. Any resulting
+// gap in the exported EAD file for that specific cell is a disclosed,
+// accepted limitation of the EAD-specific export -- the generic
+// ISO 14064-3 workbook (Task 3) is unaffected and always carries the
+// complete data regardless of what any individual EAD template cell
+// allows.
+function writeIfNotFormula(ws: XLSX.WorkSheet, address: string, cell: XLSX.CellObject): void {
+  const existing = ws[address];
+  if (existing && existing.f) return;
+  ws[address] = cell;
+}
 
 export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
   for (const [sheetName, address] of ILLUSTRATIVE_CELLS) {
@@ -135,6 +178,9 @@ export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDet
 
   const streamSheet = wb.Sheets["3d1_Source Streams (Calculated)"];
   const approachSheet = wb.Sheets["3d2_ Calculation Approaches"];
+  // Same missing-sheet guard as clearIllustrativeRows -- a template
+  // revision that renames or drops a sheet must not crash the export.
+  if (!streamSheet || !approachSheet) return { omittedCount };
 
   toFill.forEach((s, i) => {
     const row1 = 10 + i; // first table: description/estimated-emissions/category, rows 10-34
@@ -143,30 +189,44 @@ export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDet
 
     // First table: Description, Estimated emissions, Selected category.
     // Column B (source stream ID, F01/F02/...) is formula-linked back to
-    // 2c2_Facility Description and is never written here.
-    streamSheet[`C${row1}`] = { t: "s", v: s.description ?? s.name };
-    streamSheet[`E${row1}`] = { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 };
-    streamSheet[`F${row1}`] = { t: "s", v: s.materiality ?? "" };
-    streamSheet[`G${row1}`] = { t: "s", v: s.materiality ?? "" };
+    // 2c2_Facility Description and is never written here. Every write goes
+    // through writeIfNotFormula -- per the explicit rule that no cell
+    // carrying a formula is ever overwritten, even one that sits under the
+    // sheet's own labeled data-entry header (see ILLUSTRATIVE_CELLS
+    // comment for the 2c2!G75/H75 fix that keeps 3d2!D25/E25 correct
+    // *without* touching their formula).
+    writeIfNotFormula(streamSheet, `C${row1}`, { t: "s", v: s.description ?? s.name });
+    writeIfNotFormula(streamSheet, `E${row1}`, { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 });
+    writeIfNotFormula(streamSheet, `F${row1}`, { t: "s", v: s.materiality ?? "" });
+    writeIfNotFormula(streamSheet, `G${row1}`, { t: "s", v: s.materiality ?? "" });
 
     // Second table: Tier level, Category, Uncertainty, Fuel stream type,
     // Source of accuracy. Column B is again formula-linked, not written.
-    streamSheet[`C${row2}`] = { t: "s", v: calc?.activityDataTier ?? "" };
-    streamSheet[`D${row2}`] = { t: "s", v: s.materiality ?? "" };
-    streamSheet[`F${row2}`] = { t: "s", v: calc?.fuelOrMaterialType ?? "" };
-    streamSheet[`G${row2}`] = { t: "s", v: calc?.activityDataSource ?? "" };
+    writeIfNotFormula(streamSheet, `C${row2}`, { t: "s", v: calc?.activityDataTier ?? "" });
+    writeIfNotFormula(streamSheet, `D${row2}`, { t: "s", v: s.materiality ?? "" });
+    writeIfNotFormula(streamSheet, `F${row2}`, { t: "s", v: calc?.fuelOrMaterialType ?? "" });
+    writeIfNotFormula(streamSheet, `G${row2}`, { t: "s", v: calc?.activityDataSource ?? "" });
 
     // 3d2_Calculation Approaches, "Fuel" sub-table: Fuel Type, Activity
     // level, Unit, Source -- header at row 24, F01 example at row 25, so
     // data rows are 25-49 (25-row capacity, same as above). This is the
     // only sub-table of this sheet that gets filled -- see the comment
     // above ILLUSTRATIVE_CELLS for the other two sub-tables this
-    // implementation deliberately doesn't touch.
+    // implementation deliberately doesn't touch. D{approachRow} and
+    // E{approachRow} carry a live IFERROR(INDEX(...)) lookup formula on
+    // every row, looking up against 2c2_Facility Description!$C$75:$C$84
+    // by source-stream ID (F01-F10) -- writeIfNotFormula leaves those
+    // alone. Only row 75 (F01) has real fabricated example values
+    // (G75=10000, H75="MWh"); rows 76-84 (F02-F10) were already blank in
+    // the real template, verified directly. ILLUSTRATIVE_CELLS clears
+    // G75/H75, so row i=0's untouched formula resolves to blank via
+    // IFERROR instead of leaking "10000"/"MWh"; every other row's formula
+    // was already blank-resolving with nothing to clear.
     const approachRow = 25 + i;
-    approachSheet[`C${approachRow}`] = { t: "s", v: calc?.fuelOrMaterialType ?? "" };
-    approachSheet[`D${approachRow}`] = { t: "n", v: calc?.activityDataValue ?? 0 };
-    approachSheet[`E${approachRow}`] = { t: "s", v: calc?.activityDataUnit ?? "" };
-    approachSheet[`F${approachRow}`] = { t: "s", v: calc?.activityDataSource ?? "" };
+    writeIfNotFormula(approachSheet, `C${approachRow}`, { t: "s", v: calc?.fuelOrMaterialType ?? "" });
+    writeIfNotFormula(approachSheet, `D${approachRow}`, { t: "n", v: calc?.activityDataValue ?? 0 });
+    writeIfNotFormula(approachSheet, `E${approachRow}`, { t: "s", v: calc?.activityDataUnit ?? "" });
+    writeIfNotFormula(approachSheet, `F${approachRow}`, { t: "s", v: calc?.activityDataSource ?? "" });
   });
 
   return { omittedCount };
@@ -181,16 +241,17 @@ export function fillDataGapsSheet(
   gaps: { sourceStreamOrOtherId: string; from: string; until: string; description: string; estimatedEmissionsTco2e: number | null; source: string }[],
 ): { omittedCount: number } {
   const sheet = wb.Sheets["4h_Verification and Data Gaps"];
+  if (!sheet) return { omittedCount: 0 };
   const omittedCount = Math.max(0, gaps.length - DATA_GAP_ROW_CAPACITY);
   const toFill = gaps.slice(0, DATA_GAP_ROW_CAPACITY);
   toFill.forEach((g, i) => {
     const row = 20 + i; // column B (row number 1-10) is a static label, not written
-    sheet[`C${row}`] = { t: "s", v: g.sourceStreamOrOtherId };
-    sheet[`D${row}`] = { t: "s", v: g.from };
-    sheet[`E${row}`] = { t: "s", v: g.until };
-    sheet[`F${row}`] = { t: "s", v: g.description };
-    sheet[`H${row}`] = { t: "n", v: g.estimatedEmissionsTco2e ?? 0 };
-    sheet[`J${row}`] = { t: "s", v: g.source };
+    writeIfNotFormula(sheet, `C${row}`, { t: "s", v: g.sourceStreamOrOtherId });
+    writeIfNotFormula(sheet, `D${row}`, { t: "s", v: g.from });
+    writeIfNotFormula(sheet, `E${row}`, { t: "s", v: g.until });
+    writeIfNotFormula(sheet, `F${row}`, { t: "s", v: g.description });
+    writeIfNotFormula(sheet, `H${row}`, { t: "n", v: g.estimatedEmissionsTco2e ?? 0 });
+    writeIfNotFormula(sheet, `J${row}`, { t: "s", v: g.source });
   });
   return { omittedCount };
 }
