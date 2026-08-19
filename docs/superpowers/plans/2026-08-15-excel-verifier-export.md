@@ -1187,10 +1187,22 @@ Add to `server/routes.ts`, after the generic `export.xlsx` route from Task 3:
   app.get("/api/reporting-boundaries/:id/consolidated-report/export-ead-check.json", requireAuth, requireOrg, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const report = await storage.getConsolidatedReport(req.organizationId!, id);
+    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
     const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
     const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
+    // Mitigation measures share the same "hard row-cap in the real EAD
+    // template" shape as source streams (Task 6 found the sheet's true
+    // capacity is 8 rows, not the originally assumed 20) -- surface an
+    // omitted count here too, same pattern as omittedSourceStreams, so
+    // Task 7's own capacity-warning purpose actually covers every capped
+    // sheet rather than just the one Task 5 already had a return value for.
+    const boundaryFacilityIds = report.facilities.map((f) => f.id);
+    const mitigationLists = await Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid)));
+    const mitigationCount = mitigationLists.flat().length;
     return res.json({
       omittedSourceStreams: Math.max(0, calcCount - 25),
+      omittedMitigationMeasures: Math.max(0, mitigationCount - 8),
     });
   });
 
@@ -1259,10 +1271,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
                       "GET",
                       `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export-ead-check.json`,
                     );
-                    const { omittedSourceStreams } = await res.json();
-                    if (omittedSourceStreams > 0) {
+                    const { omittedSourceStreams, omittedMitigationMeasures } = await res.json();
+                    const omissions: string[] = [];
+                    if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} source stream(s)`);
+                    if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
+                    if (omissions.length > 0) {
                       const proceed = window.confirm(
-                        `${omittedSourceStreams} source stream(s) exceed the EAD template's row limit and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
+                        `${omissions.join(" and ")} exceed the EAD template's row limits and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
                       );
                       if (!proceed) return;
                     }
@@ -1282,7 +1297,7 @@ Expected: no errors.
 
 - [ ] **Step 4: Live-verify end to end**
 
-Start the dev server, open Organization Report for a boundary with real data. Click Export Excel, confirm the dropdown shows both options. Click "ISO 14064-3 / GHG Protocol (generic)", confirm the same file as Task 3 downloads. Click "EAD Deliverable C Template" for a boundary with fewer than 25 calculation-tier source streams, confirm no warning appears and a `.xlsx` downloads; open it and confirm the real values landed in the expected cells (spot-check 2-3 from Task 5/6's verification) and that the illustrative example rows are gone. If feasible, create a boundary with more than 25 calculation-tier source streams and confirm the warning dialog appears with the correct count before the download proceeds.
+Start the dev server, open Organization Report for a boundary with real data. Click Export Excel, confirm the dropdown shows both options. Click "ISO 14064-3 / GHG Protocol (generic)", confirm the same file as Task 3 downloads. Click "EAD Deliverable C Template" for a boundary with fewer than 25 calculation-tier source streams and fewer than 8 mitigation measures, confirm no warning appears and a `.xlsx` downloads; open it and confirm the real values landed in the expected cells (spot-check 2-3 from Task 5/6's verification, including at least one of Task 6's corrected 4I/4J addresses) and that the illustrative example rows are gone. If feasible, create a boundary with more than 25 calculation-tier source streams and/or more than 8 mitigation measures and confirm the warning dialog appears with the correct count(s) before the download proceeds -- test at least the source-stream overage path live; the mitigation-measure overage path may be confirmed via the `export-ead-check.json` endpoint's JSON response directly if seeding 9+ real mitigation measures through the UI is impractical.
 
 - [ ] **Step 5: Commit**
 
