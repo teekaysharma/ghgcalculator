@@ -14,6 +14,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import type { SourceStreamDetail } from "../storage";
+import type { MethaneReport, MitigationMeasure, ManagementQaRecord } from "@shared/schema";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -254,4 +255,173 @@ export function fillDataGapsSheet(
     writeIfNotFormula(sheet, `J${row}`, { t: "s", v: g.source });
   });
   return { omittedCount };
+}
+
+// Task 6: remaining sheets (Emission Sources, Measurement/Fallback
+// narratives, Methane, Management & QA, Mitigation Measures). Best-effort
+// layer -- see the module-level comment above ILLUSTRATIVE_CELLS for the
+// Product -> Emission Source -> Source Stream hierarchy gap this
+// approximates (one measurement-tier source stream = one Emission Source
+// row, 1:1, rather than EAD's richer many-source-streams-per-source
+// grouping).
+//
+// Every address below was independently re-verified against the real
+// template file (`XLSX.readFile(..., { cellFormula: true })`, direct cell
+// reads plus `ws["!merges"]` inspection) before use, per the same
+// discipline Task 4/5 required after the blankrows-derivation bug. Two
+// real, verified defects were found and corrected here relative to the
+// task brief as originally drafted (not just re-confirmed, actually
+// wrong):
+//   1. "4I - Management & QA": the brief's B7/E7 (record 0) and D17/D23/
+//      D28/D33 (records 1/2) all target either a blank margin column (B,
+//      outside every merge -- verified via ws["!merges"]) or the *label*
+//      half of a merged label/value pair (e.g. C17:D17 is one merged
+//      "Title of procedure" label cell; the value lives in the separate
+//      E17:L17 merge, anchored at E17 -- confirmed by reading E17 back and
+//      finding the template's own real value "ETS QA/QC of MI" there, not
+//      at D17). Writing to the brief's original addresses would produce
+//      cells that are either genuinely blank in the rendered sheet or
+//      silently swallowed inside a merge Excel doesn't display (only a
+//      merge's top-left anchor cell renders). Corrected to the verified
+//      anchor cells: C7/F7, E17/E23, E28/E33.
+//   2. "4J - Mitigation Measures": the brief's G/I column assignment
+//      doesn't match the sheet's own row-5 header ("Start year" is G,
+//      "Status" is H; "Pre-measure reference (tCO2e/yr)" is I, "Reporting
+//      year reduction (tCO2e)" is J) -- confirmed by reading row 5 across
+//      all columns. Corrected `status` to H and `estimatedReductionTco2e`
+//      to J. The brief also capped the fill loop at 20 rows on the
+//      reasoning that "no explicit limit was observed in B1:P28" -- that
+//      reasoning doesn't hold: row 15 of the same sheet is the start of a
+//      *different* narrative sub-section ("J1: Additional information",
+//      confirmed by reading C15/C16 and by the C17:L25 merged blank
+//      answer cell that follows it), not more measure rows. The real,
+//      verified capacity for one-row-per-measure data is rows 7-14 (8
+//      rows) before that sub-section begins; capped accordingly below
+//      instead of 20 to avoid writing measure data into the "Additional
+//      information" section's cells.
+// Everything else below (3e1's row numbers/columns, and 3e2/3f/3g/4I's
+// row-17/23/28/33 placement, and the semantic field-to-column choices
+// throughout) matched the brief exactly on verification and is used
+// as-is. 3e2/3f/3g are narrative sections with no labeled data row to
+// verify against -- per the task's explicit instruction this is a
+// disclosed approximation, not something to "fix": their target cells are
+// used verbatim from the brief.
+const MITIGATION_MEASURE_ROW_CAPACITY = 8;
+
+export function fillRemainingSheets(
+  wb: XLSX.WorkBook,
+  streamDetails: SourceStreamDetail[],
+  methaneReports: MethaneReport[],
+  mitigationMeasures: MitigationMeasure[],
+  managementQaRecords: ManagementQaRecord[],
+): void {
+  // 3e1_Emission Sources (Measured): best-effort, one row per
+  // measurement-tier source stream (see module comment above for why this
+  // is an approximation, not an exact hierarchy match). Table 1 header row
+  // 8, S01 example row 9 -> data rows 9-33 (25-row capacity, verified: row
+  // 33 is the last S25 row, row 35 starts table 2's own instructional
+  // text). Table 2 header row 39, S01 example row 40 -> data rows 40-64
+  // (row 64 is the last S25 row, row 67 is "* End of this worksheet *").
+  const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, 25);
+  const emissionSourceSheet = wb.Sheets["3e1_Emission Sources (Measured)"];
+  if (emissionSourceSheet) {
+    measurementStreams.forEach((s, i) => {
+      const row1 = 9 + i;
+      const row2 = 40 + i;
+      writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "n", v: s.measurementApproach?.annualMeasuredQuantity ?? 0 });
+      writeIfNotFormula(emissionSourceSheet, `E${row1}`, { t: "s", v: s.materiality ?? "" });
+      writeIfNotFormula(emissionSourceSheet, `D${row2}`, { t: "s", v: s.materiality ?? "" });
+      writeIfNotFormula(emissionSourceSheet, `F${row2}`, { t: "s", v: s.measurementApproach?.measurementMethod ?? "" });
+      writeIfNotFormula(emissionSourceSheet, `G${row2}`, { t: "s", v: s.measurementApproach?.qaqcProcedure ?? "" });
+    });
+  }
+
+  // 3e2_MeasurementBasedApproaches -- a narrative section, not a labeled
+  // table, so unlike the tabular sheets above there is no unambiguous "row
+  // N is the data row" marker to verify against. (a) description
+  // instructional text sits at row 5-6; the response goes directly below
+  // it. This mapping stays approximate by nature of the sheet's own
+  // design, disclosed as such rather than presented as precise (per task
+  // instruction, used verbatim from the brief -- not "fixed").
+  const measureSheet = wb.Sheets["3e2_MeasurementBasedApproaches"];
+  if (measureSheet && measurementStreams.length > 0) {
+    const first = measurementStreams[0].measurementApproach;
+    writeIfNotFormula(measureSheet, "C6", { t: "s", v: first?.measurementMethod ?? "" });
+    writeIfNotFormula(measureSheet, "C8", { t: "s", v: first?.monitoringFrequency ?? "" });
+  }
+
+  // 3f_Fallback Approach -- one description per workbook (the template has
+  // no per-source-stream fallback table, just one narrative section). (a)
+  // description instruction at row 7-8; (b) justification instruction at
+  // row 19-20. Same narrative-section caveat as above.
+  const fallbackStreams = streamDetails.filter((s) => s.approachTier === "fallback");
+  const fallbackSheet = wb.Sheets["3f_Fallback Approach"];
+  if (fallbackSheet && fallbackStreams.length > 0) {
+    writeIfNotFormula(fallbackSheet, "C8", { t: "s", v: fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "" });
+    writeIfNotFormula(fallbackSheet, "C20", { t: "s", v: fallbackStreams[0].fallbackApproach?.justification ?? "" });
+  }
+
+  // 3g_Methane -- facility-wide, per the schema comment on methaneReports
+  // ("EAD treats this as its own sheet, facility-wide rather than per
+  // source stream"). Uses the first report if more than one facility has
+  // one, since the template's Methane sheet is a single narrative section,
+  // not a per-facility table. (a) block spans rows 7-11, (b) block rows
+  // 12-14 -- another narrative section, approximate by nature.
+  const methaneSheet = wb.Sheets["3g_Methane"];
+  if (methaneSheet && methaneReports.length > 0) {
+    const m = methaneReports[0];
+    writeIfNotFormula(methaneSheet, "C9", { t: "n", v: m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0 });
+    writeIfNotFormula(methaneSheet, "C10", { t: "s", v: m.quantificationMethod ?? "" });
+    writeIfNotFormula(methaneSheet, "C13", { t: "s", v: m.methaneSourcesDescription ?? "" });
+  }
+
+  // 4I - Management & QA -- the template wants three distinct narrative
+  // sections (monitoring responsibility, QA procedure, data validation
+  // procedure); this platform has one flat managementQaRecords list. Best
+  // effort: first record -> Management responsibility table (real tabular
+  // row, header at row 6, the one pre-filled example at row 7 -- the
+  // actual data row to write, not the header; verified real columns are
+  // C="Job title / post" and F="Responsibilities", both merged-cell
+  // anchors -- C6:E6/C7:E7 and F6:L6/F7:L7 -- so C/F are the only cells
+  // that render, not the brief's original B/E), second (if present) -> QA
+  // procedure narrative (title row 17, description rows 20-22 [not
+  // written -- only title+department are captured, matching the brief's
+  // 2-field-to-3-slot design choice], responsible-department row 23;
+  // verified real value column is E, the anchor of the E:L merge -- D is
+  // part of the separate C:D label merge and never renders), third (if
+  // present) -> Data Validation narrative (title row 28, department row
+  // 33, same E-column correction). Any beyond the third are not
+  // represented on this sheet -- they remain fully visible in the generic
+  // workbook.
+  const qaSheet = wb.Sheets["4I - Management & QA"];
+  if (qaSheet && managementQaRecords[0]) {
+    writeIfNotFormula(qaSheet, "C7", { t: "s", v: managementQaRecords[0].responsiblePerson ?? "" });
+    writeIfNotFormula(qaSheet, "F7", { t: "s", v: managementQaRecords[0].qaProcedureDescription ?? "" });
+  }
+  if (qaSheet && managementQaRecords[1]) {
+    writeIfNotFormula(qaSheet, "E17", { t: "s", v: managementQaRecords[1].qaProcedureDescription ?? "" });
+    writeIfNotFormula(qaSheet, "E23", { t: "s", v: managementQaRecords[1].responsiblePerson ?? "" });
+  }
+  if (qaSheet && managementQaRecords[2]) {
+    writeIfNotFormula(qaSheet, "E28", { t: "s", v: managementQaRecords[2].qaProcedureDescription ?? "" });
+    writeIfNotFormula(qaSheet, "E33", { t: "s", v: managementQaRecords[2].responsiblePerson ?? "" });
+  }
+
+  // 4J - Mitigation Measures -- one row per measure. Header at row 5,
+  // format-guide row at row 6, real data rows 7-14 (verified: row 15 is
+  // the start of a *different* sub-section, "J1: Additional information",
+  // not more measure rows -- an 8-row capacity, not the originally
+  // assumed 20). Columns verified against row 5's own header: C=
+  // "Description of measure", H="Status" (not G, which is "Start year"),
+  // J="Reporting year reduction (tCO2e)" (not I, which is "Pre-measure
+  // reference (tCO2e/yr)").
+  const measuresSheet = wb.Sheets["4J - Mitigation Measures"];
+  if (measuresSheet) {
+    mitigationMeasures.slice(0, MITIGATION_MEASURE_ROW_CAPACITY).forEach((m, i) => {
+      const row = 7 + i;
+      writeIfNotFormula(measuresSheet, `C${row}`, { t: "s", v: m.measureDescription });
+      writeIfNotFormula(measuresSheet, `H${row}`, { t: "s", v: m.status });
+      writeIfNotFormula(measuresSheet, `J${row}`, { t: "n", v: m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0 });
+    });
+  }
 }
