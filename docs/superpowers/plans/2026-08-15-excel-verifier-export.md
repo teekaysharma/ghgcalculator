@@ -1096,38 +1096,56 @@ export function fillRemainingSheets(
   // Best effort: first record -> Management responsibility table (real
   // tabular row, header at row 6, the one pre-filled example at row 7 --
   // the actual data row to write, not the header), second (if present)
-  // -> QA procedure narrative (title row 17, description rows 20-22,
-  // responsible-department row 23), third (if present) -> Data
-  // Validation narrative (title row 28, description rows 31-32,
-  // responsible-department row 33). Any beyond the third are not
-  // represented on this sheet -- they remain fully visible in the
-  // generic workbook.
+  // -> QA procedure narrative (title row 17, department row 23), third
+  // (if present) -> Data Validation narrative (title row 28, department
+  // row 33). Any beyond the third are not represented on this sheet --
+  // they remain fully visible in the generic workbook.
+  // CORRECTED during Task 6 implementation, verified directly against
+  // the real template (XLSX.readFile + ws["!merges"]): row 7 is
+  // C7:E7 (Job title, real value cell, anchor C7) merged next to
+  // F7:L7 (Responsibilities, anchor F7) -- column B is a blank margin
+  // outside every merge, and E7 is the non-anchor half of the C7:E7
+  // merge, so neither renders in Excel. Rows 17/23/28/33 are each
+  // C{row}:D{row} (a merged LABEL cell, e.g. "Title of procedure") next
+  // to E{row}:L{row} (the real value cell, anchor E{row}) -- D{row} is
+  // inside the label merge and never renders. Use the anchors: C7/F7,
+  // E17/E23/E28/E33.
   const qaSheet = wb.Sheets["4I - Management & QA"];
   if (qaSheet && managementQaRecords[0]) {
-    writeIfNotFormula(qaSheet, "B7", { t: "s", v: managementQaRecords[0].responsiblePerson ?? "" });
-    writeIfNotFormula(qaSheet, "E7", { t: "s", v: managementQaRecords[0].qaProcedureDescription ?? "" });
+    writeIfNotFormula(qaSheet, "C7", { t: "s", v: managementQaRecords[0].responsiblePerson ?? "" });
+    writeIfNotFormula(qaSheet, "F7", { t: "s", v: managementQaRecords[0].qaProcedureDescription ?? "" });
   }
   if (qaSheet && managementQaRecords[1]) {
-    writeIfNotFormula(qaSheet, "D17", { t: "s", v: managementQaRecords[1].qaProcedureDescription ?? "" });
-    writeIfNotFormula(qaSheet, "D23", { t: "s", v: managementQaRecords[1].responsiblePerson ?? "" });
+    writeIfNotFormula(qaSheet, "E17", { t: "s", v: managementQaRecords[1].qaProcedureDescription ?? "" });
+    writeIfNotFormula(qaSheet, "E23", { t: "s", v: managementQaRecords[1].responsiblePerson ?? "" });
   }
   if (qaSheet && managementQaRecords[2]) {
-    writeIfNotFormula(qaSheet, "D28", { t: "s", v: managementQaRecords[2].qaProcedureDescription ?? "" });
-    writeIfNotFormula(qaSheet, "D33", { t: "s", v: managementQaRecords[2].responsiblePerson ?? "" });
+    writeIfNotFormula(qaSheet, "E28", { t: "s", v: managementQaRecords[2].qaProcedureDescription ?? "" });
+    writeIfNotFormula(qaSheet, "E33", { t: "s", v: managementQaRecords[2].responsiblePerson ?? "" });
   }
 
-  // 4J - Mitigation Measures -- one row per measure, up to the sheet's
-  // capacity. Header at row 5, a format-guide row at row 6, data starts
-  // row 7 (no fixed pre-labeled rows like the source-stream sheets;
-  // capped generously since no explicit limit was observed in the
-  // template's row range B1:P28).
+  // 4J - Mitigation Measures -- one row per measure. Header at row 5,
+  // format-guide row at row 6, real data rows 7-14.
+  // CORRECTED during Task 6 implementation, verified directly against
+  // the real template: row 5's own header reads C="Description of
+  // measure", D="Category", E="Scope (1/2/3)", F="GHG", G="Start year",
+  // H="Status", I="Pre-measure reference (tCO2e/yr)", J="Reporting year
+  // reduction (tCO2e)" -- status is column H, not G; the reduction
+  // figure is column J, not I. The originally assumed 20-row capacity
+  // was also wrong: row 15 starts a different narrative sub-section
+  // ("J1: Additional information", confirmed by reading C15/C16
+  // directly), not more measure rows -- the real capacity is 8 rows
+  // (7-14). Measures beyond the 8th are a disclosed, accepted gap in
+  // this EAD-specific export; the generic ISO 14064-3 workbook (Task 3)
+  // is unaffected and always carries the complete list.
+  const MITIGATION_MEASURE_ROW_CAPACITY = 8;
   const measuresSheet = wb.Sheets["4J - Mitigation Measures"];
   if (measuresSheet) {
-    mitigationMeasures.slice(0, 20).forEach((m, i) => {
+    mitigationMeasures.slice(0, MITIGATION_MEASURE_ROW_CAPACITY).forEach((m, i) => {
       const row = 7 + i;
       writeIfNotFormula(measuresSheet, `C${row}`, { t: "s", v: m.measureDescription });
-      writeIfNotFormula(measuresSheet, `G${row}`, { t: "s", v: m.status });
-      writeIfNotFormula(measuresSheet, `I${row}`, { t: "n", v: m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0 });
+      writeIfNotFormula(measuresSheet, `H${row}`, { t: "s", v: m.status });
+      writeIfNotFormula(measuresSheet, `J${row}`, { t: "n", v: m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0 });
     });
   }
 }
