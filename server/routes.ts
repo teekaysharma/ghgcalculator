@@ -1108,6 +1108,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     fillCoreSheets(wb, streamDetails);
     fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, managementQaData);
 
+    // Secondary safeguard for Excel specifically -- a cell with a formula
+    // and no cached value (see ead-template-fill.ts's clearIllustrativeRows)
+    // already recalculates on open regardless of this flag, but this is
+    // belt-and-suspenders for Excel. See task-8-report.md for the empirical
+    // check of whether SheetJS's writer actually round-trips this into
+    // xl/workbook.xml's <calcPr> element.
+    wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
+
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader(

@@ -9,7 +9,7 @@
 // (fixed row capacity, illustrative rows, intra-template formulas, the
 // Product -> Emission Source -> Source Stream hierarchy gap).
 
-import XLSX from "xlsx";
+import * as XLSX from "xlsx";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -19,13 +19,46 @@ import type { MethaneReport, MitigationMeasure, ManagementQaRecord } from "@shar
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const TEMPLATE_PATH = path.join(__dirname, "..", "assets", "ead-deliverable-c-template.xlsx");
+// TEMPLATE_PATH must resolve correctly under both `npm run dev` (tsx runs
+// this file directly from server/utils/, so __dirname = server/utils/ and
+// "../assets" reaches server/assets/) and the production build (esbuild
+// bundles this whole module into dist/index.js, so __dirname = dist/ at
+// runtime -- server/vite.ts:69 already establishes this exact fact for
+// dist/public). Since the two environments have different directory
+// depths relative to the repo root, a single relative path cannot work in
+// both -- try the dev-relative location first, then the prod-relative one
+// (populated by the build's `cp server/assets dist/assets` step added
+// alongside this fix), and fail loudly and specifically if neither exists,
+// matching the existing convention at server/vite.ts:69-75 rather than
+// letting a bare ENOENT reach the client (see Task 9's I7 fix for the
+// route-level catch that turns this into a clean 500 either way).
+function resolveTemplatePath(): string {
+  const devPath = path.join(__dirname, "..", "assets", "ead-deliverable-c-template.xlsx");
+  if (fs.existsSync(devPath)) return devPath;
+  const prodPath = path.join(__dirname, "assets", "ead-deliverable-c-template.xlsx");
+  if (fs.existsSync(prodPath)) return prodPath;
+  throw new Error(
+    `Could not find the EAD template at ${devPath} or ${prodPath}. In production, make sure the build step copies server/assets/ into dist/assets/ (see package.json's "build" script).`,
+  );
+}
+
+// Cached across calls -- the template is a static 400KB+ asset read from
+// disk and re-parsed by XLSX.read on every single export request otherwise
+// (measured: ~40-110ms of fully synchronous, event-loop-blocking work per
+// call just for the parse). Caching the raw BUFFER (not the parsed
+// workbook -- the fill functions mutate their workbook in place, so a
+// cached parsed workbook would leak state between requests) still avoids
+// the disk read and lets XLSX.read do a fresh parse into an isolated
+// object per call.
+let cachedTemplateBuffer: Buffer | null = null;
 
 export function loadEadTemplate(): XLSX.WorkBook {
+  if (!cachedTemplateBuffer) {
+    cachedTemplateBuffer = fs.readFileSync(resolveTemplatePath());
+  }
   // cellFormula: true preserves existing formulas on read so
   // clearIllustrativeRows/the fill functions can detect and skip them.
-  const fileBuffer = fs.readFileSync(TEMPLATE_PATH);
-  return XLSX.read(fileBuffer, { cellFormula: true });
+  return XLSX.read(cachedTemplateBuffer, { cellFormula: true });
 }
 
 // Cells confirmed by direct inspection to contain the template's own
@@ -147,17 +180,38 @@ function writeIfNotFormula(ws: XLSX.WorkSheet, address: string, cell: XLSX.CellO
   ws[address] = cell;
 }
 
+// The schema stores materiality as lowercase ("major"/"minor" -- see
+// shared/schema.ts's materialityLevels), but the real template's own
+// illustrative example casing is Title Case ("Major") -- confirmed by
+// direct inspection of 3d1_Source Streams (Calculated)!F10/G10/D41 --
+// even though the row-8 instructional text itself reads lowercase
+// ("classify your source stream (into major, minor, de minimis)").
+// Title-case every write so the exported value matches the template's
+// own convention rather than the schema's raw storage casing.
+function titleCaseMateriality(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
 export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
   for (const [sheetName, address] of ILLUSTRATIVE_CELLS) {
     const ws = wb.Sheets[sheetName];
     if (!ws) continue;
     const cell = ws[address];
-    // Never clear a cell that turns out to carry a live formula -- an
-    // illustrative address list built from a point-in-time inspection
-    // could in principle be stale against a future template revision;
-    // this is the guard that keeps a formula cell safe even if that
-    // happens, consistent with the "never touch template formulas" rule.
-    if (cell && cell.f) continue;
+    if (cell && cell.f) {
+      // Never touch the formula itself -- but the formula's stale cached
+      // result (computed once, when the template was authored, against
+      // its own fabricated example data) must not ship in the delivered
+      // file. Stripping .v/.w/.h leaves a formula cell with no cached
+      // value; Excel recalculates a cell with a formula and no cached
+      // value on open. Also see the module-level fullCalcOnLoad note in
+      // the two export routes (server/routes.ts) for the belt-and-
+      // suspenders fix for non-Excel consumers that don't force a recalc.
+      delete cell.v;
+      delete cell.w;
+      delete cell.h;
+      continue;
+    }
     delete ws[address];
   }
 }
@@ -198,13 +252,13 @@ export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDet
     // *without* touching their formula).
     writeIfNotFormula(streamSheet, `C${row1}`, { t: "s", v: s.description ?? s.name });
     writeIfNotFormula(streamSheet, `E${row1}`, { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 });
-    writeIfNotFormula(streamSheet, `F${row1}`, { t: "s", v: s.materiality ?? "" });
-    writeIfNotFormula(streamSheet, `G${row1}`, { t: "s", v: s.materiality ?? "" });
+    writeIfNotFormula(streamSheet, `F${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
+    writeIfNotFormula(streamSheet, `G${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
 
     // Second table: Tier level, Category, Uncertainty, Fuel stream type,
     // Source of accuracy. Column B is again formula-linked, not written.
     writeIfNotFormula(streamSheet, `C${row2}`, { t: "s", v: calc?.activityDataTier ?? "" });
-    writeIfNotFormula(streamSheet, `D${row2}`, { t: "s", v: s.materiality ?? "" });
+    writeIfNotFormula(streamSheet, `D${row2}`, { t: "s", v: titleCaseMateriality(s.materiality) });
     writeIfNotFormula(streamSheet, `F${row2}`, { t: "s", v: calc?.fuelOrMaterialType ?? "" });
     writeIfNotFormula(streamSheet, `G${row2}`, { t: "s", v: calc?.activityDataSource ?? "" });
 
@@ -329,8 +383,8 @@ export function fillRemainingSheets(
       const row1 = 9 + i;
       const row2 = 40 + i;
       writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "n", v: s.measurementApproach?.annualMeasuredQuantity ?? 0 });
-      writeIfNotFormula(emissionSourceSheet, `E${row1}`, { t: "s", v: s.materiality ?? "" });
-      writeIfNotFormula(emissionSourceSheet, `D${row2}`, { t: "s", v: s.materiality ?? "" });
+      writeIfNotFormula(emissionSourceSheet, `E${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
+      writeIfNotFormula(emissionSourceSheet, `D${row2}`, { t: "s", v: titleCaseMateriality(s.materiality) });
       writeIfNotFormula(emissionSourceSheet, `F${row2}`, { t: "s", v: s.measurementApproach?.measurementMethod ?? "" });
       writeIfNotFormula(emissionSourceSheet, `G${row2}`, { t: "s", v: s.measurementApproach?.qaqcProcedure ?? "" });
     });
