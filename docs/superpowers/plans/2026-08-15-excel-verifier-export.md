@@ -1314,3 +1314,276 @@ git commit -m "Add EAD export route, capacity warning, and finish the export sel
 - **Placeholder scan:** no TBD/TODO. Task 7's three cross-cutting storage calls (`getMethaneReport`, `listMitigationMeasures`, `listManagementQaRecords`) were verified against `server/storage.ts`'s real `IStorage` interface before finalizing this plan -- the first two are per-facility (called once per boundary facility and flattened), the third is already per-boundary.
 - **Type consistency:** `SourceStreamDetail` (Task 2) is consumed identically by name and shape in Tasks 3, 5, 6, 7. `getSourceStreamDetailForBoundary(organizationId, reportingBoundaryId)` signature matches across all call sites. `buildGenericWorkbook`, `loadEadTemplate`, `clearIllustrativeRows`, `fillCoreSheets`, `fillRemainingSheets` are each defined once and called with matching signatures in the task that consumes them.
 - **Cell-address risk, disclosed rather than hidden:** Tasks 5-6's cell addresses were derived from one point-in-time read of the real template file, not from a published EAD schema/contract. If EAD revises the template, these addresses could silently drift. `clearIllustrativeRows`' formula-check guard mitigates the worst case (never overwriting a formula even if an address is stale), but the implementer should re-verify a handful of addresses live (Step 3/4 of Tasks 5-7) rather than trusting this document blindly -- exactly what those verification steps are for.
+
+---
+
+## Stage 1 fix tasks (post final whole-branch review, 2026-08-19)
+
+The final whole-branch review (`.superpowers/sdd/2026-08-15-excel-verifier-export/progress.md`, opus reviewer) found that every task-level verification in Tasks 1-7 read the EAD export's output back through the same `xlsx` (SheetJS) library that wrote it -- which structurally cannot detect what SheetJS itself drops or mis-serializes on write. This surfaced 3 Critical + 5 Important + 10 Minor findings. Stage 1 (Tasks 8-9 below) fixes the findings that are mechanical and need no product decision: the production-breaking template path (C1), the fabricated illustrative numbers still cached in formula cells in the shipped file (C2), missing error handling on all 4 export routes (I7), the silently-uncapped/duplicated capacity-warning logic (I8), the unwired data-gaps sheet fill (I5), and a handful of cheap Minor items that share the same files. **Not in scope for Stage 1**: C3 (SheetJS strips the real template's formatting/validation on round-trip -- needs a human decision on library-switch vs. accept-and-disclose, tracked separately), I4+I6 (2c1/2c2/3e1 sheet coverage -- real new cell-mapping work, deferred to a later stage), and the remaining Minors not touching these files.
+
+**New verification requirement for both tasks below, replacing what every prior task used:** reading a written `.xlsx` back with `XLSX.readFile`/`XLSX.read` cannot prove these fixes work, because the defects are in what SheetJS itself does on write -- that was the whole finding. Verification must unzip the real output file (`unzip -o out.xlsx -d /tmp/unzipped` or Node's `AdmZip`/`yauzl`, whichever is available) and `grep`/read the raw `xl/workbook.xml` and `xl/worksheets/sheetN.xml` XML directly.
+
+### Task 8: Fix production template path, cached formula values, and buffer re-parsing
+
+**Files:**
+- Modify: `server/utils/ead-template-fill.ts`
+- Modify: `package.json` (build script)
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: `loadEadTemplate()`'s signature and `clearIllustrativeRows`'s signature are unchanged -- this task only changes their internals.
+
+**Context:** `TEMPLATE_PATH = path.join(__dirname, "..", "assets", "ead-deliverable-c-template.xlsx")` resolves correctly under `npm run dev` (tsx: `__dirname` = `server/utils/`, so `..` reaches `server/assets/`) but NOT in the production build (esbuild bundles the whole server into a single `dist/index.js`, so at runtime `__dirname` = `dist/`, and `path.join(dist/, "..", "assets", ...)` resolves to a sibling of `dist/` that is never created by the build -- confirmed by the final reviewer building the real bundle and tracing this). `server/vite.ts:69` already establishes this codebase's convention for a runtime-required directory that must exist after build: resolve it explicitly, check `fs.existsSync`, and throw a clear, actionable error if it's missing -- reuse that convention here rather than inventing a new one.
+
+- [ ] **Step 1: Copy `server/assets/` into `dist/assets/` as part of the build**
+
+Modify `package.json`'s `"build"` script (currently `"vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist"`) to add a copy step after esbuild, using Node's built-in `fs.cpSync` via an inline script so it works identically on Windows/Mac/Linux without a new dependency:
+
+```json
+    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && node -e \"require('fs').cpSync('server/assets','dist/assets',{recursive:true})\"",
+```
+
+- [ ] **Step 2: Make `loadEadTemplate` resolve the template in both dev and prod, with a clear failure if neither location exists**
+
+Replace the current `TEMPLATE_PATH` constant and `loadEadTemplate` function in `server/utils/ead-template-fill.ts`:
+
+```ts
+// TEMPLATE_PATH must resolve correctly under both `npm run dev` (tsx runs
+// this file directly from server/utils/, so __dirname = server/utils/ and
+// "../assets" reaches server/assets/) and the production build (esbuild
+// bundles this whole module into dist/index.js, so __dirname = dist/ at
+// runtime -- server/vite.ts:69 already establishes this exact fact for
+// dist/public). Since the two environments have different directory
+// depths relative to the repo root, a single relative path cannot work in
+// both -- try the dev-relative location first, then the prod-relative one
+// (populated by the build's `cp server/assets dist/assets` step added
+// alongside this fix), and fail loudly and specifically if neither exists,
+// matching the existing convention at server/vite.ts:69-75 rather than
+// letting a bare ENOENT reach the client (see Task 9's I7 fix for the
+// route-level catch that turns this into a clean 500 either way).
+function resolveTemplatePath(): string {
+  const devPath = path.join(__dirname, "..", "assets", "ead-deliverable-c-template.xlsx");
+  if (fs.existsSync(devPath)) return devPath;
+  const prodPath = path.join(__dirname, "assets", "ead-deliverable-c-template.xlsx");
+  if (fs.existsSync(prodPath)) return prodPath;
+  throw new Error(
+    `Could not find the EAD template at ${devPath} or ${prodPath}. In production, make sure the build step copies server/assets/ into dist/assets/ (see package.json's "build" script).`,
+  );
+}
+
+// Cached across calls -- the template is a static 400KB+ asset read from
+// disk and re-parsed by XLSX.read on every single export request otherwise
+// (measured: ~40-110ms of fully synchronous, event-loop-blocking work per
+// call just for the parse). Caching the raw BUFFER (not the parsed
+// workbook -- the fill functions mutate their workbook in place, so a
+// cached parsed workbook would leak state between requests) still avoids
+// the disk read and lets XLSX.read do a fresh parse into an isolated
+// object per call.
+let cachedTemplateBuffer: Buffer | null = null;
+
+export function loadEadTemplate(): XLSX.WorkBook {
+  if (!cachedTemplateBuffer) {
+    cachedTemplateBuffer = fs.readFileSync(resolveTemplatePath());
+  }
+  // cellFormula: true preserves existing formulas on read so
+  // clearIllustrativeRows/the fill functions can detect and skip them.
+  return XLSX.read(cachedTemplateBuffer, { cellFormula: true });
+}
+```
+
+- [ ] **Step 3: Stop shipping the template's own fabricated illustrative numbers as cached formula values**
+
+In `clearIllustrativeRows`, a cell that carries a formula is correctly never overwritten (per the explicit "never touch a formula" rule) -- but `XLSX.write` re-serializes that formula's OLD, TEMPLATE-FABRICATED cached result (`.v`/`.w`/`.h`) into the output file alongside the untouched `.f`, because nothing ever recalculates it. The final reviewer confirmed this by unzipping the real shipped file: `3d2!D25` still contains `<v>10000</v>` and `3e1!C9` still contains `<v>100000</v>` in the raw XML, even after this exact code path ran. This does NOT touch the formula string -- only the cell's separate cached-result properties -- so it is fully compatible with the "never overwrite a formula" rule (that rule is about `.f`, not `.v`/`.w`/`.h`):
+
+```ts
+export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
+  for (const [sheetName, address] of ILLUSTRATIVE_CELLS) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const cell = ws[address];
+    if (cell && cell.f) {
+      // Never touch the formula itself -- but the formula's stale cached
+      // result (computed once, when the template was authored, against
+      // its own fabricated example data) must not ship in the delivered
+      // file. Stripping .v/.w/.h leaves a formula cell with no cached
+      // value; Excel recalculates a cell with a formula and no cached
+      // value on open. Also see the module-level fullCalcOnLoad note in
+      // the two export routes (server/routes.ts) for the belt-and-
+      // suspenders fix for non-Excel consumers that don't force a recalc.
+      delete cell.v;
+      delete cell.w;
+      delete cell.h;
+      continue;
+    }
+    delete ws[address];
+  }
+}
+```
+
+- [ ] **Step 4: Set `fullCalcOnLoad` on the workbook before writing (best-effort, verify empirically)**
+
+`server/routes.ts`'s `export-ead.xlsx` handler calls `XLSX.write(wb, { type: "buffer", bookType: "xlsx" })` after the fill pipeline runs. Immediately before that call, add:
+
+```ts
+    wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
+```
+
+This is a secondary safeguard for Excel specifically (a cell with a formula and no cached value already recalculates on open regardless of this flag -- Step 3 is the fix that matters for every consumer, including non-Excel ones that don't evaluate formulas at all). **Verify empirically whether SheetJS's writer actually serializes `Workbook.CalcPr` into the output `xl/workbook.xml`'s `<calcPr>` element** (unzip the real output and check) -- some SheetJS builds are known to drop workbook-level metadata like this on write. If it doesn't round-trip, say so plainly in your report rather than silently dropping the line or claiming it works; Step 3 alone is sufficient to resolve the Critical finding either way.
+
+- [ ] **Step 5: Fix materiality casing (Minor M11) and import style (Minor M17) while in this file**
+
+The real template's illustrative example casing is Title Case (`"Major"`) under a row-8 instruction to classify "major, minor, de minimis" -- confirm this directly against the real template (`2c2` or `3d1`'s own instructional text) before implementing, then title-case every `s.materiality` write in `fillCoreSheets`/`fillRemainingSheets` (there are several call sites -- grep for `.materiality` in this file) with a small local helper, e.g.:
+
+```ts
+function titleCaseMateriality(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+```
+
+(This correctly produces `"Major"`, `"Minor"`, `"De minimis"` from the schema's lowercase `major`/`minor`/`de_minimis`-or-similar values -- confirm the exact stored string format in `shared/schema.ts`'s `materialityLevels` before assuming underscores vs. spaces.) Also change line 1's `import XLSX from "xlsx"` to `import * as XLSX from "xlsx"`, matching the namespace-import style already used in `server/utils/xlsx-export.ts` and `server/routes.ts`.
+
+- [ ] **Step 6: Run `npm run check`**
+
+- [ ] **Step 7: Live-verify with a REAL PRODUCTION BUILD, not `npm run dev`**
+
+This is the whole point of this task -- prior verification never ran the actual production artifact. Run `npm run build`, confirm `dist/assets/ead-deliverable-c-template.xlsx` exists, then run `npm run start` (or `node dist/index.js` directly with the required env vars) and hit the real `export-ead.xlsx` route against it -- confirm the file downloads successfully (this proves C1 is fixed; it would have thrown `ENOENT` before). Stop the production server when done.
+
+Then, using either the prod or dev server, run the fill pipeline against a boundary with at least one calculation-tier source stream, download the file, and **unzip it** (do not read it back with `XLSX.readFile`) -- confirm `xl/worksheets/sheetN.xml` for `3d2_ Calculation Approaches` no longer contains `<v>10000</v>` or `<v>MWh</v>` inside the `D25`/`E25` cell elements (the formula `<f>` should still be present), and that `3e1_Emission Sources (Measured)`'s `C9` cell no longer contains `<v>100000</v>`. Also check `xl/workbook.xml` for whether `<calcPr fullCalcOnLoad="1"` appears (report the actual result either way, per Step 4).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add server/utils/ead-template-fill.ts package.json server/routes.ts
+git commit -m "Fix EAD template path for production builds, stop shipping cached illustrative formula values, cache template buffer"
+```
+
+---
+
+### Task 9: Error handling, capacity-constant deduplication, and wiring the unused data-gaps fill
+
+**Files:**
+- Modify: `server/routes.ts`
+- Modify: `server/utils/ead-template-fill.ts` (export the capacity constants; the `MITIGATION_MEASURE_ROW_CAPACITY`/`SOURCE_STREAM_ROW_CAPACITY` constants already exist but are not exported)
+- Modify: `client/src/components/OrganizationReport.tsx` (dialog message only, to include the new omitted-measurement-streams count)
+
+**Interfaces:**
+- Consumes: `SOURCE_STREAM_ROW_CAPACITY`, `MITIGATION_MEASURE_ROW_CAPACITY` (now exported from `ead-template-fill.ts`), `fillDataGapsSheet` (already exists, unused until this task).
+- Produces: `export-ead-check.json`'s response shape grows one field: `omittedMeasurementStreams`.
+
+- [ ] **Step 1: Export the capacity constants instead of duplicating their values as literals**
+
+In `server/utils/ead-template-fill.ts`, add `export` to the existing `const SOURCE_STREAM_ROW_CAPACITY = 25;` and `const MITIGATION_MEASURE_ROW_CAPACITY = 8;` declarations (find them -- they already exist from Tasks 5/6, just not exported). Also add and export a constant for the measurement-tier stream cap, which today is a bare, undisclosed `.slice(0, 25)` literal in `fillRemainingSheets`:
+
+```ts
+// 3e1_Emission Sources (Measured) shares 3d1's 25-row capacity (both
+// sheets have exactly 25 pre-labeled rows, S01-S25 / F01-F25). Previously
+// a bare literal with no disclosing comment and no omission count
+// surfaced anywhere -- unlike every other capacity limit in this file,
+// a boundary with more than 25 measurement-tier streams silently lost
+// data with no warning. See server/routes.ts's export-ead-check.json for
+// where this is now surfaced.
+export const MEASUREMENT_STREAM_ROW_CAPACITY = 25;
+```
+
+Then change `fillRemainingSheets`'s `const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, 25);` to use `MEASUREMENT_STREAM_ROW_CAPACITY` instead of the bare `25`.
+
+- [ ] **Step 2: Use the exported constants in `export-ead-check.json`, and add the missing measurement-stream count**
+
+Replace the route's body in `server/routes.ts`:
+
+```ts
+  app.get("/api/reporting-boundaries/:id/consolidated-report/export-ead-check.json", requireAuth, requireOrg, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+      const report = await storage.getConsolidatedReport(req.organizationId!, id);
+      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+      const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+      const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
+      const measurementCount = streamDetails.filter((s) => s.approachTier === "measurement").length;
+      const boundaryFacilityIds = report.facilities.map((f) => f.id);
+      const mitigationLists = await Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid)));
+      const mitigationCount = mitigationLists.flat().length;
+      const { SOURCE_STREAM_ROW_CAPACITY, MEASUREMENT_STREAM_ROW_CAPACITY, MITIGATION_MEASURE_ROW_CAPACITY } = await import("./utils/ead-template-fill");
+      return res.json({
+        omittedSourceStreams: Math.max(0, calcCount - SOURCE_STREAM_ROW_CAPACITY),
+        omittedMeasurementStreams: Math.max(0, measurementCount - MEASUREMENT_STREAM_ROW_CAPACITY),
+        omittedMitigationMeasures: Math.max(0, mitigationCount - MITIGATION_MEASURE_ROW_CAPACITY),
+      });
+    } catch (error) {
+      console.error("EAD export capacity check error:", error);
+      return res.status(500).json({ message: "Failed to check EAD export capacity" });
+    }
+  });
+```
+
+- [ ] **Step 3: Wrap all 4 export routes in try/catch, matching this file's own established pattern**
+
+The existing pattern (see `server/routes.ts:558-565` for a real example already in this file) is `try { ... } catch (error) { console.error("<Label> error:", error); return res.status(500).json({ message: "Failed to <verb>" }); }`. Apply it to `export.csv`, `export.xlsx`, `export-ead-check.json` (done in Step 2 above), and `export-ead.xlsx` -- wrap each handler's existing body, changing nothing else about the logic inside. Use labels `"Consolidated report CSV export error"`, `"Consolidated report XLSX export error"`, and `"EAD export error"` respectively, with messages `"Failed to export CSV"`, `"Failed to export XLSX"`, `"Failed to export EAD file"`.
+
+- [ ] **Step 4: Wire up the unused `fillDataGapsSheet` -- partial, disclosed fill (the schema doesn't carry every field this sheet wants)**
+
+`fillDataGapsSheet` (built and task-verified in Task 5) expects `{ sourceStreamOrOtherId, from, until, description, estimatedEmissionsTco2e, source }[]`. The real data source, `verificationFindings` (`shared/schema.ts:1033-1050`), only has `findingType`, `description`, `severity`, `status`, `resolutionNotes` -- it has no date range, no estimated-emissions figure, and no source-stream identifier. **This is a genuine, disclosed partial fill, not a full one** -- write what the schema actually has (`description`) into the sheet's description column, and leave the fields the schema doesn't track blank/null, consistent with this whole plan's established pattern for narrative sections that can't be fully mapped (see `fillRemainingSheets`'s 3e2/3f/3g comments for the precedent). Add to the `export-ead.xlsx` route in `server/routes.ts`, alongside the existing `Promise.all` that fetches `methaneReportsData`/`mitigationMeasuresData`/`managementQaData`:
+
+```ts
+      storage.listVerificationFindings(req.organizationId!, id),
+```
+
+(Confirmed real signature: `listVerificationFindings(organizationId: number, reportingBoundaryId: number): Promise<VerificationFinding[]>`, `server/storage.ts:315`/`937` -- already boundary-scoped, call it once, no per-facility flattening needed.) Then, after `fillRemainingSheets(...)` in the same route:
+
+```ts
+    const dataGaps = verificationFindingsData
+      .filter((f) => f.findingType === "data_gap")
+      .map((f) => ({
+        sourceStreamOrOtherId: "",
+        from: "",
+        until: "",
+        description: f.description,
+        estimatedEmissionsTco2e: null,
+        source: "",
+      }));
+    fillDataGapsSheet(wb, dataGaps);
+```
+
+Import `fillDataGapsSheet` alongside the existing `loadEadTemplate, clearIllustrativeRows, fillCoreSheets, fillRemainingSheets` import in this route.
+
+- [ ] **Step 5: Fix the `Content-Disposition` filename pattern across all 3 export routes (Minor M18)**
+
+All three existing export routes (`export.csv`, `export.xlsx`, `export-ead.xlsx`) build `Content-Disposition` as `attachment; filename="${report.reportingEntity.name}-...` with the entity name unescaped -- a name containing `"` breaks the quoted-string, and Node's `res.setHeader` will throw on embedded CR/LF (which Step 3's new try/catch now turns into a clean 500 instead of a crash, but it's better to just produce a safe filename). Add one shared helper near the top of `server/routes.ts` (or in a small new `server/utils/http.ts` if this file doesn't already have a "shared helpers" section -- check first) and use it in all 3 routes' `Content-Disposition` headers:
+
+```ts
+function contentDispositionFilename(rawName: string): string {
+  const safe = rawName.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "'");
+  return `filename="${safe}"; filename*=UTF-8''${encodeURIComponent(rawName)}`;
+}
+```
+
+Replace each route's `Content-Disposition` line, e.g. for the CSV route: `res.setHeader("Content-Disposition", \`attachment; ${contentDispositionFilename(\`${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}.csv\`)}\`);` -- apply the equivalent for the other two routes' filename strings.
+
+- [ ] **Step 6: Update the client dialog to include the new `omittedMeasurementStreams` count**
+
+In `client/src/components/OrganizationReport.tsx`, the EAD dropdown item's `onClick` already destructures `{ omittedSourceStreams, omittedMitigationMeasures }` from the check response and builds an `omissions` array. Add measurement streams the same way:
+
+```ts
+                    const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } = await res.json();
+                    const omissions: string[] = [];
+                    if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
+                    if (omittedMeasurementStreams > 0) omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
+                    if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
+```
+
+(Note the label on `omittedSourceStreams` changes from `"source stream(s)"` to `"calculation-tier source stream(s)"` to stay unambiguous now that measurement-tier streams have their own count -- this was flagged as part of Important finding I8.)
+
+- [ ] **Step 7: Run `npm run check && npx vite build`**
+
+- [ ] **Step 8: Live-verify**
+
+Start the dev server. Confirm `export-ead-check.json` returns all three omitted-counts correctly for both an under-cap and an over-cap boundary (reuse the seeding pattern from Task 7's verification if helpful). Create at least one `verification_finding` with `findingType: "data_gap"` on a test boundary via `POST /api/reporting-boundaries/:boundaryId/verification-findings` (confirmed real route, `server/routes.ts:1730`) and confirm its `description` lands in `4h_Verification and Data Gaps`'s expected cell after a real export-ead.xlsx download (unzip and check the raw XML, per this stage's verification requirement). Confirm a request to a route with a deliberately-broken dependency (e.g. temporarily rename the template file, run the check, then rename it back) returns a clean `500 {"message": "Failed to export EAD file"}` instead of hanging or crashing the process.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add server/routes.ts server/utils/ead-template-fill.ts client/src/components/OrganizationReport.tsx
+git commit -m "Add error handling to export routes, dedupe capacity constants, wire up data-gaps fill, fix filename escaping"
+```
