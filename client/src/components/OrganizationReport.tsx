@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 // Mirrors server/modules.ts's MODULE_REGISTRY labels for display purposes
 // only. If a second real module is ever added there, add its label here
@@ -115,13 +116,41 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
             >
               Export CSV
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.xlsx`, "_blank")}
-            >
-              Export Excel (ISO 14064-3)
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline">
+                  Export Excel
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem
+                  onClick={() => window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.xlsx`, "_blank")}
+                >
+                  ISO 14064-3 / GHG Protocol (generic)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={async () => {
+                    const res = await apiRequest(
+                      "GET",
+                      `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export-ead-check.json`,
+                    );
+                    const { omittedSourceStreams, omittedMitigationMeasures } = await res.json();
+                    const omissions: string[] = [];
+                    if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} source stream(s)`);
+                    if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
+                    if (omissions.length > 0) {
+                      const proceed = window.confirm(
+                        `${omissions.join(" and ")} exceed the EAD template's row limits and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
+                      );
+                      if (!proceed) return;
+                    }
+                    window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export-ead.xlsx`, "_blank");
+                  }}
+                >
+                  EAD Deliverable C Template
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {report.reportingBoundary.status === "draft" ? (
               <Button
                 size="sm"

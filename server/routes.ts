@@ -1057,6 +1057,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.send(buffer);
   });
 
+  app.get("/api/reporting-boundaries/:id/consolidated-report/export-ead-check.json", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const report = await storage.getConsolidatedReport(req.organizationId!, id);
+    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+    const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+    const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
+    // Mitigation measures share the same "hard row-cap in the real EAD
+    // template" shape as source streams (Task 6 found the sheet's true
+    // capacity is 8 rows, not the originally assumed 20) -- surface an
+    // omitted count here too, same pattern as omittedSourceStreams, so
+    // Task 7's own capacity-warning purpose actually covers every capped
+    // sheet rather than just the one Task 5 already had a return value for.
+    const boundaryFacilityIds = report.facilities.map((f) => f.id);
+    const mitigationLists = await Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid)));
+    const mitigationCount = mitigationLists.flat().length;
+    return res.json({
+      omittedSourceStreams: Math.max(0, calcCount - 25),
+      omittedMitigationMeasures: Math.max(0, mitigationCount - 8),
+    });
+  });
+
+  app.get("/api/reporting-boundaries/:id/consolidated-report/export-ead.xlsx", requireAuth, requireOrg, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    const report = await storage.getConsolidatedReport(req.organizationId!, id);
+    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+    const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+    const boundaryFacilityIds = report.facilities.map((f) => f.id);
+
+    // getMethaneReport and listMitigationMeasures are both per-facility
+    // (real signatures, checked against server/storage.ts's IStorage
+    // interface) -- this boundary can have multiple facilities, so call
+    // each per facility and flatten. listManagementQaRecords is already
+    // per-boundary, matching this route's scope directly.
+    const [methaneReportsData, mitigationMeasuresData, managementQaData] = await Promise.all([
+      Promise.all(boundaryFacilityIds.map((fid) => storage.getMethaneReport(req.organizationId!, fid, id))).then(
+        (reports) => reports.filter((r): r is NonNullable<typeof r> => r !== undefined),
+      ),
+      Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid))).then((lists) =>
+        lists.flat(),
+      ),
+      storage.listManagementQaRecords(req.organizationId!, id),
+    ]);
+
+    const { loadEadTemplate, clearIllustrativeRows, fillCoreSheets, fillRemainingSheets } = await import("./utils/ead-template-fill");
+    const wb = loadEadTemplate();
+    clearIllustrativeRows(wb);
+    fillCoreSheets(wb, streamDetails);
+    fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, managementQaData);
+
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-EAD.xlsx"`,
+    );
+    return res.send(buffer);
+  });
+
   const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });
 
   app.patch("/api/reporting-boundaries/:id/recalculate", requireAuth, requireOrg, async (req, res) => {
