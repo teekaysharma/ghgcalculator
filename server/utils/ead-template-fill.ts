@@ -224,7 +224,7 @@ export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
 // uncertainty) at rows 41-65. This is a hard limit in the official
 // template -- fill up to capacity, report how many were omitted so the
 // caller can warn.
-const SOURCE_STREAM_ROW_CAPACITY = 25;
+export const SOURCE_STREAM_ROW_CAPACITY = 25;
 
 export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDetail[]): { omittedCount: number } {
   const calcStreams = streamDetails.filter((s) => s.approachTier === "calculation");
@@ -360,7 +360,16 @@ export function fillDataGapsSheet(
 // verify against -- per the task's explicit instruction this is a
 // disclosed approximation, not something to "fix": their target cells are
 // used verbatim from the brief.
-const MITIGATION_MEASURE_ROW_CAPACITY = 8;
+export const MITIGATION_MEASURE_ROW_CAPACITY = 8;
+
+// 3e1_Emission Sources (Measured) shares 3d1's 25-row capacity (both
+// sheets have exactly 25 pre-labeled rows, S01-S25 / F01-F25). Previously
+// a bare literal with no disclosing comment and no omission count
+// surfaced anywhere -- unlike every other capacity limit in this file,
+// a boundary with more than 25 measurement-tier streams silently lost
+// data with no warning. See server/routes.ts's export-ead-check.json for
+// where this is now surfaced.
+export const MEASUREMENT_STREAM_ROW_CAPACITY = 25;
 
 export function fillRemainingSheets(
   wb: XLSX.WorkBook,
@@ -376,7 +385,7 @@ export function fillRemainingSheets(
   // 33 is the last S25 row, row 35 starts table 2's own instructional
   // text). Table 2 header row 39, S01 example row 40 -> data rows 40-64
   // (row 64 is the last S25 row, row 67 is "* End of this worksheet *").
-  const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, 25);
+  const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
   const emissionSourceSheet = wb.Sheets["3e1_Emission Sources (Measured)"];
   if (emissionSourceSheet) {
     measurementStreams.forEach((s, i) => {

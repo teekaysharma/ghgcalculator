@@ -112,6 +112,19 @@ function parseBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
   return parsed.data;
 }
 
+// Shared by all 3 consolidated-report export routes. A reporting entity
+// name containing `"` breaks the quoted-string Content-Disposition value,
+// and Node's res.setHeader throws on embedded CR/LF -- both are now caught
+// by each route's own try/catch (Task 9), but producing a safe filename in
+// the first place is simpler than relying on that. The filename*=UTF-8''
+// form (RFC 5987) preserves non-ASCII characters for clients that support
+// it, while the plain filename= form (ASCII-sanitized) is the fallback for
+// those that don't.
+function contentDispositionFilename(rawName: string): string {
+  const safe = rawName.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "'");
+  return `filename="${safe}"; filename*=UTF-8''${encodeURIComponent(rawName)}`;
+}
+
 function toNumericField(value: number | string | undefined): string | undefined {
   return value === undefined ? undefined : String(value);
 }
@@ -1019,110 +1032,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
 
   app.get("/api/reporting-boundaries/:id/consolidated-report/export.csv", requireAuth, requireOrg, async (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
-    const report = await storage.getConsolidatedReport(req.organizationId!, id);
-    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+      const report = await storage.getConsolidatedReport(req.organizationId!, id);
+      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
 
-    const rows = report.facilities.map((f) => ({
-      facility: f.name,
-      country: f.country ?? "",
-      equityPercent: f.equityShareOwnershipPercent ?? "",
-      scope1: f.scope1,
-      scope2: f.scope2,
-      scope3: f.scope3,
-    }));
-    const csv = buildFacilityRollupCsv(rows);
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}.csv"`);
-    return res.send(csv);
+      const rows = report.facilities.map((f) => ({
+        facility: f.name,
+        country: f.country ?? "",
+        equityPercent: f.equityShareOwnershipPercent ?? "",
+        scope1: f.scope1,
+        scope2: f.scope2,
+        scope3: f.scope3,
+      }));
+      const csv = buildFacilityRollupCsv(rows);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; ${contentDispositionFilename(`${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}.csv`)}`,
+      );
+      return res.send(csv);
+    } catch (error) {
+      console.error("Consolidated report CSV export error:", error);
+      return res.status(500).json({ message: "Failed to export CSV" });
+    }
   });
 
   app.get("/api/reporting-boundaries/:id/consolidated-report/export.xlsx", requireAuth, requireOrg, async (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
-    const report = await storage.getConsolidatedReport(req.organizationId!, id);
-    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
-    const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+      const report = await storage.getConsolidatedReport(req.organizationId!, id);
+      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+      const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
 
-    const { buildGenericWorkbook } = await import("./utils/xlsx-export");
-    const wb = buildGenericWorkbook(report, streamDetails);
-    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+      const { buildGenericWorkbook } = await import("./utils/xlsx-export");
+      const wb = buildGenericWorkbook(report, streamDetails);
+      const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-ISO14064.xlsx"`,
-    );
-    return res.send(buffer);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; ${contentDispositionFilename(`${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-ISO14064.xlsx`)}`,
+      );
+      return res.send(buffer);
+    } catch (error) {
+      console.error("Consolidated report XLSX export error:", error);
+      return res.status(500).json({ message: "Failed to export XLSX" });
+    }
   });
 
   app.get("/api/reporting-boundaries/:id/consolidated-report/export-ead-check.json", requireAuth, requireOrg, async (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
-    const report = await storage.getConsolidatedReport(req.organizationId!, id);
-    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
-    const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
-    const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
-    // Mitigation measures share the same "hard row-cap in the real EAD
-    // template" shape as source streams (Task 6 found the sheet's true
-    // capacity is 8 rows, not the originally assumed 20) -- surface an
-    // omitted count here too, same pattern as omittedSourceStreams, so
-    // Task 7's own capacity-warning purpose actually covers every capped
-    // sheet rather than just the one Task 5 already had a return value for.
-    const boundaryFacilityIds = report.facilities.map((f) => f.id);
-    const mitigationLists = await Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid)));
-    const mitigationCount = mitigationLists.flat().length;
-    return res.json({
-      omittedSourceStreams: Math.max(0, calcCount - 25),
-      omittedMitigationMeasures: Math.max(0, mitigationCount - 8),
-    });
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+      const report = await storage.getConsolidatedReport(req.organizationId!, id);
+      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+      const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+      const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
+      const measurementCount = streamDetails.filter((s) => s.approachTier === "measurement").length;
+      // Mitigation measures share the same "hard row-cap in the real EAD
+      // template" shape as source streams (Task 6 found the sheet's true
+      // capacity is 8 rows, not the originally assumed 20) -- surface an
+      // omitted count here too, same pattern as omittedSourceStreams, so
+      // Task 7's own capacity-warning purpose actually covers every capped
+      // sheet rather than just the one Task 5 already had a return value for.
+      const boundaryFacilityIds = report.facilities.map((f) => f.id);
+      const mitigationLists = await Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid)));
+      const mitigationCount = mitigationLists.flat().length;
+      const { SOURCE_STREAM_ROW_CAPACITY, MEASUREMENT_STREAM_ROW_CAPACITY, MITIGATION_MEASURE_ROW_CAPACITY } = await import("./utils/ead-template-fill");
+      return res.json({
+        omittedSourceStreams: Math.max(0, calcCount - SOURCE_STREAM_ROW_CAPACITY),
+        omittedMeasurementStreams: Math.max(0, measurementCount - MEASUREMENT_STREAM_ROW_CAPACITY),
+        omittedMitigationMeasures: Math.max(0, mitigationCount - MITIGATION_MEASURE_ROW_CAPACITY),
+      });
+    } catch (error) {
+      console.error("EAD export capacity check error:", error);
+      return res.status(500).json({ message: "Failed to check EAD export capacity" });
+    }
   });
 
   app.get("/api/reporting-boundaries/:id/consolidated-report/export-ead.xlsx", requireAuth, requireOrg, async (req, res) => {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
-    const report = await storage.getConsolidatedReport(req.organizationId!, id);
-    if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
-    const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
-    const boundaryFacilityIds = report.facilities.map((f) => f.id);
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+      const report = await storage.getConsolidatedReport(req.organizationId!, id);
+      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+      const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+      const boundaryFacilityIds = report.facilities.map((f) => f.id);
 
-    // getMethaneReport and listMitigationMeasures are both per-facility
-    // (real signatures, checked against server/storage.ts's IStorage
-    // interface) -- this boundary can have multiple facilities, so call
-    // each per facility and flatten. listManagementQaRecords is already
-    // per-boundary, matching this route's scope directly.
-    const [methaneReportsData, mitigationMeasuresData, managementQaData] = await Promise.all([
-      Promise.all(boundaryFacilityIds.map((fid) => storage.getMethaneReport(req.organizationId!, fid, id))).then(
-        (reports) => reports.filter((r): r is NonNullable<typeof r> => r !== undefined),
-      ),
-      Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid))).then((lists) =>
-        lists.flat(),
-      ),
-      storage.listManagementQaRecords(req.organizationId!, id),
-    ]);
+      // getMethaneReport and listMitigationMeasures are both per-facility
+      // (real signatures, checked against server/storage.ts's IStorage
+      // interface) -- this boundary can have multiple facilities, so call
+      // each per facility and flatten. listManagementQaRecords and
+      // listVerificationFindings are already per-boundary, matching this
+      // route's scope directly.
+      const [methaneReportsData, mitigationMeasuresData, managementQaData, verificationFindingsData] = await Promise.all([
+        Promise.all(boundaryFacilityIds.map((fid) => storage.getMethaneReport(req.organizationId!, fid, id))).then(
+          (reports) => reports.filter((r): r is NonNullable<typeof r> => r !== undefined),
+        ),
+        Promise.all(boundaryFacilityIds.map((fid) => storage.listMitigationMeasures(req.organizationId!, fid))).then((lists) =>
+          lists.flat(),
+        ),
+        storage.listManagementQaRecords(req.organizationId!, id),
+        storage.listVerificationFindings(req.organizationId!, id),
+      ]);
 
-    const { loadEadTemplate, clearIllustrativeRows, fillCoreSheets, fillRemainingSheets } = await import("./utils/ead-template-fill");
-    const wb = loadEadTemplate();
-    clearIllustrativeRows(wb);
-    fillCoreSheets(wb, streamDetails);
-    fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, managementQaData);
+      const { loadEadTemplate, clearIllustrativeRows, fillCoreSheets, fillRemainingSheets, fillDataGapsSheet } = await import(
+        "./utils/ead-template-fill"
+      );
+      const wb = loadEadTemplate();
+      clearIllustrativeRows(wb);
+      fillCoreSheets(wb, streamDetails);
+      fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, managementQaData);
 
-    // Secondary safeguard for Excel specifically -- a cell with a formula
-    // and no cached value (see ead-template-fill.ts's clearIllustrativeRows)
-    // already recalculates on open regardless of this flag, but this is
-    // belt-and-suspenders for Excel. See task-8-report.md for the empirical
-    // check of whether SheetJS's writer actually round-trips this into
-    // xl/workbook.xml's <calcPr> element.
-    wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
+      // Partial, disclosed fill: verificationFindings (shared/schema.ts)
+      // only carries findingType/description/severity/status/
+      // resolutionNotes -- no date range, no estimated-emissions figure, no
+      // source-stream identifier, all of which this sheet's columns want.
+      // Write what actually exists (description) and leave the rest
+      // blank/null, matching this plan's established pattern for narrative
+      // sections that can't be fully mapped (see fillRemainingSheets's
+      // 3e2/3f/3g comments for the precedent).
+      const dataGaps = verificationFindingsData
+        .filter((f) => f.findingType === "data_gap")
+        .map((f) => ({
+          sourceStreamOrOtherId: "",
+          from: "",
+          until: "",
+          description: f.description,
+          estimatedEmissionsTco2e: null,
+          source: "",
+        }));
+      fillDataGapsSheet(wb, dataGaps);
 
-    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-EAD.xlsx"`,
-    );
-    return res.send(buffer);
+      // Secondary safeguard for Excel specifically -- a cell with a formula
+      // and no cached value (see ead-template-fill.ts's clearIllustrativeRows)
+      // already recalculates on open regardless of this flag, but this is
+      // belt-and-suspenders for Excel. See task-8-report.md for the empirical
+      // check of whether SheetJS's writer actually round-trips this into
+      // xl/workbook.xml's <calcPr> element.
+      wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
+
+      const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; ${contentDispositionFilename(`${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-EAD.xlsx`)}`,
+      );
+      return res.send(buffer);
+    } catch (error) {
+      console.error("EAD export error:", error);
+      return res.status(500).json({ message: "Failed to export EAD file" });
+    }
   });
 
   const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });

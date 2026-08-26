@@ -134,9 +134,10 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
                       "GET",
                       `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export-ead-check.json`,
                     );
-                    const { omittedSourceStreams, omittedMitigationMeasures } = await res.json();
+                    const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } = await res.json();
                     const omissions: string[] = [];
-                    if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} source stream(s)`);
+                    if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
+                    if (omittedMeasurementStreams > 0) omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
                     if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
                     if (omissions.length > 0) {
                       const proceed = window.confirm(
