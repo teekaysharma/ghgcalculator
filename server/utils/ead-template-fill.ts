@@ -116,25 +116,6 @@ const ILLUSTRATIVE_CELLS: [string, string][] = [
   ["3e1_Emission Sources (Measured)", "E40"],
   ["3e1_Emission Sources (Measured)", "F40"],
   ["3e1_Emission Sources (Measured)", "G40"],
-  // 2c2_Facility Description: product table header row 16, P01/P02
-  // examples at rows 17-18; emission source table header row 42, S01/S02
-  // examples at rows 43-44.
-  ["2c2_Facility Description", "C17"],
-  ["2c2_Facility Description", "G17"],
-  ["2c2_Facility Description", "H17"],
-  ["2c2_Facility Description", "C18"],
-  ["2c2_Facility Description", "G18"],
-  ["2c2_Facility Description", "H18"],
-  ["2c2_Facility Description", "C43"],
-  ["2c2_Facility Description", "D43"],
-  ["2c2_Facility Description", "E43"],
-  ["2c2_Facility Description", "G43"],
-  ["2c2_Facility Description", "H43"],
-  ["2c2_Facility Description", "I43"],
-  ["2c2_Facility Description", "C44"],
-  ["2c2_Facility Description", "D44"],
-  ["2c2_Facility Description", "E44"],
-  ["2c2_Facility Description", "I44"],
   // ADDED after Task 5's review surfaced a real gap: 2c2_Facility
   // Description's own source-stream activity table (header row 74,
   // columns C/G/H = Source Stream ID/level of activity/units), whose
