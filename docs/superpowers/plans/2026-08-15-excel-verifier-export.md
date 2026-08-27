@@ -1590,35 +1590,340 @@ git commit -m "Add error handling to export routes, dedupe capacity constants, w
 
 ---
 
-## Stage 3 fix task (I4 + I6, post whole-branch review, 2026-08-27)
+## Stage 2: Re-scope the EAD export from boundary-level to facility-level
 
-Fixes the whole-branch review's remaining data-correctness findings: `2c1_Identifiers` and `2c2_Facility Description`'s Product/Emission-Source tables were never filled by any prior task, and that is the ROOT CAUSE of `3e1`'s wrong numbers (I4) -- `3e1`'s "Total emissions" column is a formula reading from `2c2!G43:G67`, which nothing has ever written to, so every measured emission source has always reported 0 (or, before Task 8's fix, the template's fabricated `100000`).
+**Why this comes first, before the `2c1`/`2c2` fill work below:** the EAD Deliverable C Template's own embedded guidance sheet (`1b_Guidance`, already in the committed template file) states directly: *"Please include any estimates and measurements for emissions data at installation-level only (i.e., do not aggregate across your whole portfolio) and only for ONE installation"* (B6) and *"Please include emissions only at facility level and not at aggregated company level"* (B9). Confirmed further via the RAG-indexed EAD Technical Guidance (`20250303 - Technical Guidance v5 - No Cover.pdf`, the addendum document the template's own guidance explicitly points readers to): Facility is formally defined as units under common operational control, Operator as the controlling entity, and Q6 states *"Facilities must follow the Operational Control Approach... This is especially relevant given the complexity of corporate structures in the UAE."* This is EAD's own explicit, cited instruction, not an inference -- the current `export-ead.xlsx` route mixes every facility in a reporting boundary into one file, which is wrong per this instruction. Every task below this one in the plan assumes the export is already properly facility-scoped.
 
-**Everything below was independently re-verified against the real template file** (direct cell reads, raw OOXML inspection where merges alone were ambiguous) -- none of it is carried over from the design spec's original, unverified description of this gap.
+**This does NOT affect the generic ISO 14064-3/GHG Protocol workbook (`export.xlsx`, Task 3)** -- that export has no such constraint and correctly stays boundary/company-wide; only the EAD-specific route changes.
 
-**Two decisions need your explicit confirmation before this is dispatched** (flagged inline below at the exact point they matter, not buried) -- this section is written assuming the more conservative answer to each until you say otherwise:
+Split into two sequential tasks, matching this plan's established granularity: Task 10 re-scopes the export correctly (independently valuable and testable on its own -- every facility gets its own, correctly-isolated file, even before `2c1`/`2c2` are filled) and Task 11 builds the new sheet-fill work on top of it. Task 11 cannot start before Task 10 lands (it calls a function Task 10's route must already be wired to invoke).
 
-1. **Which facility's identity goes on a form authored for one facility.** `2c1`/`2c2`'s Product table are facility-identity sheets (`facilityIdentifiers`/`facilityContacts`/`facilityProducts` are all facility-scoped tables), but a reporting boundary in this platform can span multiple facilities -- exactly the same shape of problem Tasks 5/6 already solved for `3g_Methane` (uses the first facility with data) and `4I` (uses the first 1-3 QA records). This plan proposes the same precedent: **use `report.facilities[0]`** (the boundary's first facility) for `2c1` and `2c2`'s Product table specifically. This does NOT affect the Emission Source table or any of `3d1`-`4J` -- those already correctly mix data from every facility in the boundary, unchanged. The real, disclosed limitation: if a boundary has 3 facilities, only facility #1's identifiers/contacts/products appear in `2c1`/`2c2`, even though every facility's emissions still appear everywhere else in the file.
-2. **What `reportingEntities.legalEntity` actually represents.** `2c1!H6` asks for "Group/Parent Entity (if Applicable)" -- distinct from `H5`'s "Entity/Company name". `reportingEntities` has a `legalEntity` field, but its original design intent is ambiguous from the schema alone (a company's own formal legal name, vs. an actual separate parent/group entity, are two different things). **This plan does NOT map `legalEntity` to `H6` and leaves `H6` unfilled** until you confirm which (if either) is correct -- writing the wrong semantic into a government form is worse than leaving it blank.
+### Task 10: Facility-scoped EAD export routes + UI
+
+### Route changes
+
+**Files:**
+- Modify: `server/routes.ts` (new facility-scoped routes, replacing the boundary-scoped `export-ead.xlsx`/`export-ead-check.json`)
+- Modify: `client/src/components/OrganizationReport.tsx` (dropdown becomes a flat list, one "EAD Deliverable C Template" item per facility in the boundary -- confirmed with the user as the preferred UI: full visibility, nothing hidden behind a picker, no new download-tracking state)
+
+Replace `GET /api/reporting-boundaries/:id/consolidated-report/export-ead.xlsx` and its `-check.json` companion with facility-scoped equivalents, nested consistently with the existing `consolidated-report` route family:
+
+```
+GET /api/reporting-boundaries/:id/consolidated-report/facilities/:facilityId/export-ead-check.json
+GET /api/reporting-boundaries/:id/consolidated-report/facilities/:facilityId/export-ead.xlsx
+```
+
+Both validate `facilityId` belongs to this boundary by checking `report.facilities.find((f) => f.id === facilityId)` -- since `report.facilities` already comes from `getConsolidatedReport(req.organizationId!, id)`, this single check simultaneously confirms the facility belongs to both the right organization (tenant safety) and the right boundary; return 404 if not found, same discipline as every other route.
+
+**Data-fetching changes, all simplifications relative to today's code:**
+- `streamDetails` (from the existing `getSourceStreamDetailForBoundary` call, unchanged) is filtered to `s.facilityId === facilityId` before being passed to `fillCoreSheets`/`fillRemainingSheets` -- no changes needed inside those functions themselves, they already operate on whatever `SourceStreamDetail[]` they're given.
+- `mitigationMeasuresData` = `storage.listMitigationMeasures(req.organizationId!, facilityId)` directly -- one call, no more `Promise.all` + flatten across every boundary facility.
+- `methaneReportsData` = `storage.getMethaneReport(req.organizationId!, facilityId, id)` directly, wrapped in an array (or `undefined`-filtered) to match `fillRemainingSheets`' existing `MethaneReport[]` parameter shape -- one call, not one per facility.
+- `managementQaData` / `verificationFindingsData`: **pass empty arrays.** See the facility-level-QA finding below -- this is not a shortcut, it's the correct behavior given what the schema actually supports today.
+- The facility-identity calls this unblocks (`getFacilityIdentifier`, `listFacilityContacts`, `listFacilityProducts`) are covered in the next section below, now trivially scoped to `facilityId` directly -- no more "which facility" ambiguity, since the export is for exactly one, named facility.
+
+**Filename**: `${facility.name}-${report.reportingBoundary.reportingYear}-EAD.xlsx` (facility-specific, not entity-specific).
+
+**Client dropdown, exact replacement** (`client/src/components/OrganizationReport.tsx`, replacing the single `EAD Deliverable C Template` `DropdownMenuItem` -- lines ~133-154 as currently committed): a flat list, one item per facility in `report.facilities` (already available in this component's scope -- the CSV export builder above it already does `report.facilities.map(...)`), full visibility per the user's explicit preference (no picker, no hidden state):
+
+```tsx
+                {report.facilities.map((f) => (
+                  <DropdownMenuItem
+                    key={f.id}
+                    onClick={async () => {
+                      const res = await apiRequest(
+                        "GET",
+                        `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/facilities/${f.id}/export-ead-check.json`,
+                      );
+                      const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } = await res.json();
+                      const omissions: string[] = [];
+                      if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
+                      if (omittedMeasurementStreams > 0) omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
+                      if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
+                      if (omissions.length > 0) {
+                        const proceed = window.confirm(
+                          `${omissions.join(" and ")} exceed the EAD template's row limits and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
+                        );
+                        if (!proceed) return;
+                      }
+                      window.open(
+                        `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/facilities/${f.id}/export-ead.xlsx`,
+                        "_blank",
+                      );
+                    }}
+                  >
+                    EAD Deliverable C Template — {f.name}
+                  </DropdownMenuItem>
+                ))}
+```
+
+If `report.facilities` is empty (a boundary with no facilities yet), this renders zero EAD items, which is correct -- there's nothing to export. No separate empty-state message needed; the generic workbook option above it is unaffected either way.
+
+**Server routes, exact replacement** (`server/routes.ts`, replacing the current boundary-scoped `export-ead-check.json`/`export-ead.xlsx` handlers):
+
+```ts
+  app.get(
+    "/api/reporting-boundaries/:id/consolidated-report/facilities/:facilityId/export-ead-check.json",
+    requireAuth,
+    requireOrg,
+    async (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        const facilityId = Number(req.params.facilityId);
+        if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(facilityId) || facilityId <= 0) {
+          return res.status(400).json({ message: "Invalid reporting boundary or facility id" });
+        }
+        const report = await storage.getConsolidatedReport(req.organizationId!, id);
+        if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+        const facility = report.facilities.find((f) => f.id === facilityId);
+        if (!facility) return res.status(404).json({ message: "Facility not found on this reporting boundary" });
+
+        const streamDetails = (await storage.getSourceStreamDetailForBoundary(req.organizationId!, id)).filter(
+          (s) => s.facilityId === facilityId,
+        );
+        const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
+        const measurementCount = streamDetails.filter((s) => s.approachTier === "measurement").length;
+        const mitigationCount = (await storage.listMitigationMeasures(req.organizationId!, facilityId)).length;
+        const { SOURCE_STREAM_ROW_CAPACITY, MEASUREMENT_STREAM_ROW_CAPACITY, MITIGATION_MEASURE_ROW_CAPACITY } = await import(
+          "./utils/ead-template-fill"
+        );
+        return res.json({
+          omittedSourceStreams: Math.max(0, calcCount - SOURCE_STREAM_ROW_CAPACITY),
+          omittedMeasurementStreams: Math.max(0, measurementCount - MEASUREMENT_STREAM_ROW_CAPACITY),
+          omittedMitigationMeasures: Math.max(0, mitigationCount - MITIGATION_MEASURE_ROW_CAPACITY),
+        });
+      } catch (error) {
+        console.error("EAD export capacity check error:", error);
+        return res.status(500).json({ message: "Failed to check EAD export capacity" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/reporting-boundaries/:id/consolidated-report/facilities/:facilityId/export-ead.xlsx",
+    requireAuth,
+    requireOrg,
+    async (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        const facilityId = Number(req.params.facilityId);
+        if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(facilityId) || facilityId <= 0) {
+          return res.status(400).json({ message: "Invalid reporting boundary or facility id" });
+        }
+        const report = await storage.getConsolidatedReport(req.organizationId!, id);
+        if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+        const facility = report.facilities.find((f) => f.id === facilityId);
+        if (!facility) return res.status(404).json({ message: "Facility not found on this reporting boundary" });
+
+        const streamDetails = (await storage.getSourceStreamDetailForBoundary(req.organizationId!, id)).filter(
+          (s) => s.facilityId === facilityId,
+        );
+
+        const [methaneReport, mitigationMeasuresData, facilityIdentifier, facilityContacts, facilityProducts] = await Promise.all([
+          storage.getMethaneReport(req.organizationId!, facilityId, id),
+          storage.listMitigationMeasures(req.organizationId!, facilityId),
+          storage.getFacilityIdentifier(req.organizationId!, facilityId),
+          storage.listFacilityContacts(req.organizationId!, facilityId),
+          storage.listFacilityProducts(req.organizationId!, facilityId),
+        ]);
+        const methaneReportsData = methaneReport ? [methaneReport] : [];
+        // facilityIdentifier/facilityContacts/facilityProducts are fetched
+        // here in Task 10 (the data-fetching is already correct and
+        // facility-scoped) but not used yet -- Task 11 adds the
+        // fillFacilityDescriptionSheets import and call below, once that
+        // function exists. Until Task 11 lands, 2c1/2c2 ship exactly as
+        // they do today (unfilled), which is a correct, known state, not a
+        // silent regression -- everything else in the file (3d1/3d2/3e1/
+        // 4J) is already properly facility-isolated by this task alone.
+
+        const { loadEadTemplate, clearIllustrativeRows, fillCoreSheets, fillRemainingSheets, fillDataGapsSheet } = await import(
+          "./utils/ead-template-fill"
+        );
+        const wb = loadEadTemplate();
+        clearIllustrativeRows(wb);
+        fillCoreSheets(wb, streamDetails);
+        // managementQaData/verificationFindingsData are boundary-scoped in
+        // this schema, not facility-scoped -- passing empty arrays here is
+        // correct, not a shortcut (see the Stage 2 finding above: EAD's own
+        // guidance ties this content to "your site"/"the installation", so
+        // duplicating boundary-level text across every facility's file
+        // would misrepresent it as facility-specific when it isn't).
+        fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, []);
+        fillDataGapsSheet(wb, []);
+        // TASK 11 ADDS HERE: fillFacilityDescriptionSheets(wb, facility, facilityIdentifier, facilityContacts, facilityProducts, streamDetails);
+
+        wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
+        const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; ${contentDispositionFilename(`${facility.name}-${report.reportingBoundary.reportingYear}-EAD.xlsx`)}`,
+        );
+        return res.send(buffer);
+      } catch (error) {
+        console.error("EAD export error:", error);
+        return res.status(500).json({ message: "Failed to export EAD file" });
+      }
+    },
+  );
+```
+
+(`contentDispositionFilename` is the shared helper already added in Task 9 -- reused here, not reinvented.)
+
+### `managementQaRecords`/`verificationFindings` -- confirmed facility-specific by EAD's own instruction, but the schema doesn't support it yet
+
+Checked `shared/schema.ts` directly: both tables are keyed only to `reportingBoundaryId`, with no `facilityId` column at all. Per the user's explicit instruction ("The EAD guidance is the final call on this if it pertains for the EAD template"), checked what EAD's own Technical Guidance says about this specific content -- and it's unambiguous. `20250303 - Technical Guidance v5 - No Cover.pdf`, chunk 91:
+
+> *"In sheet 4I – Management & QA where possible, please specify any QA/QC measures and procedures **on your site** – including the relevant management personnel involved. For those with responsibilities for monitoring and reporting emissions from **the installation**, identify the relevant job titles/posts..."*
+> *"In the event that there are any data gaps from any of the source streams or measurement approaches, please briefly describe these here..."*
+
+"On your site" / "the installation" -- singular, facility-specific, consistent with the rest of the document. This rules out duplicating the same boundary-level QA text across every facility's EAD file (would misrepresent facility-specific personnel and procedures as identical across different sites -- actively misleading in a regulatory submission, not just incomplete) and confirms the correct behavior today is: **`4I` and `4h` ship blank in every facility-scoped EAD export**, until `managementQaRecords`/`verificationFindings` actually gain a `facilityId` column and a UI to collect them per facility. That schema/UI work is real, separate scope -- not bundled into this fix. `fillDataGapsSheet`/the QA-writing code inside `fillRemainingSheets` stay exactly as built (Tasks 5/9); they simply receive empty arrays from this route now instead of boundary-wide data, and correctly no-op.
+
+- [ ] **Step: Run `npm run check && npx vite build`**
+- [ ] **Step: Live-verify** -- seed a boundary with 2 facilities, each with its own calculation-tier and measurement-tier source streams. Confirm the dropdown shows one "EAD Deliverable C Template — {name}" item per facility. Download both files, unzip each (per this stage's established raw-XML verification requirement), and confirm Facility A's file contains only Facility A's streams in `3d1`/`3d2`/`3e1` -- not Facility B's. Confirm `export-ead-check.json` returns correct counts when called with each facility's own ID. Confirm requesting a `facilityId` that doesn't belong to the boundary returns a clean 404, not a 500 or someone else's data.
+- [ ] **Step: Commit**
+
+```bash
+git add server/routes.ts client/src/components/OrganizationReport.tsx
+git commit -m "Re-scope EAD export from boundary-level to facility-level, per EAD's own MRV guidance"
+```
+
+---
+
+### Task 11: Fill `2c1`/`2c2` facility-identity sheets, fix `3e1`'s wrong columns (I4 + I6)
+
+Builds on Task 10's now facility-scoped route. Fixes the whole-branch review's remaining data-correctness findings: `2c1_Identifiers` and `2c2_Facility Description`'s Product/Emission-Source tables were never filled by any prior task, and that is the ROOT CAUSE of `3e1`'s wrong numbers (I4) -- `3e1`'s "Total emissions" column is a formula reading from `2c2!G43:G67`, which nothing has ever written to, so every measured emission source has always reported 0 (or, before Task 8's fix, the template's fabricated `100000`).
+
+**Everything below was independently re-verified against the real template file** (direct cell reads, raw OOXML inspection where merges alone were ambiguous) -- none of it is carried over from the design spec's original, unverified description of this gap. Every decision this task depends on is resolved and cited below; ready to dispatch once Task 10 is complete. (Task 10 already covers why `4I`/`4h` stay blank -- see "`managementQaRecords`/`verificationFindings`" above; this task doesn't touch those two sheets.)
 
 ### New function: `fillFacilityDescriptionSheets`
 
 **Files:**
 - Modify: `server/utils/ead-template-fill.ts` (new function + `ILLUSTRATIVE_CELLS` additions)
-- Modify: `server/routes.ts` (wire the new function + its 3 new storage calls into `export-ead.xlsx`)
+- Modify: `server/routes.ts` (in the facility-scoped `export-ead.xlsx` route from Task 10: add `fillFacilityDescriptionSheets` to the existing `import("./utils/ead-template-fill")` destructure, and replace the `// TASK 11 ADDS HERE: ...` comment with the real call: `fillFacilityDescriptionSheets(wb, facility, facilityIdentifier, facilityContacts, facilityProducts, streamDetails);` -- the `facility`/`facilityIdentifier`/`facilityContacts`/`facilityProducts` variables already exist in that route from Task 10, just unused until now)
 
 **Interfaces:**
-- Consumes: `storage.getFacilityIdentifier(organizationId, facilityId): Promise<FacilityIdentifier | undefined>`, `storage.listFacilityContacts(organizationId, facilityId): Promise<FacilityContact[]>`, `storage.listFacilityProducts(organizationId, facilityId): Promise<FacilityProduct[]>` (all confirmed real signatures, `server/storage.ts:271-284`) -- all facility-scoped, called once each for `report.facilities[0].id` per decision (1) above. Also consumes `SourceStreamDetail[]` (unchanged) for the Emission Source table, same array `fillRemainingSheets` already receives.
-- Produces: `fillFacilityDescriptionSheets(wb: XLSX.WorkBook, primaryFacilityIdentifier: FacilityIdentifier | undefined, primaryFacilityContacts: FacilityContact[], primaryFacilityProducts: FacilityProduct[], streamDetails: SourceStreamDetail[]): void`, exported, called from the `export-ead.xlsx` route alongside `fillCoreSheets`/`fillRemainingSheets`.
+- Consumes: `storage.getFacilityIdentifier(organizationId, facilityId): Promise<FacilityIdentifier | undefined>`, `storage.listFacilityContacts(organizationId, facilityId): Promise<FacilityContact[]>`, `storage.listFacilityProducts(organizationId, facilityId): Promise<FacilityProduct[]>` (all confirmed real signatures, `server/storage.ts:271-284`) -- all called for the one `facilityId` this export is now scoped to, no more ambiguity about which facility. Also consumes `SourceStreamDetail[]` (unchanged) for the Emission Source table, same array `fillRemainingSheets` already receives (now itself already facility-filtered, per the route change above).
+- Produces: `fillFacilityDescriptionSheets(wb: XLSX.WorkBook, facility: Facility, facilityIdentifier: FacilityIdentifier | undefined, facilityContacts: FacilityContact[], facilityProducts: FacilityProduct[], streamDetails: SourceStreamDetail[]): void`, exported, called from the facility-scoped `export-ead.xlsx` route alongside `fillCoreSheets`/`fillRemainingSheets`.
+
+**Full function body** (add to `server/utils/ead-template-fill.ts`, alongside a new exported `PRODUCT_ROW_CAPACITY = 10` constant next to the existing capacity constants):
+
+```ts
+// 2c2_Facility Description's Product table has exactly 10 pre-labeled
+// rows (P01-P10, rows 17-26) -- confirmed by direct read, row 27
+// transitions to an unrelated "Estimated annual emissions" narrative
+// section with zero buffer, same pattern as every other capped sheet
+// in this file.
+export const PRODUCT_ROW_CAPACITY = 10;
+
+export function fillFacilityDescriptionSheets(
+  wb: XLSX.WorkBook,
+  facility: { id: number; name: string },
+  facilityIdentifier: FacilityIdentifier | undefined,
+  facilityContacts: FacilityContact[],
+  facilityProducts: FacilityProduct[],
+  streamDetails: SourceStreamDetail[],
+): void {
+  // 2c1_ Identifiers: facility info (rows 5-11, all verified answer
+  // cells are column H even where -- unlike every other row here -- H6/
+  // H8 aren't part of a <mergeCell>, confirmed via raw OOXML), the
+  // description (C16), and the primary/alternative contact blocks
+  // (rows 30-44). This sheet ships with no illustrative content at all
+  // (confirmed directly) -- nothing to clear here, only to fill.
+  const idSheet = wb.Sheets["2c1_ Identifiers"];
+  if (idSheet) {
+    writeIfNotFormula(idSheet, "H5", { t: "s", v: facility.name });
+    if (facilityIdentifier?.groupParentEntity) {
+      writeIfNotFormula(idSheet, "H6", { t: "s", v: facilityIdentifier.groupParentEntity });
+    }
+    writeIfNotFormula(idSheet, "H7", { t: "s", v: facility.name });
+    if (facilityIdentifier?.economicLicenceNumber) {
+      writeIfNotFormula(idSheet, "H8", { t: "s", v: facilityIdentifier.economicLicenceNumber });
+    }
+    if (facilityIdentifier?.environmentalPermitNumber) {
+      writeIfNotFormula(idSheet, "H9", { t: "s", v: facilityIdentifier.environmentalPermitNumber });
+    }
+    if (facilityIdentifier?.address) {
+      writeIfNotFormula(idSheet, "H10", { t: "s", v: facilityIdentifier.address });
+    }
+    if (facilityIdentifier?.coordinatesLat != null && facilityIdentifier?.coordinatesLng != null) {
+      writeIfNotFormula(idSheet, "H11", { t: "s", v: `${facilityIdentifier.coordinatesLat}, ${facilityIdentifier.coordinatesLng}` });
+    }
+    if (facilityIdentifier?.activityDescription) {
+      writeIfNotFormula(idSheet, "C16", { t: "s", v: facilityIdentifier.activityDescription });
+    }
+
+    const primary = facilityContacts.find((c) => c.contactType === "primary");
+    if (primary) {
+      if (primary.title) writeIfNotFormula(idSheet, "H30", { t: "s", v: primary.title });
+      if (primary.firstName) writeIfNotFormula(idSheet, "H31", { t: "s", v: primary.firstName });
+      if (primary.surname) writeIfNotFormula(idSheet, "H32", { t: "s", v: primary.surname });
+      if (primary.jobTitle) writeIfNotFormula(idSheet, "H33", { t: "s", v: primary.jobTitle });
+      if (primary.organisationName) writeIfNotFormula(idSheet, "H34", { t: "s", v: primary.organisationName });
+      if (primary.phone) writeIfNotFormula(idSheet, "H35", { t: "s", v: primary.phone });
+      if (primary.email) writeIfNotFormula(idSheet, "H36", { t: "s", v: primary.email });
+    }
+    const alternative = facilityContacts.find((c) => c.contactType === "alternative");
+    if (alternative) {
+      if (alternative.title) writeIfNotFormula(idSheet, "H38", { t: "s", v: alternative.title });
+      if (alternative.firstName) writeIfNotFormula(idSheet, "H39", { t: "s", v: alternative.firstName });
+      if (alternative.surname) writeIfNotFormula(idSheet, "H40", { t: "s", v: alternative.surname });
+      if (alternative.jobTitle) writeIfNotFormula(idSheet, "H41", { t: "s", v: alternative.jobTitle });
+      if (alternative.organisationName) writeIfNotFormula(idSheet, "H42", { t: "s", v: alternative.organisationName });
+      if (alternative.phone) writeIfNotFormula(idSheet, "H43", { t: "s", v: alternative.phone });
+      if (alternative.email) writeIfNotFormula(idSheet, "H44", { t: "s", v: alternative.email });
+    }
+  }
+
+  const descSheet = wb.Sheets["2c2_Facility Description"];
+  if (descSheet) {
+    // Product table (header row 16, data rows 17-26, P01-P10).
+    facilityProducts.slice(0, PRODUCT_ROW_CAPACITY).forEach((p, i) => {
+      const row = 17 + i;
+      if (p.productCategory) writeIfNotFormula(descSheet, `D${row}`, { t: "s", v: p.productCategory });
+      if (p.productionTechnology) writeIfNotFormula(descSheet, `E${row}`, { t: "s", v: p.productionTechnology });
+      writeIfNotFormula(descSheet, `G${row}`, { t: "b", v: p.energyRelatedEmissions ?? false });
+      writeIfNotFormula(descSheet, `H${row}`, { t: "b", v: p.processEmissions ?? false });
+      if (p.productionCapacity != null) writeIfNotFormula(descSheet, `I${row}`, { t: "n", v: Number(p.productionCapacity) });
+      if (p.productionCapacityUnit) writeIfNotFormula(descSheet, `J${row}`, { t: "s", v: p.productionCapacityUnit });
+      if (p.actualProduction != null) writeIfNotFormula(descSheet, `K${row}`, { t: "n", v: Number(p.actualProduction) });
+      if (p.actualProductionUnit) writeIfNotFormula(descSheet, `L${row}`, { t: "s", v: p.actualProductionUnit });
+    });
+
+    // Emission Source table (header row 42, data rows 43-67, S01-S25).
+    // Same measurement-tier streams, same array index, as
+    // fillRemainingSheets' 3e1 loop -- S01 in this table lines up
+    // positionally with S01 in 3e1. This is the actual fix for I4:
+    // 3e1!C9:C33's own formulas read directly from this table's G
+    // column (confirmed: 3e1!C9.f === "'2c2_Facility Description'!G43"),
+    // so filling G here is what makes 3e1's "Total emissions" figures
+    // resolve to real numbers instead of 0 or a fabricated value.
+    const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
+    measurementStreams.forEach((s, i) => {
+      const row = 43 + i;
+      writeIfNotFormula(descSheet, `D${row}`, { t: "s", v: s.description ?? s.name });
+      writeIfNotFormula(descSheet, `G${row}`, { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 });
+      // E (Associated Product ID), F (Types of GHGs emitted), H (Energy
+      // related emissions?), I (Process emissions?) are never written --
+      // no foreign key links a source stream to a facilityProducts row
+      // in this schema, so any value here would be fabricated. Genuine,
+      // disclosed gap -- matches the client-facing help text already
+      // shipped (commit 3b3d695).
+    });
+  }
+}
+```
+
+Requires a new import in `server/utils/ead-template-fill.ts`: `import type { FacilityIdentifier, FacilityContact, FacilityProduct } from "@shared/schema";` (alongside the existing `MethaneReport, MitigationMeasure, ManagementQaRecord` type import).
 
 ### Verified addresses
 
-**`2c1_ Identifiers` (facility info, rows 5-11)** -- confirmed via raw OOXML that `H6`/`H8` are real, distinctly-styled cells even though (unlike every other row here) they aren't part of a `<mergeCell>` -- same answer column as every other row, not an exception:
+**`2c1_ Identifiers` (facility info, rows 5-11)** -- confirmed via raw OOXML that `H6`/`H8` are real, distinctly-styled cells even though (unlike every other row here) they aren't part of a `<mergeCell>` -- same answer column as every other row, not an exception. `H5`/`H6`/`H7` mappings below are sourced from EAD's own defined terms (`Facility`/`Operator`, cited above), confirmed with the user directly (facility = one trade license = the Operator with operational control):
 | Row | Field | Source |
 |---|---|---|
-| H5 | Entity/Company name | `report.reportingEntity.name` |
-| H6 | Group/Parent Entity | **UNFILLED -- decision (2) above** |
-| H7 | Facility Name (per Environmental Permit) | `facility.name` (best-effort -- may differ from the literal permit name) |
+| H5 | Entity/Company name (the Operator) | `facility.name` -- the trade-license-holding entity with operational control of this specific facility, per EAD's own "Operator" definition and the user's confirmation that facility = trade license in how this platform is used |
+| H6 | Group/Parent Entity (if Applicable) | `identifier?.groupParentEntity` -- an existing field, purpose-built for exactly this (`shared/schema.ts:635`, comment already reads "per 2c1_Identifiers") |
+| H7 | Facility Name (as stated in the Environmental Permit) | `facility.name` -- same field as H5; the schema doesn't distinguish "operator/entity name" from "site/permit name" as two separate concepts, so both draw from the one available name. Disclosed as a simplification, not a fabrication -- in practice these are frequently the same name for a single-facility trade license anyway |
 | H8 | Economic Licence Number | `identifier?.economicLicenceNumber` |
 | H9 | Environmental Permit Number | `identifier?.environmentalPermitNumber` |
 | H10 | Facility Address | `identifier?.address` |
@@ -1720,12 +2025,19 @@ to:
   ["2c2_Facility Description", "I43"],
 ```
 
-### Live verification (Step-by-step, required before this task can be marked complete)
+- [ ] **Step: Run `npm run check`**
+- [ ] **Step: Live-verify**
 
-1. `npm run check` clean.
-2. Fill with real `facilityIdentifiers`/`facilityContacts`/`facilityProducts`/`SourceStreamDetail` records (create via the real HTTP API -- all 3 tables already have working routes: `PUT /api/facilities/:facilityId/identifier`-style and `POST /api/facility-contacts`/`POST /api/facility-products` -- **confirm the exact real route paths and HTTP verbs directly against `server/routes.ts` before writing the verification script; do not assume from this plan's paraphrase**).
-3. Download a real `export-ead.xlsx`, **unzip it and read the raw XML** (per this stage's established verification requirement -- SheetJS read-back cannot be trusted for this class of check). Confirm: `2c1!H5` contains the real entity name; `2c1!H6` is genuinely empty (decision 2 unresolved); `2c1!C16` contains the real description; `2c1!H30`-`H36` contain the real primary contact; `2c2!D17` contains the real product category (not `"Refinery products"`); `2c2!D43` contains the real emission-source description (not `"x"`); `2c2!G43` contains the real `estimatedAnnualEmissionsTco2e` value (not `100000`); **and, critically, `3e1!C9` (a formula cell, `='2c2_Facility Description'!G43`) now resolves to that same real number** -- this is the actual proof I4 is fixed, not just that `2c2!G43` itself looks right.
-4. Confirm `3e1!D9` now holds materiality (e.g. `"Major"`), not a raw quantity number, and that `3e1!E9` is untouched (still whatever it was before -- the template's own `"Illustrative"` text, since `clearIllustrativeRows` was never told to touch it either).
-5. Commit.
+1. Fill with real `facilityIdentifiers`/`facilityContacts`/`facilityProducts`/`SourceStreamDetail` records (create via the real HTTP API -- all 3 tables already have working routes: `PUT /api/facilities/:facilityId/identifier`, `POST /api/facilities/:facilityId/contacts`, `POST /api/facilities/:facilityId/products`, confirmed real paths at `server/routes.ts:1268/1297/1341`).
+2. Download a real facility-scoped `export-ead.xlsx` (Task 10's route), **unzip it and read the raw XML** (per this stage's established verification requirement -- SheetJS read-back cannot be trusted for this class of check). Confirm: `2c1!H5` and `H7` both contain the real facility name (same field, same value, per the disclosed H5/H7 simplification above); `2c1!H6` contains the real `groupParentEntity` value when set; `2c1!C16` contains the real description; `2c1!H30`-`H36` contain the real primary contact; `2c2!D17` contains the real product category (not `"Refinery products"`); `2c2!D43` contains the real emission-source description (not `"x"`); `2c2!G43` contains the real `estimatedAnnualEmissionsTco2e` value (not `100000`); **and, critically, `3e1!C9` (a formula cell, `='2c2_Facility Description'!G43`) now resolves to that same real number** -- this is the actual proof I4 is fixed, not just that `2c2!G43` itself looks right.
+3. Confirm `3e1!D9` now holds materiality (e.g. `"Major"`), not a raw quantity number, and that `3e1!E9` is untouched (still whatever it was before -- the template's own `"Illustrative"` text, since `clearIllustrativeRows` was never told to touch it either).
+4. Confirm `4I`/`4h` genuinely ship blank (per Task 10's `managementQaRecords`/`verificationFindings` finding) -- not an oversight to flag, the expected and correct result until that schema work happens separately.
 
-**Not dispatching this task until decisions (1) and (2) above are confirmed.**
+- [ ] **Step: Commit**
+
+```bash
+git add server/utils/ead-template-fill.ts server/routes.ts
+git commit -m "Fill 2c1/2c2 facility-identity sheets from existing schema, fix 3e1's wrong columns (I4+I6)"
+```
+
+All decisions this task depended on are now resolved and cited above -- ready to dispatch.
