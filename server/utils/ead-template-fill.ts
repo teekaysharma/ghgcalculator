@@ -236,8 +236,19 @@ export function clearIllustrativeRows(wb: ExcelJS.Workbook): void {
       // fullCalcOnLoad, which -- unlike under SheetJS -- now genuinely
       // round-trips into the saved file, telling Excel to recalculate on
       // open as a second layer of protection for Excel specifically.
-      const formula = (cell.value as { formula: string }).formula;
-      cell.value = { formula, result: undefined };
+      const formulaValue = cell.value as { formula?: string; sharedFormula?: string };
+      if (!formulaValue.formula) {
+        // Shared-formula child (has .sharedFormula instead of its own
+        // .formula string, e.g. 3d1!B43 -- confirmed via direct testing).
+        // Cannot safely extract a formula string to preserve here, so
+        // leave the cell completely alone rather than risk corrupting it
+        // -- same treatment as any formula this code doesn't understand
+        // how to touch. Not a live case today (none of the addresses
+        // above hit one), but the template has 50 shared formulas and
+        // this guard costs nothing.
+        continue;
+      }
+      cell.value = { formula: formulaValue.formula, result: undefined };
       continue;
     }
     cell.value = null;
@@ -439,8 +450,16 @@ export function fillRemainingSheets(
   const measureSheet = wb.getWorksheet("3e2_MeasurementBasedApproaches");
   if (measureSheet && measurementStreams.length > 0) {
     const first = measurementStreams[0].measurementApproach;
-    writeIfNotFormula(measureSheet, "C6", first?.measurementMethod ?? "");
-    writeIfNotFormula(measureSheet, "C8", first?.monitoringFrequency ?? "");
+    // Verified directly against the real template (Task 14): the
+    // instructional text at C6/C8 (merge master B6:L6 / B8:L8) is the
+    // template's own guidance, not a data-entry cell -- exceljs correctly
+    // redirects a write to a merge slave onto its master (SheetJS did
+    // not, so this write was simply invisible before, never destructive).
+    // The real, blank answer merge for each part sits one row below
+    // (B7:L7 / B9:K16 -- rows 10-15 are merge slaves of row 9, one large
+    // answer box), confirmed isMaster and value === null before writing.
+    writeIfNotFormula(measureSheet, "B7", first?.measurementMethod ?? "");
+    writeIfNotFormula(measureSheet, "B9", first?.monitoringFrequency ?? "");
   }
 
   // 3f_Fallback Approach -- one description per workbook (the template has
@@ -450,8 +469,11 @@ export function fillRemainingSheets(
   const fallbackStreams = streamDetails.filter((s) => s.approachTier === "fallback");
   const fallbackSheet = wb.getWorksheet("3f_Fallback Approach");
   if (fallbackSheet && fallbackStreams.length > 0) {
-    writeIfNotFormula(fallbackSheet, "C8", fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "");
-    writeIfNotFormula(fallbackSheet, "C20", fallbackStreams[0].fallbackApproach?.justification ?? "");
+    // Same fix, same reasoning as 3e2 above (Task 14) -- B9/B21 are the
+    // real blank answer merges one row below each instruction (B8:L8 /
+    // B20:L20).
+    writeIfNotFormula(fallbackSheet, "B9", fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "");
+    writeIfNotFormula(fallbackSheet, "B21", fallbackStreams[0].fallbackApproach?.justification ?? "");
   }
 
   // 3g_Methane -- facility-wide, per the schema comment on methaneReports
@@ -463,9 +485,13 @@ export function fillRemainingSheets(
   const methaneSheet = wb.getWorksheet("3g_Methane");
   if (methaneSheet && methaneReports.length > 0) {
     const m = methaneReports[0];
-    writeIfNotFormula(methaneSheet, "C9", m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0);
-    writeIfNotFormula(methaneSheet, "C10", m.quantificationMethod ?? "");
-    writeIfNotFormula(methaneSheet, "C13", m.methaneSourcesDescription ?? "");
+    // 3g's layout is NOT "one row below" like 3e2/3f (Task 14) -- verified
+    // directly: each instruction/answer pair sits side by side on the
+    // SAME row, label in B{row}:D{row}, a separate blank answer merge in
+    // E{row}:L{row}.
+    writeIfNotFormula(methaneSheet, "E9", m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0);
+    writeIfNotFormula(methaneSheet, "E10", m.quantificationMethod ?? "");
+    writeIfNotFormula(methaneSheet, "E13", m.methaneSourcesDescription ?? "");
   }
 
   // 4I - Management & QA -- the template wants three distinct narrative
