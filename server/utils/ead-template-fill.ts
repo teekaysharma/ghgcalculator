@@ -1,0 +1,657 @@
+// server/utils/ead-template-fill.ts
+//
+// Fills the real, official EAD Deliverable C Template with this
+// platform's data. Never touches the template's own formulas or
+// structure -- only writes to confirmed data-entry cells, and always
+// clears the template's own illustrative example data first. See
+// docs/superpowers/specs/2026-08-15-excel-verifier-export-design.md
+// for the full list of findings this module's design is based on
+// (fixed row capacity, illustrative rows, intra-template formulas, the
+// Product -> Emission Source -> Source Stream hierarchy gap).
+//
+// MIGRATED from SheetJS (`xlsx`) to `exceljs` (Task 13) -- SheetJS
+// Community Edition silently strips a real template's data validation,
+// conditional formatting, and most cell styling on write (confirmed:
+// 0/13 dropdowns, 0/104 conditional formats, 98.7% of styles.xml bytes
+// lost). exceljs preserves all of that (confirmed via a real round-trip
+// spike against this exact template before migrating: conditional
+// formatting 52/52, data validation coverage 6/6, drawings 13/13, 89%
+// of style bytes retained). Every cell address, field mapping, and
+// business rule below is UNCHANGED from the SheetJS version -- only the
+// low-level read/write API calls translate. See the plan's Task 13 for
+// the full, empirically-confirmed translation table.
+
+import ExcelJS from "exceljs";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import type { SourceStreamDetail } from "../storage";
+import type { MethaneReport, MitigationMeasure, ManagementQaRecord, FacilityIdentifier, FacilityContact, FacilityProduct } from "@shared/schema";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// TEMPLATE_PATH must resolve correctly under both `npm run dev` (tsx runs
+// this file directly from server/utils/, so __dirname = server/utils/ and
+// "../assets" reaches server/assets/) and the production build (esbuild
+// bundles this whole module into dist/index.js, so __dirname = dist/ at
+// runtime -- server/vite.ts:69 already establishes this exact fact for
+// dist/public). Since the two environments have different directory
+// depths relative to the repo root, a single relative path cannot work in
+// both -- try the dev-relative location first, then the prod-relative one
+// (populated by the build's `cp server/assets dist/assets` step added
+// alongside this fix), and fail loudly and specifically if neither exists,
+// matching the existing convention at server/vite.ts:69-75 rather than
+// letting a bare ENOENT reach the client (see Task 9's I7 fix for the
+// route-level catch that turns this into a clean 500 either way).
+function resolveTemplatePath(): string {
+  const devPath = path.join(__dirname, "..", "assets", "ead-deliverable-c-template.xlsx");
+  if (fs.existsSync(devPath)) return devPath;
+  const prodPath = path.join(__dirname, "assets", "ead-deliverable-c-template.xlsx");
+  if (fs.existsSync(prodPath)) return prodPath;
+  throw new Error(
+    `Could not find the EAD template at ${devPath} or ${prodPath}. In production, make sure the build step copies server/assets/ into dist/assets/ (see package.json's "build" script).`,
+  );
+}
+
+// Cached across calls -- the template is a static 400KB+ asset read from
+// disk and re-parsed on every single export request otherwise. Caching
+// the raw BUFFER (not the parsed workbook -- the fill functions mutate
+// their workbook in place, so a cached parsed workbook would leak state
+// between requests) still avoids the disk read and lets exceljs do a
+// fresh parse into an isolated object per call.
+let cachedTemplateBuffer: Buffer | null = null;
+
+export async function loadEadTemplate(): Promise<ExcelJS.Workbook> {
+  if (!cachedTemplateBuffer) {
+    cachedTemplateBuffer = fs.readFileSync(resolveTemplatePath());
+  }
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(cachedTemplateBuffer);
+  return wb;
+}
+
+// Cells confirmed by direct inspection to contain the template's own
+// fabricated illustrative example data (not real data, not formulas) --
+// each must be cleared before writing real data over it. Listed as
+// [sheetName, cellAddress] pairs. Deliberately explicit and enumerated
+// rather than pattern-matched (e.g. "clear anything in row 8") -- some
+// rows mix a real formula-linked cell with an illustrative one, and an
+// address-based approach avoids ever guessing.
+// CORRECTED 2026-08-15, mid-implementation: the addresses originally in
+// this list were derived from a sheet_to_json dump that used
+// `blankrows: false`, which silently drops blank separator rows and
+// shifts every subsequent array index relative to the real Excel row
+// number -- the drift compounds with each blank row skipped (up to 11
+// rows off in the worst case, in 2c2_Facility Description's emission
+// source table). Caught when Task 4's implementer's own live-verification
+// found a listed address (C9 in 3d1) unexpectedly carrying a formula --
+// investigation traced it to a header cell, not the illustrative "F01"
+// example row, which is actually one row lower (C10). All addresses below
+// were re-derived from a direct, un-skipped row dump (no blankrows
+// option) and cross-checked against individually-probed cell reads.
+const ILLUSTRATIVE_CELLS: [string, string][] = [
+  // 3d1_Source Streams (Calculated): table 1 header row 9, F01 example at
+  // row 10; table 2 header row 40, F01 example at row 41.
+  ["3d1_Source Streams (Calculated)", "C10"],
+  ["3d1_Source Streams (Calculated)", "E10"],
+  ["3d1_Source Streams (Calculated)", "F10"],
+  ["3d1_Source Streams (Calculated)", "G10"],
+  ["3d1_Source Streams (Calculated)", "C41"],
+  ["3d1_Source Streams (Calculated)", "D41"],
+  ["3d1_Source Streams (Calculated)", "E41"],
+  ["3d1_Source Streams (Calculated)", "F41"],
+  ["3d1_Source Streams (Calculated)", "G41"],
+  ["3d1_Source Streams (Calculated)", "H41"],
+  // 3d2_Calculation Approaches: Fuel table header row 24, F01/"Natural gas"
+  // example at row 25 -- the only sub-table this plan's fill logic
+  // actually writes to (see Task 5). The sheet also has a separate
+  // "Other inputs/outputs" table (a "Crude oil" example) and a
+  // measurement-instrument specification table further down, neither of
+  // which this implementation fills or clears -- their illustrative
+  // content is a disclosed, out-of-scope gap, not silently missed: no
+  // real data is ever written into those cells either, so nothing here
+  // contradicts the "clear before writing real data" rule, which only
+  // binds cells this fill logic actually populates.
+  ["3d2_ Calculation Approaches", "C25"],
+  ["3d2_ Calculation Approaches", "D25"],
+  ["3d2_ Calculation Approaches", "E25"],
+  ["3d2_ Calculation Approaches", "F25"],
+  // 3e1_Emission Sources (Measured): table 1 header row 8, S01 example at
+  // row 9; table 2 header row 39, S01 example at row 40.
+  ["3e1_Emission Sources (Measured)", "C9"],
+  ["3e1_Emission Sources (Measured)", "D9"],
+  ["3e1_Emission Sources (Measured)", "C40"],
+  ["3e1_Emission Sources (Measured)", "D40"],
+  ["3e1_Emission Sources (Measured)", "E40"],
+  ["3e1_Emission Sources (Measured)", "F40"],
+  ["3e1_Emission Sources (Measured)", "G40"],
+  // ADDED after Task 5's review surfaced a real gap: 2c2_Facility
+  // Description's own source-stream activity table (header row 74,
+  // columns C/G/H = Source Stream ID/level of activity/units), whose
+  // G/H values at row 75 are what 3d2_Calculation Approaches' D25/E25
+  // formulas (IFERROR(INDEX('2c2_Facility Description'!G$75:G$84,
+  // MATCH($B25,'2c2_Facility Description'!$C$75:$C$84,0)),"")) read.
+  // Per explicit instruction, this plan NEVER overwrites a template
+  // formula -- so D25/E25 (and every equivalent) are left alone, formula
+  // intact, in every fill task. That only produces a correct (blank)
+  // result if the value the formula's INDEX resolves to is actually
+  // cleared -- otherwise the untouched formula silently surfaces
+  // fabricated data through a cell that looks like a live lookup.
+  // VERIFIED DIRECTLY against the real template file (node + XLSX,
+  // cellFormula: true) before adding these addresses -- the only actual
+  // fabricated example VALUES in this table are G75=10000, H75="MWh".
+  // C75="F01" (and C76="F02" ... C90="F16") are NOT illustrative data --
+  // they are the template's own static row-ID scaffold that 3d1!B10 and
+  // 3e1!B9-equivalent cells formula-read from directly
+  // (3d1!B10.f === "'2c2_Facility Description'!C75"). Clearing C75 would
+  // have deleted a value a live formula elsewhere depends on -- a second,
+  // different way of "touching a formula" (breaking what it resolves to)
+  // that the "never overwrite a formula" rule equally forbids. Only the
+  // two fabricated values are listed below; the ID column is left
+  // completely untouched.
+  ["2c2_Facility Description", "G75"],
+  ["2c2_Facility Description", "H75"],
+  // 2c2_Facility Description Product table (header row 16): illustrative
+  // only at rows 17-18 (P01/P02), confirmed every other cell in this
+  // 10-row table already genuinely blank.
+  ["2c2_Facility Description", "D17"],
+  ["2c2_Facility Description", "D18"],
+  ["2c2_Facility Description", "G17"],
+  ["2c2_Facility Description", "G18"],
+  ["2c2_Facility Description", "H17"],
+  ["2c2_Facility Description", "H18"],
+  // 2c2_Facility Description Emission Source table (header row 42):
+  // column D has fabricated placeholder text in ALL 25 rows (43-67,
+  // unlike every other illustrative table in this file, which only
+  // fills its first row/first few rows) -- confirmed by direct read,
+  // not assumed from the row-17/18 pattern above.
+  ["2c2_Facility Description", "D43"], ["2c2_Facility Description", "D44"],
+  ["2c2_Facility Description", "D45"], ["2c2_Facility Description", "D46"],
+  ["2c2_Facility Description", "D47"], ["2c2_Facility Description", "D48"],
+  ["2c2_Facility Description", "D49"], ["2c2_Facility Description", "D50"],
+  ["2c2_Facility Description", "D51"], ["2c2_Facility Description", "D52"],
+  ["2c2_Facility Description", "D53"], ["2c2_Facility Description", "D54"],
+  ["2c2_Facility Description", "D55"], ["2c2_Facility Description", "D56"],
+  ["2c2_Facility Description", "D57"], ["2c2_Facility Description", "D58"],
+  ["2c2_Facility Description", "D59"], ["2c2_Facility Description", "D60"],
+  ["2c2_Facility Description", "D61"], ["2c2_Facility Description", "D62"],
+  ["2c2_Facility Description", "D63"], ["2c2_Facility Description", "D64"],
+  ["2c2_Facility Description", "D65"], ["2c2_Facility Description", "D66"],
+  ["2c2_Facility Description", "D67"],
+  // E43:E46 only (P01/P02/P03/P03) -- E47:E67 confirmed already blank.
+  ["2c2_Facility Description", "E43"],
+  ["2c2_Facility Description", "E44"],
+  ["2c2_Facility Description", "E45"],
+  ["2c2_Facility Description", "E46"],
+  // G43/H43/I43 only (row 1 of the table) -- rows 44-67 confirmed blank.
+  ["2c2_Facility Description", "G43"],
+  ["2c2_Facility Description", "H43"],
+  ["2c2_Facility Description", "I43"],
+];
+
+// Shared write guard for every fill function (Tasks 5 and 6): never
+// overwrite a cell that already carries a formula, full stop -- no
+// exceptions, per explicit instruction. Where the real template ships a
+// convenience/default formula in what is otherwise a labeled data-entry
+// cell (e.g. 3d2_Calculation Approaches' D/E columns), that cell is
+// simply left as-is; the real value is not written there. Any resulting
+// gap in the exported EAD file for that specific cell is a disclosed,
+// accepted limitation of the EAD-specific export -- the generic
+// ISO 14064-3 workbook (Task 3) is unaffected and always carries the
+// complete data regardless of what any individual EAD template cell
+// allows.
+function writeIfNotFormula(ws: ExcelJS.Worksheet, address: string, value: string | number | boolean): void {
+  const existing = ws.getCell(address);
+  if (existing.type === ExcelJS.ValueType.Formula) return;
+  existing.value = value;
+}
+
+// The schema stores materiality as lowercase ("major"/"minor" -- see
+// shared/schema.ts's materialityLevels), but the real template's own
+// illustrative example casing is Title Case ("Major") -- confirmed by
+// direct inspection of 3d1_Source Streams (Calculated)!F10/G10/D41 --
+// even though the row-8 instructional text itself reads lowercase
+// ("classify your source stream (into major, minor, de minimis)").
+// Title-case every write so the exported value matches the template's
+// own convention rather than the schema's raw storage casing.
+function titleCaseMateriality(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+export function clearIllustrativeRows(wb: ExcelJS.Workbook): void {
+  for (const [sheetName, address] of ILLUSTRATIVE_CELLS) {
+    const ws = wb.getWorksheet(sheetName);
+    if (!ws) continue;
+    const cell = ws.getCell(address);
+    if (cell.type === ExcelJS.ValueType.Formula) {
+      // Never touch the formula itself -- but the formula's stale cached
+      // result (computed once, when the template was authored, against
+      // its own fabricated example data) must not ship in the delivered
+      // file. Setting .value to { formula, result: undefined } leaves the
+      // formula intact with no cached result at all (confirmed via raw
+      // OOXML: produces a cell with <f> and no <v> element whatsoever).
+      // Also see loadEadTemplate/the export route for calcProperties.
+      // fullCalcOnLoad, which -- unlike under SheetJS -- now genuinely
+      // round-trips into the saved file, telling Excel to recalculate on
+      // open as a second layer of protection for Excel specifically.
+      const formulaValue = cell.value as { formula?: string; sharedFormula?: string };
+      if (!formulaValue.formula) {
+        // Shared-formula child (has .sharedFormula instead of its own
+        // .formula string, e.g. 3d1!B43 -- confirmed via direct testing).
+        // Cannot safely extract a formula string to preserve here, so
+        // leave the cell completely alone rather than risk corrupting it
+        // -- same treatment as any formula this code doesn't understand
+        // how to touch. Not a live case today (none of the addresses
+        // above hit one), but the template has 50 shared formulas and
+        // this guard costs nothing.
+        continue;
+      }
+      cell.value = { formula: formulaValue.formula, result: undefined };
+      continue;
+    }
+    cell.value = null;
+  }
+}
+
+// Row numbers below were re-derived directly (no blankrows-skipping) after
+// Task 4 caught the original derivation's drift -- see the comment above
+// ILLUSTRATIVE_CELLS for the root cause. 3d1_Source Streams (Calculated)
+// has exactly 25 pre-labeled rows (F01-F25): table 1 (description/
+// estimated-emissions/category) at Excel rows 10-34, table 2 (tier/
+// uncertainty) at rows 41-65. This is a hard limit in the official
+// template -- fill up to capacity, report how many were omitted so the
+// caller can warn.
+export const SOURCE_STREAM_ROW_CAPACITY = 25;
+
+export function fillCoreSheets(wb: ExcelJS.Workbook, streamDetails: SourceStreamDetail[]): { omittedCount: number } {
+  const calcStreams = streamDetails.filter((s) => s.approachTier === "calculation");
+  const omittedCount = Math.max(0, calcStreams.length - SOURCE_STREAM_ROW_CAPACITY);
+  const toFill = calcStreams.slice(0, SOURCE_STREAM_ROW_CAPACITY);
+
+  const streamSheet = wb.getWorksheet("3d1_Source Streams (Calculated)");
+  const approachSheet = wb.getWorksheet("3d2_ Calculation Approaches");
+  // Same missing-sheet guard as clearIllustrativeRows -- a template
+  // revision that renames or drops a sheet must not crash the export.
+  if (!streamSheet || !approachSheet) return { omittedCount };
+
+  toFill.forEach((s, i) => {
+    const row1 = 10 + i; // first table: description/estimated-emissions/category, rows 10-34
+    const row2 = 41 + i; // second table: tier/uncertainty, rows 41-65
+    const calc = s.calculationApproach;
+
+    // First table: Description, Estimated emissions, Selected category.
+    // Column B (source stream ID, F01/F02/...) is formula-linked back to
+    // 2c2_Facility Description and is never written here. Every write goes
+    // through writeIfNotFormula -- per the explicit rule that no cell
+    // carrying a formula is ever overwritten, even one that sits under the
+    // sheet's own labeled data-entry header (see ILLUSTRATIVE_CELLS
+    // comment for the 2c2!G75/H75 fix that keeps 3d2!D25/E25 correct
+    // *without* touching their formula).
+    writeIfNotFormula(streamSheet, `C${row1}`, s.description ?? s.name);
+    writeIfNotFormula(streamSheet, `E${row1}`, s.estimatedAnnualEmissionsTco2e ?? 0);
+    writeIfNotFormula(streamSheet, `F${row1}`, titleCaseMateriality(s.materiality));
+    writeIfNotFormula(streamSheet, `G${row1}`, titleCaseMateriality(s.materiality));
+
+    // Second table: Tier level, Category, Uncertainty, Fuel stream type,
+    // Source of accuracy. Column B is again formula-linked, not written.
+    writeIfNotFormula(streamSheet, `C${row2}`, calc?.activityDataTier ?? "");
+    writeIfNotFormula(streamSheet, `D${row2}`, titleCaseMateriality(s.materiality));
+    writeIfNotFormula(streamSheet, `F${row2}`, calc?.fuelOrMaterialType ?? "");
+    writeIfNotFormula(streamSheet, `G${row2}`, calc?.activityDataSource ?? "");
+
+    // 3d2_Calculation Approaches, "Fuel" sub-table: Fuel Type, Activity
+    // level, Unit, Source -- header at row 24, F01 example at row 25, so
+    // data rows are 25-49 (25-row capacity, same as above). This is the
+    // only sub-table of this sheet that gets filled -- see the comment
+    // above ILLUSTRATIVE_CELLS for the other two sub-tables this
+    // implementation deliberately doesn't touch. D{approachRow} and
+    // E{approachRow} carry a live IFERROR(INDEX(...)) lookup formula on
+    // every row, looking up against 2c2_Facility Description!$C$75:$C$84
+    // by source-stream ID (F01-F10) -- writeIfNotFormula leaves those
+    // alone. Only row 75 (F01) has real fabricated example values
+    // (G75=10000, H75="MWh"); rows 76-84 (F02-F10) were already blank in
+    // the real template, verified directly. ILLUSTRATIVE_CELLS clears
+    // G75/H75, so row i=0's untouched formula resolves to blank via
+    // IFERROR instead of leaking "10000"/"MWh"; every other row's formula
+    // was already blank-resolving with nothing to clear.
+    const approachRow = 25 + i;
+    writeIfNotFormula(approachSheet, `C${approachRow}`, calc?.fuelOrMaterialType ?? "");
+    writeIfNotFormula(approachSheet, `D${approachRow}`, calc?.activityDataValue ?? 0);
+    writeIfNotFormula(approachSheet, `E${approachRow}`, calc?.activityDataUnit ?? "");
+    writeIfNotFormula(approachSheet, `F${approachRow}`, calc?.activityDataSource ?? "");
+  });
+
+  return { omittedCount };
+}
+
+// 4h_Verification and Data Gaps has exactly 10 rows: header at row 19,
+// data gap 1 at row 20, data gap 10 at row 29.
+const DATA_GAP_ROW_CAPACITY = 10;
+
+export function fillDataGapsSheet(
+  wb: ExcelJS.Workbook,
+  gaps: { sourceStreamOrOtherId: string; from: string; until: string; description: string; estimatedEmissionsTco2e: number | null; source: string }[],
+): { omittedCount: number } {
+  const sheet = wb.getWorksheet("4h_Verification and Data Gaps");
+  if (!sheet) return { omittedCount: 0 };
+  const omittedCount = Math.max(0, gaps.length - DATA_GAP_ROW_CAPACITY);
+  const toFill = gaps.slice(0, DATA_GAP_ROW_CAPACITY);
+  toFill.forEach((g, i) => {
+    const row = 20 + i; // column B (row number 1-10) is a static label, not written
+    writeIfNotFormula(sheet, `C${row}`, g.sourceStreamOrOtherId);
+    writeIfNotFormula(sheet, `D${row}`, g.from);
+    writeIfNotFormula(sheet, `E${row}`, g.until);
+    writeIfNotFormula(sheet, `F${row}`, g.description);
+    writeIfNotFormula(sheet, `H${row}`, g.estimatedEmissionsTco2e ?? 0);
+    writeIfNotFormula(sheet, `J${row}`, g.source);
+  });
+  return { omittedCount };
+}
+
+// Task 6: remaining sheets (Emission Sources, Measurement/Fallback
+// narratives, Methane, Management & QA, Mitigation Measures). Best-effort
+// layer -- see the module-level comment above ILLUSTRATIVE_CELLS for the
+// Product -> Emission Source -> Source Stream hierarchy gap this
+// approximates (one measurement-tier source stream = one Emission Source
+// row, 1:1, rather than EAD's richer many-source-streams-per-source
+// grouping).
+//
+// Every address below was independently re-verified against the real
+// template file (direct cell reads plus merge inspection) before use, per
+// the same discipline Task 4/5 required after the blankrows-derivation
+// bug. Two real, verified defects were found and corrected here relative
+// to the task brief as originally drafted (not just re-confirmed, actually
+// wrong):
+//   1. "4I - Management & QA": the brief's B7/E7 (record 0) and D17/D23/
+//      D28/D33 (records 1/2) all target either a blank margin column (B,
+//      outside every merge) or the *label* half of a merged label/value
+//      pair (e.g. C17:D17 is one merged "Title of procedure" label cell;
+//      the value lives in the separate E17:L17 merge, anchored at E17 --
+//      confirmed by reading E17 back and finding the template's own real
+//      value "ETS QA/QC of MI" there, not at D17). Writing to the brief's
+//      original addresses would produce cells that are either genuinely
+//      blank in the rendered sheet or silently swallowed inside a merge
+//      Excel doesn't display (only a merge's top-left anchor cell
+//      renders). Corrected to the verified anchor cells: C7/F7, E17/E23,
+//      E28/E33.
+//   2. "4J - Mitigation Measures": the brief's G/I column assignment
+//      doesn't match the sheet's own row-5 header ("Start year" is G,
+//      "Status" is H; "Pre-measure reference (tCO2e/yr)" is I, "Reporting
+//      year reduction (tCO2e)" is J) -- confirmed by reading row 5 across
+//      all columns. Corrected `status` to H and `estimatedReductionTco2e`
+//      to J. The brief also capped the fill loop at 20 rows on the
+//      reasoning that "no explicit limit was observed in B1:P28" -- that
+//      reasoning doesn't hold: row 15 of the same sheet is the start of a
+//      *different* narrative sub-section ("J1: Additional information",
+//      confirmed by reading C15/C16 and by the C17:L25 merged blank
+//      answer cell that follows it), not more measure rows. The real,
+//      verified capacity for one-row-per-measure data is rows 7-14 (8
+//      rows) before that sub-section begins; capped accordingly below
+//      instead of 20 to avoid writing measure data into the "Additional
+//      information" section's cells.
+// Everything else below (3e1's row numbers/columns, and 3e2/3f/3g/4I's
+// row-17/23/28/33 placement, and the semantic field-to-column choices
+// throughout) matched the brief exactly on verification and is used
+// as-is. 3e2/3f/3g are narrative sections with no labeled data row to
+// verify against -- per the task's explicit instruction this is a
+// disclosed approximation, not something to "fix": their target cells are
+// used verbatim from the brief.
+export const MITIGATION_MEASURE_ROW_CAPACITY = 8;
+
+// 3e1_Emission Sources (Measured) shares 3d1's 25-row capacity (both
+// sheets have exactly 25 pre-labeled rows, S01-S25 / F01-F25). Previously
+// a bare literal with no disclosing comment and no omission count
+// surfaced anywhere -- unlike every other capacity limit in this file,
+// a boundary with more than 25 measurement-tier streams silently lost
+// data with no warning. See server/routes.ts's export-ead-check.json for
+// where this is now surfaced.
+export const MEASUREMENT_STREAM_ROW_CAPACITY = 25;
+
+export function fillRemainingSheets(
+  wb: ExcelJS.Workbook,
+  streamDetails: SourceStreamDetail[],
+  methaneReports: MethaneReport[],
+  mitigationMeasures: MitigationMeasure[],
+  managementQaRecords: ManagementQaRecord[],
+): void {
+  // 3e1_Emission Sources (Measured): best-effort, one row per
+  // measurement-tier source stream (see module comment above for why this
+  // is an approximation, not an exact hierarchy match). Table 1 header row
+  // 8, S01 example row 9 -> data rows 9-33 (25-row capacity, verified: row
+  // 33 is the last S25 row, row 35 starts table 2's own instructional
+  // text). Table 2 header row 39, S01 example row 40 -> data rows 40-64
+  // (row 64 is the last S25 row, row 67 is "* End of this worksheet *").
+  const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
+  const emissionSourceSheet = wb.getWorksheet("3e1_Emission Sources (Measured)");
+  if (emissionSourceSheet) {
+    measurementStreams.forEach((s, i) => {
+      const row1 = 9 + i;
+      const row2 = 40 + i;
+      // D8 header is "Category (see above)" -- materiality, not a raw
+      // measured quantity (I4 fix). E9's only content is the template's
+      // own static "Illustrative" label, not a real header -- E is never
+      // written here (was previously, incorrectly, getting materiality).
+      writeIfNotFormula(emissionSourceSheet, `D${row1}`, titleCaseMateriality(s.materiality));
+      writeIfNotFormula(emissionSourceSheet, `D${row2}`, titleCaseMateriality(s.materiality));
+      writeIfNotFormula(emissionSourceSheet, `F${row2}`, s.measurementApproach?.measurementMethod ?? "");
+      writeIfNotFormula(emissionSourceSheet, `G${row2}`, s.measurementApproach?.qaqcProcedure ?? "");
+    });
+  }
+
+  // 3e2_MeasurementBasedApproaches -- a narrative section, not a labeled
+  // table, so unlike the tabular sheets above there is no unambiguous "row
+  // N is the data row" marker to verify against. (a) description
+  // instructional text sits at row 5-6; the response goes directly below
+  // it. This mapping stays approximate by nature of the sheet's own
+  // design, disclosed as such rather than presented as precise (per task
+  // instruction, used verbatim from the brief -- not "fixed").
+  const measureSheet = wb.getWorksheet("3e2_MeasurementBasedApproaches");
+  if (measureSheet && measurementStreams.length > 0) {
+    const first = measurementStreams[0].measurementApproach;
+    // Verified directly against the real template (Task 14): the
+    // instructional text at C6/C8 (merge master B6:L6 / B8:L8) is the
+    // template's own guidance, not a data-entry cell -- exceljs correctly
+    // redirects a write to a merge slave onto its master (SheetJS did
+    // not, so this write was simply invisible before, never destructive).
+    // The real, blank answer merge for each part sits one row below
+    // (B7:L7 / B9:K15 -- rows 10-15 are merge slaves of row 9, one large
+    // answer box), confirmed isMaster and value === null before writing.
+    writeIfNotFormula(measureSheet, "B7", first?.measurementMethod ?? "");
+    writeIfNotFormula(measureSheet, "B9", first?.monitoringFrequency ?? "");
+  }
+
+  // 3f_Fallback Approach -- one description per workbook (the template has
+  // no per-source-stream fallback table, just one narrative section). (a)
+  // description instruction at row 7-8; (b) justification instruction at
+  // row 19-20. Same narrative-section caveat as above.
+  const fallbackStreams = streamDetails.filter((s) => s.approachTier === "fallback");
+  const fallbackSheet = wb.getWorksheet("3f_Fallback Approach");
+  if (fallbackSheet && fallbackStreams.length > 0) {
+    // Same fix, same reasoning as 3e2 above (Task 14) -- B9/B21 are the
+    // real blank answer merges one row below each instruction (B8:L8 /
+    // B20:L20).
+    writeIfNotFormula(fallbackSheet, "B9", fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "");
+    writeIfNotFormula(fallbackSheet, "B21", fallbackStreams[0].fallbackApproach?.justification ?? "");
+  }
+
+  // 3g_Methane -- facility-wide, per the schema comment on methaneReports
+  // ("EAD treats this as its own sheet, facility-wide rather than per
+  // source stream"). Uses the first report if more than one facility has
+  // one, since the template's Methane sheet is a single narrative section,
+  // not a per-facility table. (a) block spans rows 7-11, (b) block rows
+  // 12-14 -- another narrative section, approximate by nature.
+  const methaneSheet = wb.getWorksheet("3g_Methane");
+  if (methaneSheet && methaneReports.length > 0) {
+    const m = methaneReports[0];
+    // 3g's layout is NOT "one row below" like 3e2/3f (Task 14) -- verified
+    // directly: each instruction/answer pair sits side by side on the
+    // SAME row, label in B{row}:D{row}, a separate blank answer merge in
+    // E{row}:L{row}.
+    writeIfNotFormula(methaneSheet, "E9", m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0);
+    writeIfNotFormula(methaneSheet, "E10", m.quantificationMethod ?? "");
+    writeIfNotFormula(methaneSheet, "E13", m.methaneSourcesDescription ?? "");
+  }
+
+  // 4I - Management & QA -- the template wants three distinct narrative
+  // sections (monitoring responsibility, QA procedure, data validation
+  // procedure); this platform has one flat managementQaRecords list. Best
+  // effort: first record -> Management responsibility table (real tabular
+  // row, header at row 6, the one pre-filled example at row 7 -- the
+  // actual data row to write, not the header; verified real columns are
+  // C="Job title / post" and F="Responsibilities", both merged-cell
+  // anchors -- C6:E6/C7:E7 and F6:L6/F7:L7 -- so C/F are the only cells
+  // that render, not the brief's original B/E), second (if present) -> QA
+  // procedure narrative (title row 17, description rows 20-22 [not
+  // written -- only title+department are captured, matching the brief's
+  // 2-field-to-3-slot design choice], responsible-department row 23;
+  // verified real value column is E, the anchor of the E:L merge -- D is
+  // part of the separate C:D label merge and never renders), third (if
+  // present) -> Data Validation narrative (title row 28, department row
+  // 33, same E-column correction). Any beyond the third are not
+  // represented on this sheet -- they remain fully visible in the generic
+  // workbook.
+  const qaSheet = wb.getWorksheet("4I - Management & QA");
+  if (qaSheet && managementQaRecords[0]) {
+    writeIfNotFormula(qaSheet, "C7", managementQaRecords[0].responsiblePerson ?? "");
+    writeIfNotFormula(qaSheet, "F7", managementQaRecords[0].qaProcedureDescription ?? "");
+  }
+  if (qaSheet && managementQaRecords[1]) {
+    writeIfNotFormula(qaSheet, "E17", managementQaRecords[1].qaProcedureDescription ?? "");
+    writeIfNotFormula(qaSheet, "E23", managementQaRecords[1].responsiblePerson ?? "");
+  }
+  if (qaSheet && managementQaRecords[2]) {
+    writeIfNotFormula(qaSheet, "E28", managementQaRecords[2].qaProcedureDescription ?? "");
+    writeIfNotFormula(qaSheet, "E33", managementQaRecords[2].responsiblePerson ?? "");
+  }
+
+  // 4J - Mitigation Measures -- one row per measure. Header at row 5,
+  // format-guide row at row 6, real data rows 7-14 (verified: row 15 is
+  // the start of a *different* sub-section, "J1: Additional information",
+  // not more measure rows -- an 8-row capacity, not the originally
+  // assumed 20). Columns verified against row 5's own header: C=
+  // "Description of measure", H="Status" (not G, which is "Start year"),
+  // J="Reporting year reduction (tCO2e)" (not I, which is "Pre-measure
+  // reference (tCO2e/yr)").
+  const measuresSheet = wb.getWorksheet("4J - Mitigation Measures");
+  if (measuresSheet) {
+    mitigationMeasures.slice(0, MITIGATION_MEASURE_ROW_CAPACITY).forEach((m, i) => {
+      const row = 7 + i;
+      writeIfNotFormula(measuresSheet, `C${row}`, m.measureDescription);
+      writeIfNotFormula(measuresSheet, `H${row}`, m.status);
+      writeIfNotFormula(measuresSheet, `J${row}`, m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0);
+    });
+  }
+}
+
+// 2c2_Facility Description's Product table has exactly 10 pre-labeled
+// rows (P01-P10, rows 17-26) -- confirmed by direct read, row 27
+// transitions to an unrelated "Estimated annual emissions" narrative
+// section with zero buffer, same pattern as every other capped sheet
+// in this file.
+export const PRODUCT_ROW_CAPACITY = 10;
+
+// Task 11: 2c1_Identifiers/2c2_Facility Description's facility-identity
+// data (previously never filled by any prior task -- the ROOT CAUSE of
+// 3e1's I4 bug: 3e1's "Total emissions" column is a formula reading from
+// 2c2!G43:G67, which nothing had ever written to, so every measured
+// emission source always reported 0 or the template's own fabricated
+// 100000). See task-11-brief.md for the full cell-by-cell verification
+// this function's addresses are based on.
+export function fillFacilityDescriptionSheets(
+  wb: ExcelJS.Workbook,
+  facility: { id: number; name: string },
+  facilityIdentifier: FacilityIdentifier | undefined,
+  facilityContacts: FacilityContact[],
+  facilityProducts: FacilityProduct[],
+  streamDetails: SourceStreamDetail[],
+): void {
+  // 2c1_ Identifiers: facility info (rows 5-11, all verified answer
+  // cells are column H even where -- unlike every other row here -- H6/
+  // H8 aren't part of a merged range, confirmed via raw OOXML), the
+  // description (C16), and the primary/alternative contact blocks
+  // (rows 30-44). This sheet ships with no illustrative content at all
+  // (confirmed directly) -- nothing to clear here, only to fill.
+  const idSheet = wb.getWorksheet("2c1_ Identifiers");
+  if (idSheet) {
+    writeIfNotFormula(idSheet, "H5", facility.name);
+    if (facilityIdentifier?.groupParentEntity) {
+      writeIfNotFormula(idSheet, "H6", facilityIdentifier.groupParentEntity);
+    }
+    writeIfNotFormula(idSheet, "H7", facility.name);
+    if (facilityIdentifier?.economicLicenceNumber) {
+      writeIfNotFormula(idSheet, "H8", facilityIdentifier.economicLicenceNumber);
+    }
+    if (facilityIdentifier?.environmentalPermitNumber) {
+      writeIfNotFormula(idSheet, "H9", facilityIdentifier.environmentalPermitNumber);
+    }
+    if (facilityIdentifier?.address) {
+      writeIfNotFormula(idSheet, "H10", facilityIdentifier.address);
+    }
+    if (facilityIdentifier?.coordinatesLat != null && facilityIdentifier?.coordinatesLng != null) {
+      writeIfNotFormula(idSheet, "H11", `${facilityIdentifier.coordinatesLat}, ${facilityIdentifier.coordinatesLng}`);
+    }
+    if (facilityIdentifier?.activityDescription) {
+      writeIfNotFormula(idSheet, "C16", facilityIdentifier.activityDescription);
+    }
+
+    const primary = facilityContacts.find((c) => c.contactType === "primary");
+    if (primary) {
+      if (primary.title) writeIfNotFormula(idSheet, "H30", primary.title);
+      if (primary.firstName) writeIfNotFormula(idSheet, "H31", primary.firstName);
+      if (primary.surname) writeIfNotFormula(idSheet, "H32", primary.surname);
+      if (primary.jobTitle) writeIfNotFormula(idSheet, "H33", primary.jobTitle);
+      if (primary.organisationName) writeIfNotFormula(idSheet, "H34", primary.organisationName);
+      if (primary.phone) writeIfNotFormula(idSheet, "H35", primary.phone);
+      if (primary.email) writeIfNotFormula(idSheet, "H36", primary.email);
+    }
+    const alternative = facilityContacts.find((c) => c.contactType === "alternative");
+    if (alternative) {
+      if (alternative.title) writeIfNotFormula(idSheet, "H38", alternative.title);
+      if (alternative.firstName) writeIfNotFormula(idSheet, "H39", alternative.firstName);
+      if (alternative.surname) writeIfNotFormula(idSheet, "H40", alternative.surname);
+      if (alternative.jobTitle) writeIfNotFormula(idSheet, "H41", alternative.jobTitle);
+      if (alternative.organisationName) writeIfNotFormula(idSheet, "H42", alternative.organisationName);
+      if (alternative.phone) writeIfNotFormula(idSheet, "H43", alternative.phone);
+      if (alternative.email) writeIfNotFormula(idSheet, "H44", alternative.email);
+    }
+  }
+
+  const descSheet = wb.getWorksheet("2c2_Facility Description");
+  if (descSheet) {
+    // Product table (header row 16, data rows 17-26, P01-P10).
+    facilityProducts.slice(0, PRODUCT_ROW_CAPACITY).forEach((p, i) => {
+      const row = 17 + i;
+      if (p.productCategory) writeIfNotFormula(descSheet, `D${row}`, p.productCategory);
+      if (p.productionTechnology) writeIfNotFormula(descSheet, `E${row}`, p.productionTechnology);
+      writeIfNotFormula(descSheet, `G${row}`, p.energyRelatedEmissions ?? false);
+      writeIfNotFormula(descSheet, `H${row}`, p.processEmissions ?? false);
+      if (p.productionCapacity != null) writeIfNotFormula(descSheet, `I${row}`, Number(p.productionCapacity));
+      if (p.productionCapacityUnit) writeIfNotFormula(descSheet, `J${row}`, p.productionCapacityUnit);
+      if (p.actualProduction != null) writeIfNotFormula(descSheet, `K${row}`, Number(p.actualProduction));
+      if (p.actualProductionUnit) writeIfNotFormula(descSheet, `L${row}`, p.actualProductionUnit);
+    });
+
+    // Emission Source table (header row 42, data rows 43-67, S01-S25).
+    // Same measurement-tier streams, same array index, as
+    // fillRemainingSheets' 3e1 loop -- S01 in this table lines up
+    // positionally with S01 in 3e1. This is the actual fix for I4:
+    // 3e1!C9:C33's own formulas read directly from this table's G
+    // column (confirmed: 3e1!C9.f === "'2c2_Facility Description'!G43"),
+    // so filling G here is what makes 3e1's "Total emissions" figures
+    // resolve to real numbers instead of 0 or a fabricated value.
+    const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
+    measurementStreams.forEach((s, i) => {
+      const row = 43 + i;
+      writeIfNotFormula(descSheet, `D${row}`, s.description ?? s.name);
+      writeIfNotFormula(descSheet, `G${row}`, s.estimatedAnnualEmissionsTco2e ?? 0);
+      // E (Associated Product ID), F (Types of GHGs emitted), H (Energy
+      // related emissions?), I (Process emissions?) are never written --
+      // no foreign key links a source stream to a facilityProducts row
+      // in this schema, so any value here would be fabricated. Genuine,
+      // disclosed gap -- matches the client-facing help text already
+      // shipped (commit 3b3d695).
+    });
+  }
+}
