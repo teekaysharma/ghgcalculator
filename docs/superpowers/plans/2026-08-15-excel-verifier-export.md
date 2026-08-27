@@ -2131,3 +2131,131 @@ git commit -m "Fix stale ILLUSTRATIVE_CELLS entries wrongly clearing 2c2's struc
 git add server/utils/ead-template-fill.ts server/routes.ts package.json package-lock.json
 git commit -m "Migrate EAD template fill from SheetJS to exceljs, resolving C3's formatting loss"
 ```
+
+---
+
+## Task 14: Fix Task 13's Critical finding -- 7 narrative-sheet writes hit merge slaves, destroying the template's own guidance text
+
+Task 13's review (opus, thorough line-by-line audit) found a real defect the migration's own "pure API translation" assumption didn't account for: `ws[address]` (SheetJS) writes literally, with no merge-awareness; `ws.getCell(address)` (`exceljs`) **transparently redirects reads and writes on a merge-slave cell to its merge master**. Confirmed directly, independently, twice (by the reviewer via raw OOXML, and by the controller via `cell.isMerged`/`cell.master.address` on a live test write) -- writing to `3e2!C6` silently writes to `3e2!B6` instead, and `B6` is not empty: it holds the template's own real guidance text (*"Please provide a concise description of the measurement approach..."*), which the write destroys.
+
+**This affects exactly 7 addresses, all in the narrative sections (`3e2`, `3f`, `3g`) `fillRemainingSheets` writes to** -- confirmed by checking every one of the 649 total writable cells in the file for merge-slave status; none of the 61 `ILLUSTRATIVE_CELLS` and none of the tabular sheets' addresses are affected, only these 7.
+
+**Root cause is older than Task 13, and was already found once before and deliberately not acted on.** Task 6's own review noted (recorded in this plan and the SDD ledger): *"`ws['!merges']` inspection shows these sheets actually place their real blank answer area one row below where the brief writes (e.g. 3e2's answer for part (a) appears to live in a merged blank `B7:L7`, not `C6` which is inside the instructional-text merge `B6:L6`)... disclosed here as an observation, consistent with the task's framing that these sheets are an inherent approximation -- not acted on, per instruction."* Under SheetJS, writing to a merge slave was merely *invisible* (Excel never renders a slave cell's content) -- a silent, low-stakes data loss. Under `exceljs`, the same write is *actively destructive* (it visibly overwrites the template's own guidance text) -- the severity changed enough that this plan is now acting on the long-deferred observation rather than deferring it again.
+
+**Real answer-cell locations, verified directly against the template (not assumed from the "one row below" pattern -- `3g`'s layout turned out to be genuinely different from `3e2`/`3f`'s):**
+
+`3e2_MeasurementBasedApproaches` and `3f_Fallback Approach` both place the real blank answer merge one row *below* the instructional text (confirmed: the row directly below each instruction is blank, `isMerged: true`, `isMaster: true` -- a genuine, separate answer box, not a label):
+
+| Sheet | Old (wrong) address | New (verified) address | Field |
+|---|---|---|---|
+| `3e2_MeasurementBasedApproaches` | `C6` | **`B7`** | `measurementMethod` |
+| `3e2_MeasurementBasedApproaches` | `C8` | **`B9`** | `monitoringFrequency` |
+| `3f_Fallback Approach` | `C8` | **`B9`** | `fallbackMethodDescription` |
+| `3f_Fallback Approach` | `C20` | **`B21`** | `justification` |
+
+`3g_Methane` has a genuinely different layout, verified directly (do not assume the "one row below" pattern applies here too -- it doesn't): each instruction/answer pair sits **side by side on the same row** -- `B{row}:D{row}` is the label merge, `E{row}:L{row}` is a *separate*, blank answer merge, confirmed via `ws.model.merges` and confirming `E9`/`E10`/`E13` are each their own merge master with `value: null`:
+
+| Sheet | Old (wrong) address | New (verified) address | Field |
+|---|---|---|---|
+| `3g_Methane` | `C9` | **`E9`** | `annualMethaneEmissions` |
+| `3g_Methane` | `C10` | **`E10`** | `quantificationMethod` |
+| `3g_Methane` | `C13` | **`E13`** | `methaneSourcesDescription` |
+
+**Files:**
+- Modify: `server/utils/ead-template-fill.ts` (`fillRemainingSheets` only -- the 7 addresses above)
+
+- [ ] **Step 1: Fix the 7 addresses**
+
+In `fillRemainingSheets`:
+```ts
+  const measureSheet = wb.getWorksheet("3e2_MeasurementBasedApproaches");
+  if (measureSheet && measurementStreams.length > 0) {
+    const first = measurementStreams[0].measurementApproach;
+    // Verified directly against the real template: the instructional text
+    // at C6/C8 (merge master B6:L6 / B8:L8) is the template's own guidance,
+    // not a data-entry cell -- exceljs correctly redirects a write to a
+    // merge slave onto its master (SheetJS did not, so this write was
+    // simply invisible before, never destructive). The real, blank answer
+    // merge for each part sits one row below (B7:L7 / B9:K16 -- rows 10-15
+    // are merge slaves of row 9, one large answer box), confirmed isMaster
+    // and value === null before writing.
+    writeIfNotFormula(measureSheet, "B7", first?.measurementMethod ?? "");
+    writeIfNotFormula(measureSheet, "B9", first?.monitoringFrequency ?? "");
+  }
+
+  const fallbackStreams = streamDetails.filter((s) => s.approachTier === "fallback");
+  const fallbackSheet = wb.getWorksheet("3f_Fallback Approach");
+  if (fallbackSheet && fallbackStreams.length > 0) {
+    // Same fix, same reasoning as 3e2 above -- B9/B21 are the real blank
+    // answer merges one row below each instruction (B8:L8 / B20:L20).
+    writeIfNotFormula(fallbackSheet, "B9", fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "");
+    writeIfNotFormula(fallbackSheet, "B21", fallbackStreams[0].fallbackApproach?.justification ?? "");
+  }
+
+  const methaneSheet = wb.getWorksheet("3g_Methane");
+  if (methaneSheet && methaneReports.length > 0) {
+    const m = methaneReports[0];
+    // 3g's layout is NOT "one row below" like 3e2/3f -- verified directly:
+    // each instruction/answer pair sits side by side on the SAME row,
+    // label in B{row}:D{row}, a separate blank answer merge in E{row}:L{row}.
+    writeIfNotFormula(methaneSheet, "E9", m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0);
+    writeIfNotFormula(methaneSheet, "E10", m.quantificationMethod ?? "");
+    writeIfNotFormula(methaneSheet, "E13", m.methaneSourcesDescription ?? "");
+  }
+```
+
+- [ ] **Step 2: Run `npm run check`**
+- [ ] **Step 3: Live-verify, unzipping the real output (not reading back through `exceljs`, per the exact lesson this finding just taught)** -- fill real data for all three sheets, download a real `export-ead.xlsx`, unzip it, and confirm for all 7 addresses: (a) the template's original instructional text at the OLD address's merge master (`B6`/`B8`/`B20`/`B9`/`B10`/`B13` -- note `3g`'s masters are the SAME row as before, only the answer moved to column E, so its instruction text at `B9`/`B10`/`B13` should be UNCHANGED) is still present, untouched; (b) the real data now appears at the NEW address's raw cell. Also re-confirm (regression check) that none of the 7 tabular-sheet fixes from Tasks 5/6/11/12 changed -- this task touches only `fillRemainingSheets`' narrative-section block.
+- [ ] **Step 4: Commit**
+
+```bash
+git add server/utils/ead-template-fill.ts
+git commit -m "Fix 7 narrative-sheet writes landing on merge slaves, destroying template guidance text"
+```
+
+---
+
+## Task 15: Fix Task 13's Important finding -- harden `clearIllustrativeRows` against shared-formula children
+
+Confirmed directly: a *shared-formula child* cell (e.g. `3d1!B43`, confirmed via `cell.type === ValueType.Formula` but `cell.value.formula === undefined`, `cell.value.sharedFormula === "B42"` instead) would make `clearIllustrativeRows`'s current cast `(cell.value as {formula:string}).formula` evaluate to `undefined`, and the subsequent `cell.value = {formula: undefined, result: undefined}` would corrupt the cell. **Not a live bug today** -- confirmed none of the 61 `ILLUSTRATIVE_CELLS` entries are shared-formula children -- but the template has 50 shared formulas (`1b_Guidance` 3, `3d1` 24, `3e1` 23) concentrated in exactly the row-ID columns adjacent to entries this list already targets, so any future addition to `ILLUSTRATIVE_CELLS` could hit one without anyone noticing until it silently breaks a formula. Cheap to fix now, consistent with the "never touch a formula, no exceptions" rule already governing this whole file -- if the formula string can't be safely extracted, the cell is left completely alone, same treatment already given to every formula cell this file doesn't understand how to touch.
+
+**Files:**
+- Modify: `server/utils/ead-template-fill.ts` (`clearIllustrativeRows` only)
+
+- [ ] **Step 1**
+
+```ts
+export function clearIllustrativeRows(wb: ExcelJS.Workbook): void {
+  for (const [sheetName, address] of ILLUSTRATIVE_CELLS) {
+    const ws = wb.getWorksheet(sheetName);
+    if (!ws) continue;
+    const cell = ws.getCell(address);
+    if (cell.type === ExcelJS.ValueType.Formula) {
+      const formulaValue = cell.value as { formula?: string; sharedFormula?: string };
+      if (!formulaValue.formula) {
+        // Shared-formula child (has .sharedFormula instead of .formula) --
+        // cannot safely extract the formula string to preserve it while
+        // clearing the cached result. Never touch it, same as any formula
+        // this code doesn't understand how to handle -- consistent with
+        // the "never overwrite a formula" rule this whole file follows.
+        // Not a live case today (verified: none of the entries above hit
+        // one), but the template has 50 shared formulas and this guard
+        // costs nothing.
+        continue;
+      }
+      cell.value = { formula: formulaValue.formula, result: undefined };
+      continue;
+    }
+    cell.value = null;
+  }
+}
+```
+
+- [ ] **Step 2: Run `npm run check`**
+- [ ] **Step 3: Live-verify** -- confirm the 3 genuinely-affected formula cells (`3d2!D25`, `3d2!E25`, `3e1!C9`) still clear correctly exactly as before (this change only adds a guard for a case that doesn't occur in the current 61 entries, so existing behavior must be provably unchanged) -- unzip a real output and confirm no `<v>` element, `<f>` intact, same as Task 13's verification.
+- [ ] **Step 4: Commit**
+
+```bash
+git add server/utils/ead-template-fill.ts
+git commit -m "Harden clearIllustrativeRows against shared-formula children"
+```
