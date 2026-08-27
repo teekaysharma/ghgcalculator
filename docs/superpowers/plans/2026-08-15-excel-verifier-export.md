@@ -1587,3 +1587,145 @@ Start the dev server. Confirm `export-ead-check.json` returns all three omitted-
 git add server/routes.ts server/utils/ead-template-fill.ts client/src/components/OrganizationReport.tsx
 git commit -m "Add error handling to export routes, dedupe capacity constants, wire up data-gaps fill, fix filename escaping"
 ```
+
+---
+
+## Stage 3 fix task (I4 + I6, post whole-branch review, 2026-08-27)
+
+Fixes the whole-branch review's remaining data-correctness findings: `2c1_Identifiers` and `2c2_Facility Description`'s Product/Emission-Source tables were never filled by any prior task, and that is the ROOT CAUSE of `3e1`'s wrong numbers (I4) -- `3e1`'s "Total emissions" column is a formula reading from `2c2!G43:G67`, which nothing has ever written to, so every measured emission source has always reported 0 (or, before Task 8's fix, the template's fabricated `100000`).
+
+**Everything below was independently re-verified against the real template file** (direct cell reads, raw OOXML inspection where merges alone were ambiguous) -- none of it is carried over from the design spec's original, unverified description of this gap.
+
+**Two decisions need your explicit confirmation before this is dispatched** (flagged inline below at the exact point they matter, not buried) -- this section is written assuming the more conservative answer to each until you say otherwise:
+
+1. **Which facility's identity goes on a form authored for one facility.** `2c1`/`2c2`'s Product table are facility-identity sheets (`facilityIdentifiers`/`facilityContacts`/`facilityProducts` are all facility-scoped tables), but a reporting boundary in this platform can span multiple facilities -- exactly the same shape of problem Tasks 5/6 already solved for `3g_Methane` (uses the first facility with data) and `4I` (uses the first 1-3 QA records). This plan proposes the same precedent: **use `report.facilities[0]`** (the boundary's first facility) for `2c1` and `2c2`'s Product table specifically. This does NOT affect the Emission Source table or any of `3d1`-`4J` -- those already correctly mix data from every facility in the boundary, unchanged. The real, disclosed limitation: if a boundary has 3 facilities, only facility #1's identifiers/contacts/products appear in `2c1`/`2c2`, even though every facility's emissions still appear everywhere else in the file.
+2. **What `reportingEntities.legalEntity` actually represents.** `2c1!H6` asks for "Group/Parent Entity (if Applicable)" -- distinct from `H5`'s "Entity/Company name". `reportingEntities` has a `legalEntity` field, but its original design intent is ambiguous from the schema alone (a company's own formal legal name, vs. an actual separate parent/group entity, are two different things). **This plan does NOT map `legalEntity` to `H6` and leaves `H6` unfilled** until you confirm which (if either) is correct -- writing the wrong semantic into a government form is worse than leaving it blank.
+
+### New function: `fillFacilityDescriptionSheets`
+
+**Files:**
+- Modify: `server/utils/ead-template-fill.ts` (new function + `ILLUSTRATIVE_CELLS` additions)
+- Modify: `server/routes.ts` (wire the new function + its 3 new storage calls into `export-ead.xlsx`)
+
+**Interfaces:**
+- Consumes: `storage.getFacilityIdentifier(organizationId, facilityId): Promise<FacilityIdentifier | undefined>`, `storage.listFacilityContacts(organizationId, facilityId): Promise<FacilityContact[]>`, `storage.listFacilityProducts(organizationId, facilityId): Promise<FacilityProduct[]>` (all confirmed real signatures, `server/storage.ts:271-284`) -- all facility-scoped, called once each for `report.facilities[0].id` per decision (1) above. Also consumes `SourceStreamDetail[]` (unchanged) for the Emission Source table, same array `fillRemainingSheets` already receives.
+- Produces: `fillFacilityDescriptionSheets(wb: XLSX.WorkBook, primaryFacilityIdentifier: FacilityIdentifier | undefined, primaryFacilityContacts: FacilityContact[], primaryFacilityProducts: FacilityProduct[], streamDetails: SourceStreamDetail[]): void`, exported, called from the `export-ead.xlsx` route alongside `fillCoreSheets`/`fillRemainingSheets`.
+
+### Verified addresses
+
+**`2c1_ Identifiers` (facility info, rows 5-11)** -- confirmed via raw OOXML that `H6`/`H8` are real, distinctly-styled cells even though (unlike every other row here) they aren't part of a `<mergeCell>` -- same answer column as every other row, not an exception:
+| Row | Field | Source |
+|---|---|---|
+| H5 | Entity/Company name | `report.reportingEntity.name` |
+| H6 | Group/Parent Entity | **UNFILLED -- decision (2) above** |
+| H7 | Facility Name (per Environmental Permit) | `facility.name` (best-effort -- may differ from the literal permit name) |
+| H8 | Economic Licence Number | `identifier?.economicLicenceNumber` |
+| H9 | Environmental Permit Number | `identifier?.environmentalPermitNumber` |
+| H10 | Facility Address | `identifier?.address` |
+| H11 | Coordinates of Facility's Main Entrance | `identifier?.coordinatesLat`/`coordinatesLng`, formatted `"{lat}, {lng}"` if both present |
+
+**`2c1_ Identifiers` (description, row 16)** -- `C16` (merged `C16:L24`, confirmed empty, no illustrative content to clear): `identifier?.activityDescription`.
+
+**`2c1_ Identifiers` (contacts, rows 30-44)** -- confirmed every row's answer anchor is `H{row}` (all genuinely merged `H{row}:K{row}`, no exceptions like the facility-info section above):
+| Row | Field |
+|---|---|
+| H30 | Title | H31 First Name | H32 Surname | H33 Job Title | H34 Organisation name | H35 Telephone | H36 Email |
+| H38 | Title | H39 First Name | H40 Surname | H41 Job title | H42 Organisation name | H43 Telephone | H44 Email |
+
+Rows 30-36 = primary contact (`contactType: "primary"`), rows 38-44 = alternative (`contactType: "alternative"`) -- confirmed these are the only two contact-type slots this sheet has; any additional contacts beyond one primary + one alternative are not represented here (same "beyond N, not represented on this sheet" pattern as `4I`'s QA records).
+
+**`2c2_Facility Description` Product table (header row 16, data rows 17-26, P01-P10)** -- confirmed via direct read; illustrative content exists ONLY at `D17`/`D18`/`G17`/`G18`/`H17`/`H18` (6 cells: `"Refinery products"`/`"EAF high alloy steel"`/`true`/`true`/`false`/`false`) -- every other cell in this table (E, I, J, K, L for all 10 rows) is already genuinely blank, confirmed directly, nothing else to clear:
+| Col | Field | Source |
+|---|---|---|
+| D | Product category | `facilityProduct.productCategory` |
+| E | Production technology/process | `facilityProduct.productionTechnology` |
+| G | Energy-related emissions? | `facilityProduct.energyRelatedEmissions` |
+| H | Process emissions? | `facilityProduct.processEmissions` |
+| I | Production capacity | `facilityProduct.productionCapacity` |
+| J | Unit - capacity | `facilityProduct.productionCapacityUnit` |
+| K | Actual production | `facilityProduct.actualProduction` |
+| L | Unit - actual production | `facilityProduct.actualProductionUnit` |
+
+10-row capacity (P01-P10) -- `facilityProducts.slice(0, 10)`, report `omittedCount` same pattern as every other capped sheet.
+
+**`2c2_Facility Description` Emission Source table (header row 42, data rows 43-67, S01-S25)** -- this is the table `3e1!C9:C33`'s formulas read from (`='2c2_Facility Description'!G43'` through `G67`). Illustrative content confirmed: `D43:D67` (all 25 rows have fabricated placeholder text: `"x"`,`"xx"`,`"xxx"`,`"y"`,`"yy"`,`"yyy"`,`"z"`,`"zz"`,`"zzz"`,`"xyz"`,`"a"`,`"aa"`,`"aaa"`,`"b"`,`"bb"`,`"bbb"`,`"c"`,`"cc"`,`"ccc"`,`"abc"`,`"d"`,`"dd"`,`"ddd"`,`"e "`,`"ee"`), `E43:E46` (4 cells: `"P01"`,`"P02"`,`"P03"`,`"P03"`), `G43`/`H43`/`I43` (3 cells: `100000`/`true`/`false`). `E47:E67` and `F43:F67`/`G44:G67`/`H44:H67`/`I44:I67` are already genuinely blank -- nothing to clear there.
+| Col | Field | Source | Note |
+|---|---|---|---|
+| D | Emission source (name, description) | `s.description ?? s.name` (measurement-tier stream) | Same fields `3d1!C{row1}` already uses for calc-tier |
+| E | Associated Product (ID) | **never written -- no FK links a source stream to a `facilityProducts` row in this schema** | Genuine gap, disclosed in code comment, matches what you already approved for the client-facing help text |
+| F | Types of GHGs emitted | **never written -- no per-gas data available for measurement-tier streams** | Same reasoning as E |
+| G | Total emissions from source (t CO2e) | `s.estimatedAnnualEmissionsTco2e` | **This is the fix for I4** -- same top-level field `3d1!E{row1}` already uses for calc-tier, confirmed to exist regardless of tier (`shared/schema.ts:786`, a column on `source_streams` itself) |
+| H | Energy related emissions? | never written -- same reasoning as E/F (would need the product link) | |
+| I | Process emissions? | never written -- same reasoning as E/F | |
+
+Row alignment: `measurementStreams[i]` -> `3e1` row `9+i` (unchanged) AND `2c2` row `43+i` (new) -- both driven by the same array at the same index, so `3e1`'s existing static `"S01"`-style labels line up positionally with `2c2`'s own independent `"S01"`-style labels (confirmed these are NOT cross-referenced to each other -- `3e1!B9` is a plain static value, not a formula, unlike `3d1!B10`'s formula-link back to `2c2`'s Source Stream table). 25-row capacity, same as the existing `MEASUREMENT_STREAM_ROW_CAPACITY`.
+
+### Fix for `3e1_Emission Sources (Measured)` (part of I4)
+
+Confirmed via the real header row (`3e1!D8` = `"Category (see above)"`, `3e1!E9` = the literal static text `"Illustrative"`, not a header): the current code writes `annualMeasuredQuantity` (a raw number) to `D{row1}` and `materiality` to `E{row1}` -- both wrong. `D` should get materiality (matching its real header); `E` should never be written at all (it isn't a real data column -- the template's own header row doesn't label it, and writing there would put real data underneath a stray leftover annotation, not a field). In `fillRemainingSheets`, change:
+
+```ts
+      writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "n", v: s.measurementApproach?.annualMeasuredQuantity ?? 0 });
+      writeIfNotFormula(emissionSourceSheet, `E${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
+```
+to:
+```ts
+      // D8 header is "Category (see above)" -- materiality, not a raw
+      // measured quantity (I4 fix). E9's only content is the template's
+      // own static "Illustrative" label, not a real header -- E is never
+      // written here (was previously, incorrectly, getting materiality).
+      writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
+```
+
+(`annualMeasuredQuantity` is no longer written anywhere on this sheet -- it was never the right field for this column; the real "Total emissions" figure now correctly flows through `2c2!G` -> `3e1!C`'s existing formula instead.)
+
+### `ILLUSTRATIVE_CELLS` additions (38 new entries, all individually verified above)
+
+```ts
+  // 2c2_Facility Description Product table (header row 16): illustrative
+  // only at rows 17-18 (P01/P02), confirmed every other cell in this
+  // 10-row table already genuinely blank.
+  ["2c2_Facility Description", "D17"],
+  ["2c2_Facility Description", "D18"],
+  ["2c2_Facility Description", "G17"],
+  ["2c2_Facility Description", "G18"],
+  ["2c2_Facility Description", "H17"],
+  ["2c2_Facility Description", "H18"],
+  // 2c2_Facility Description Emission Source table (header row 42):
+  // column D has fabricated placeholder text in ALL 25 rows (43-67,
+  // unlike every other illustrative table in this file, which only
+  // fills its first row/first few rows) -- confirmed by direct read,
+  // not assumed from the row-17/18 pattern above.
+  ["2c2_Facility Description", "D43"], ["2c2_Facility Description", "D44"],
+  ["2c2_Facility Description", "D45"], ["2c2_Facility Description", "D46"],
+  ["2c2_Facility Description", "D47"], ["2c2_Facility Description", "D48"],
+  ["2c2_Facility Description", "D49"], ["2c2_Facility Description", "D50"],
+  ["2c2_Facility Description", "D51"], ["2c2_Facility Description", "D52"],
+  ["2c2_Facility Description", "D53"], ["2c2_Facility Description", "D54"],
+  ["2c2_Facility Description", "D55"], ["2c2_Facility Description", "D56"],
+  ["2c2_Facility Description", "D57"], ["2c2_Facility Description", "D58"],
+  ["2c2_Facility Description", "D59"], ["2c2_Facility Description", "D60"],
+  ["2c2_Facility Description", "D61"], ["2c2_Facility Description", "D62"],
+  ["2c2_Facility Description", "D63"], ["2c2_Facility Description", "D64"],
+  ["2c2_Facility Description", "D65"], ["2c2_Facility Description", "D66"],
+  ["2c2_Facility Description", "D67"],
+  // E43:E46 only (P01/P02/P03/P03) -- E47:E67 confirmed already blank.
+  ["2c2_Facility Description", "E43"],
+  ["2c2_Facility Description", "E44"],
+  ["2c2_Facility Description", "E45"],
+  ["2c2_Facility Description", "E46"],
+  // G43/H43/I43 only (row 1 of the table) -- rows 44-67 confirmed blank.
+  ["2c2_Facility Description", "G43"],
+  ["2c2_Facility Description", "H43"],
+  ["2c2_Facility Description", "I43"],
+```
+
+### Live verification (Step-by-step, required before this task can be marked complete)
+
+1. `npm run check` clean.
+2. Fill with real `facilityIdentifiers`/`facilityContacts`/`facilityProducts`/`SourceStreamDetail` records (create via the real HTTP API -- all 3 tables already have working routes: `PUT /api/facilities/:facilityId/identifier`-style and `POST /api/facility-contacts`/`POST /api/facility-products` -- **confirm the exact real route paths and HTTP verbs directly against `server/routes.ts` before writing the verification script; do not assume from this plan's paraphrase**).
+3. Download a real `export-ead.xlsx`, **unzip it and read the raw XML** (per this stage's established verification requirement -- SheetJS read-back cannot be trusted for this class of check). Confirm: `2c1!H5` contains the real entity name; `2c1!H6` is genuinely empty (decision 2 unresolved); `2c1!C16` contains the real description; `2c1!H30`-`H36` contain the real primary contact; `2c2!D17` contains the real product category (not `"Refinery products"`); `2c2!D43` contains the real emission-source description (not `"x"`); `2c2!G43` contains the real `estimatedAnnualEmissionsTco2e` value (not `100000`); **and, critically, `3e1!C9` (a formula cell, `='2c2_Facility Description'!G43`) now resolves to that same real number** -- this is the actual proof I4 is fixed, not just that `2c2!G43` itself looks right.
+4. Confirm `3e1!D9` now holds materiality (e.g. `"Major"`), not a raw quantity number, and that `3e1!E9` is untouched (still whatever it was before -- the template's own `"Illustrative"` text, since `clearIllustrativeRows` was never told to touch it either).
+5. Commit.
+
+**Not dispatching this task until decisions (1) and (2) above are confirmed.**
