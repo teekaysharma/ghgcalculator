@@ -2090,3 +2090,44 @@ Remove these 16 lines and their introductory comment from `ILLUSTRATIVE_CELLS` (
 git add server/utils/ead-template-fill.ts
 git commit -m "Fix stale ILLUSTRATIVE_CELLS entries wrongly clearing 2c2's structural row-ID labels"
 ```
+
+---
+
+## Task 13: Migrate `ead-template-fill.ts` from SheetJS to `exceljs` (resolves C3)
+
+**Decision, finally made after a real spike, not assumed:** the whole-branch review's C3 finding (SheetJS strips the real template's data validation, conditional formatting, and most styling on write -- measured: 413,289 bytes in, 149,491 out, 0/13 dropdowns, 0/104 conditional formats preserved) is fixed by switching to `exceljs`. A spike against the real template (load, one trivial cell write, save, compare raw OOXML before/after) measured: conditional formatting 52/52 preserved, data validation coverage 6/6 preserved (serialized as 8 entries -- a compound multi-range `sqref` split into two, same cells covered, confirmed), drawings 13/13 preserved, `styles.xml` 89% of bytes retained (vs. SheetJS's 1.3%). Formula preservation confirmed intact through a full round-trip. User decision: full migration.
+
+**Scope: `server/utils/ead-template-fill.ts` and the EAD route in `server/routes.ts` only.** `server/utils/xlsx-export.ts` (the generic ISO 14064-3 workbook, Task 3) and its route stay on SheetJS, untouched -- that workbook is built from scratch every time, not from a real template with formatting to preserve, so it was never the problem C3 described.
+
+**Every cell address, field mapping, and business rule in the file is UNCHANGED -- verified and re-verified across Tasks 4-12, none of that work is being redone.** Only the low-level read/write API calls translate, per this table (every entry confirmed empirically against the real template before this task was written, not assumed from `exceljs`'s docs):
+
+| SheetJS (current) | `exceljs` (target) | Confirmed by |
+|---|---|---|
+| `XLSX.WorkBook` / `XLSX.WorkSheet` types | `ExcelJS.Workbook` / `ExcelJS.Worksheet` | type-checks |
+| `XLSX.read(buffer, {cellFormula:true})` | `await new ExcelJS.Workbook().xlsx.load(buffer)` -- **now async** | spike |
+| `XLSX.write(wb, {type:"buffer",bookType:"xlsx"})` | `await wb.xlsx.writeBuffer()` -- **now async**, returns a real `Buffer` (`Buffer.isBuffer` confirmed true), works directly with `res.send()` | spike |
+| `wb.Sheets[name]` | `wb.getWorksheet(name)` | spike |
+| `ws[address]` (undefined if never touched) | `ws.getCell(address)` -- **always returns a real Cell object**, never undefined; check `.type`/`.value` for "is this populated," not existence | spike |
+| `cell.f` (truthy = has formula) | `cell.type === ExcelJS.ValueType.Formula` (confirmed numeric `6`) | spike |
+| A write payload `{ t: "s"\|"n"\|"b", v: value }` | Just the raw `value` (string/number/boolean) -- `exceljs` infers type from the JS value, no wrapper needed | spike |
+| `delete ws[address]` (clear a plain cell) | `ws.getCell(address).value = null` | spike |
+| `delete cell.v; delete cell.w; delete cell.h` (clear a formula's cached result, keep the formula -- Task 8's fix) | `cell.value = { formula: cell.value.formula, result: undefined }` -- confirmed via raw OOXML this produces a cell with the `<f>` element intact and **no** `<v>` element at all (cleaner than the SheetJS fix, which left `.f` but the writer still needed the belt-and-suspenders `fullCalcOnLoad` flag) | spike |
+| `wb.Workbook = {...,CalcPr:{fullCalcOnLoad:1}}` (confirmed inert under SheetJS -- Task 8's report) | `wb.calcProperties.fullCalcOnLoad = true` -- **confirmed via raw OOXML this actually serializes** as `<calcPr calcId="..." fullCalcOnLoad="1"/>`, unlike SheetJS | spike |
+
+**Files:**
+- Modify: `server/utils/ead-template-fill.ts` (every function ported per the table above; addresses/mappings/comments preserved)
+- Modify: `server/routes.ts` (the EAD route: `const wb = loadEadTemplate();` -> `const wb = await loadEadTemplate();`; `const buffer = XLSX.write(wb, {...})` -> `const buffer = await wb.xlsx.writeBuffer();`; remove the now-inert `wb.Workbook = {...CalcPr...}` line, replaced by `wb.calcProperties.fullCalcOnLoad = true;` inside `loadEadTemplate` or right before the write -- implementer's choice, either is correct)
+- Modify: `package.json`/`package-lock.json` (already has `exceljs` installed from the spike)
+- Delete: `server/types/xlsx.d.ts` (the `WBProps.CalcPr` ambient augmentation from Task 8 -- confirm first via grep that nothing else in the codebase still imports/relies on it; it existed only to type SheetJS's `CalcPr`, which this task removes the only usage of)
+
+- [ ] **Step 1: Port the file, function by function, per the translation table** -- `resolveTemplatePath`/`cachedTemplateBuffer` stay conceptually the same (still cache the raw buffer, not a parsed workbook, for the same reason already documented: the fill functions mutate their workbook in place). `loadEadTemplate` becomes `async`. `writeIfNotFormula`'s third parameter changes from a `{t,v}` object to a raw value. `clearIllustrativeRows` uses the new formula-check + clear patterns from the table. `titleCaseMateriality` is pure string logic, entirely unchanged. `fillCoreSheets`/`fillDataGapsSheet`/`fillRemainingSheets`/`fillFacilityDescriptionSheets` keep every address, every field mapping, every existing comment -- only strip the `{t,v}` wrapper from each `writeIfNotFormula` call per the table. `SOURCE_STREAM_ROW_CAPACITY`/`MEASUREMENT_STREAM_ROW_CAPACITY`/`MITIGATION_MEASURE_ROW_CAPACITY`/`PRODUCT_ROW_CAPACITY`/`DATA_GAP_ROW_CAPACITY` exports are untouched.
+- [ ] **Step 2: Update `server/routes.ts`'s EAD route** per the table above.
+- [ ] **Step 3: Remove `server/types/xlsx.d.ts` if confirmed dead** (`grep -rn "xlsx.d.ts\|WBProps" server/` first to be sure nothing else references it).
+- [ ] **Step 4: Run `npm run check`**
+- [ ] **Step 5: Live-verify, using the SAME round-trip-fidelity methodology as the spike, applied to the real production code path (not an isolated script)** -- create real facility/product/source-stream data via the HTTP API, download a real `export-ead.xlsx` through the actual route, unzip it, and confirm: (a) real data lands exactly where Tasks 5/6/11/12 already proved it does -- no regression; (b) formula cells (`3d2!D25`/`E25`, `3e1!C9` etc.) still carry their formula with no cached value; (c) `xl/workbook.xml` now contains `<calcPr ... fullCalcOnLoad="1"/>` (proving the fix that was inert under SheetJS now actually works); (d) conditional formatting and data validation counts in the output are non-zero and close to the original template's (52 conditional formats, 6-8 data validation entries) -- this is the actual proof C3 is fixed, not just that the code compiles.
+- [ ] **Step 6: Commit.**
+
+```bash
+git add server/utils/ead-template-fill.ts server/routes.ts package.json package-lock.json
+git commit -m "Migrate EAD template fill from SheetJS to exceljs, resolving C3's formatting loss"
+```
