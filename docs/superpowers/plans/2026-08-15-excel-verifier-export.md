@@ -2041,3 +2041,52 @@ git commit -m "Fill 2c1/2c2 facility-identity sheets from existing schema, fix 3
 ```
 
 All decisions this task depended on are now resolved and cited above -- ready to dispatch.
+
+---
+
+## Task 12: Fix a real, pre-existing defect Task 11's own review surfaced -- stale `ILLUSTRATIVE_CELLS` entries wrongly clear structural row-ID labels
+
+Task 11's task reviewer found this independently while live-verifying the I4 fix, and it is real -- confirmed directly against the template file before writing this task: `2c2_Facility Description`'s Product table (`C17:C26`) and Emission Source table (`C43:C67`) both have their `"P01"`-`"P10"`/`"S01"`-`"S25"` row-ID labels populated in **every** row, not just the first 1-2 rows. This is the same structural-scaffold pattern already correctly protected everywhere else in this file (the `F01`-`F25`/`S01`-`S25` ID columns on `3d1`/`3e1`, and the `C75` fix from Task 5's review) -- but Task 4's original `ILLUSTRATIVE_CELLS` pass (`server/utils/ead-template-fill.ts`, the block added under the `2c2_Facility Description: product table header row 16...` comment) mistakenly included `C17`, `C18`, `C43`, `C44` alongside the genuinely-fabricated `D`/`G`/`H`/`I` values in those same rows -- treating "this row has a fabricated example" as "the whole row including its permanent ID label is fabricated," which is the same category of mistake the `C75` fix already corrected once in this exact table, just missed here.
+
+**Consequence, confirmed live by Task 11's reviewer with real data:** the row-ID label survives on every row a real export leaves *empty*, and is missing specifically on the rows real data actually lands in (row 17, row 43 -- exactly where `fillFacilityDescriptionSheets` starts writing) -- backwards from what a real submission should look like, and would look like an authoring error in a document handed to a verifier.
+
+**Also folding in a Minor finding from the same review**: Task 11's own new `ILLUSTRATIVE_CELLS` additions (`D43`, `D44`, `E43`, `E44`, `G43`, `H43`, `I43`) duplicate entries Task 4's original block already had -- harmless (`clearIllustrativeRows` is idempotent), but sloppy; Task 4's whole original block for this table is now fully superseded by Task 11's more rigorously re-verified one and should just be deleted rather than left as dead, duplicate, partially-wrong weight.
+
+**Files:**
+- Modify: `server/utils/ead-template-fill.ts`
+
+**The fix**: delete Task 4's entire original `2c2_Facility Description` block (16 entries: `C17`, `G17`, `H17`, `C18`, `G18`, `H18`, `C43`, `D43`, `E43`, `G43`, `H43`, `I43`, `C44`, `D44`, `E44`, `I44`, plus its introductory comment `// 2c2_Facility Description: product table header row 16, P01/P02 examples at rows 17-18; emission source table header row 42, S01/S02 examples at rows 43-44.`) -- every one of its *correct* entries (`G17`/`H17`/`G18`/`H18`/`D43`/`E43`/`D44`/`E44`/`G43`/`H43`/`I43`) is already present in Task 11's later, independently-re-verified block; its incorrect entries (`C17`/`C18`/`C43`/`C44`) must never have been there; and `I44` was never real (confirmed directly: `I44` is genuinely `undefined` in the template, not fabricated content -- Task 4's inclusion of it was itself imprecise, harmless only because clearing an already-empty cell is a no-op). Do not touch Task 11's own block (the one with the `D43`-`D67`/`E43:E46`/`G43`/`H43`/`I43` entries and its own detailed comments) -- that one is correct and stays exactly as-is.
+
+- [ ] **Step 1: Delete the stale block**
+
+Remove these 16 lines and their introductory comment from `ILLUSTRATIVE_CELLS` (currently around `server/utils/ead-template-fill.ts:119-137`):
+```ts
+  // 2c2_Facility Description: product table header row 16, P01/P02
+  // examples at rows 17-18; emission source table header row 42, S01/S02
+  // examples at rows 43-44.
+  ["2c2_Facility Description", "C17"],
+  ["2c2_Facility Description", "G17"],
+  ["2c2_Facility Description", "H17"],
+  ["2c2_Facility Description", "C18"],
+  ["2c2_Facility Description", "G18"],
+  ["2c2_Facility Description", "H18"],
+  ["2c2_Facility Description", "C43"],
+  ["2c2_Facility Description", "D43"],
+  ["2c2_Facility Description", "E43"],
+  ["2c2_Facility Description", "G43"],
+  ["2c2_Facility Description", "H43"],
+  ["2c2_Facility Description", "I43"],
+  ["2c2_Facility Description", "C44"],
+  ["2c2_Facility Description", "D44"],
+  ["2c2_Facility Description", "E44"],
+  ["2c2_Facility Description", "I44"],
+```
+
+- [ ] **Step 2: Run `npm run check`**
+- [ ] **Step 3: Live-verify** -- fill a facility's EAD export with real product/emission-source data landing in the first row of each table (row 17, row 43), unzip the real output, and confirm **both** things at once: (a) the real data is present (unchanged from Task 11's own verification), and (b) `2c2!C17` and `2c2!C43` (and every other row's `C` label, e.g. `C18`/`C44`/`C45` etc.) all still read `"P01"`/`"S01"`/`"P02"`/`"S02"`/`"S03"` -- i.e. every row's ID label survives, filled or not, matching the already-correct behavior of every other structural ID column in this file.
+- [ ] **Step 4: Commit**
+
+```bash
+git add server/utils/ead-template-fill.ts
+git commit -m "Fix stale ILLUSTRATIVE_CELLS entries wrongly clearing 2c2's structural row-ID labels"
+```
