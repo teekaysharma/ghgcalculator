@@ -130,28 +130,34 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
                 >
                   ISO 14064-3 / GHG Protocol (generic)
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={async () => {
-                    const res = await apiRequest(
-                      "GET",
-                      `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export-ead-check.json`,
-                    );
-                    const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } = await res.json();
-                    const omissions: string[] = [];
-                    if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
-                    if (omittedMeasurementStreams > 0) omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
-                    if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
-                    if (omissions.length > 0) {
-                      const proceed = window.confirm(
-                        `${omissions.join(" and ")} exceed the EAD template's row limits and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
+                {report.facilities.map((f) => (
+                  <DropdownMenuItem
+                    key={f.id}
+                    onClick={async () => {
+                      const res = await apiRequest(
+                        "GET",
+                        `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/facilities/${f.id}/export-ead-check.json`,
                       );
-                      if (!proceed) return;
-                    }
-                    window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export-ead.xlsx`, "_blank");
-                  }}
-                >
-                  EAD Deliverable C Template
-                </DropdownMenuItem>
+                      const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } = await res.json();
+                      const omissions: string[] = [];
+                      if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
+                      if (omittedMeasurementStreams > 0) omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
+                      if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
+                      if (omissions.length > 0) {
+                        const proceed = window.confirm(
+                          `${omissions.join(" and ")} exceed the EAD template's row limits and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
+                        );
+                        if (!proceed) return;
+                      }
+                      window.open(
+                        `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/facilities/${f.id}/export-ead.xlsx`,
+                        "_blank",
+                      );
+                    }}
+                  >
+                    EAD Deliverable C Template — {f.name}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
             <Popover>
