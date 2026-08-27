@@ -7,6 +7,8 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Info } from "lucide-react";
 
 // Mirrors server/modules.ts's MODULE_REGISTRY labels for display purposes
 // only. If a second real module is ever added there, add its label here
@@ -152,6 +154,26 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="About the Excel export formats"
+                  className="text-neutral-400 hover:text-neutral-600"
+                >
+                  <Info className="h-4 w-4" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent>
+                <p className="text-sm text-neutral-600">
+                  The EAD file fills the official government form exactly as issued. Two things it can't include: rows
+                  beyond the form's fixed capacity (you'll get a warning before download if that applies), and a few
+                  fields this platform doesn't track yet — like which product an emission source belongs to. Those are
+                  left blank, not guessed. For the complete picture, always download the ISO 14064-3 / GHG Protocol
+                  workbook as well — it has no such limits.
+                </p>
+              </PopoverContent>
+            </Popover>
             {report.reportingBoundary.status === "draft" ? (
               <Button
                 size="sm"
