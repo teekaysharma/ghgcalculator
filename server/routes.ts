@@ -1157,7 +1157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           fillDataGapsSheet,
           fillFacilityDescriptionSheets,
         } = await import("./utils/ead-template-fill");
-        const wb = loadEadTemplate();
+        const wb = await loadEadTemplate();
         clearIllustrativeRows(wb);
         fillCoreSheets(wb, streamDetails);
         // managementQaData/verificationFindingsData are boundary-scoped in
@@ -1170,8 +1170,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fillDataGapsSheet(wb, []);
         fillFacilityDescriptionSheets(wb, facility, facilityIdentifier, facilityContacts, facilityProducts, streamDetails);
 
-        wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
-        const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        // Unlike SheetJS (confirmed inert -- Task 8's report), exceljs
+        // genuinely serializes this into the output as
+        // <calcPr fullCalcOnLoad="1"/> (confirmed via raw OOXML during the
+        // exceljs migration spike) -- Excel will recalculate every formula
+        // on open, a second layer of protection alongside
+        // clearIllustrativeRows leaving formula cells with no cached value.
+        wb.calcProperties.fullCalcOnLoad = true;
+        const buffer = await wb.xlsx.writeBuffer();
         res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         res.setHeader(
           "Content-Disposition",

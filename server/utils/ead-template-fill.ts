@@ -8,8 +8,20 @@
 // for the full list of findings this module's design is based on
 // (fixed row capacity, illustrative rows, intra-template formulas, the
 // Product -> Emission Source -> Source Stream hierarchy gap).
+//
+// MIGRATED from SheetJS (`xlsx`) to `exceljs` (Task 13) -- SheetJS
+// Community Edition silently strips a real template's data validation,
+// conditional formatting, and most cell styling on write (confirmed:
+// 0/13 dropdowns, 0/104 conditional formats, 98.7% of styles.xml bytes
+// lost). exceljs preserves all of that (confirmed via a real round-trip
+// spike against this exact template before migrating: conditional
+// formatting 52/52, data validation coverage 6/6, drawings 13/13, 89%
+// of style bytes retained). Every cell address, field mapping, and
+// business rule below is UNCHANGED from the SheetJS version -- only the
+// low-level read/write API calls translate. See the plan's Task 13 for
+// the full, empirically-confirmed translation table.
 
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -43,22 +55,20 @@ function resolveTemplatePath(): string {
 }
 
 // Cached across calls -- the template is a static 400KB+ asset read from
-// disk and re-parsed by XLSX.read on every single export request otherwise
-// (measured: ~40-110ms of fully synchronous, event-loop-blocking work per
-// call just for the parse). Caching the raw BUFFER (not the parsed
-// workbook -- the fill functions mutate their workbook in place, so a
-// cached parsed workbook would leak state between requests) still avoids
-// the disk read and lets XLSX.read do a fresh parse into an isolated
-// object per call.
+// disk and re-parsed on every single export request otherwise. Caching
+// the raw BUFFER (not the parsed workbook -- the fill functions mutate
+// their workbook in place, so a cached parsed workbook would leak state
+// between requests) still avoids the disk read and lets exceljs do a
+// fresh parse into an isolated object per call.
 let cachedTemplateBuffer: Buffer | null = null;
 
-export function loadEadTemplate(): XLSX.WorkBook {
+export async function loadEadTemplate(): Promise<ExcelJS.Workbook> {
   if (!cachedTemplateBuffer) {
     cachedTemplateBuffer = fs.readFileSync(resolveTemplatePath());
   }
-  // cellFormula: true preserves existing formulas on read so
-  // clearIllustrativeRows/the fill functions can detect and skip them.
-  return XLSX.read(cachedTemplateBuffer, { cellFormula: true });
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(cachedTemplateBuffer);
+  return wb;
 }
 
 // Cells confirmed by direct inspection to contain the template's own
@@ -191,10 +201,10 @@ const ILLUSTRATIVE_CELLS: [string, string][] = [
 // ISO 14064-3 workbook (Task 3) is unaffected and always carries the
 // complete data regardless of what any individual EAD template cell
 // allows.
-function writeIfNotFormula(ws: XLSX.WorkSheet, address: string, cell: XLSX.CellObject): void {
-  const existing = ws[address];
-  if (existing && existing.f) return;
-  ws[address] = cell;
+function writeIfNotFormula(ws: ExcelJS.Worksheet, address: string, value: string | number | boolean): void {
+  const existing = ws.getCell(address);
+  if (existing.type === ExcelJS.ValueType.Formula) return;
+  existing.value = value;
 }
 
 // The schema stores materiality as lowercase ("major"/"minor" -- see
@@ -210,26 +220,27 @@ function titleCaseMateriality(value: string | null | undefined): string {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
-export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
+export function clearIllustrativeRows(wb: ExcelJS.Workbook): void {
   for (const [sheetName, address] of ILLUSTRATIVE_CELLS) {
-    const ws = wb.Sheets[sheetName];
+    const ws = wb.getWorksheet(sheetName);
     if (!ws) continue;
-    const cell = ws[address];
-    if (cell && cell.f) {
+    const cell = ws.getCell(address);
+    if (cell.type === ExcelJS.ValueType.Formula) {
       // Never touch the formula itself -- but the formula's stale cached
       // result (computed once, when the template was authored, against
       // its own fabricated example data) must not ship in the delivered
-      // file. Stripping .v/.w/.h leaves a formula cell with no cached
-      // value; Excel recalculates a cell with a formula and no cached
-      // value on open. Also see the module-level fullCalcOnLoad note in
-      // the two export routes (server/routes.ts) for the belt-and-
-      // suspenders fix for non-Excel consumers that don't force a recalc.
-      delete cell.v;
-      delete cell.w;
-      delete cell.h;
+      // file. Setting .value to { formula, result: undefined } leaves the
+      // formula intact with no cached result at all (confirmed via raw
+      // OOXML: produces a cell with <f> and no <v> element whatsoever).
+      // Also see loadEadTemplate/the export route for calcProperties.
+      // fullCalcOnLoad, which -- unlike under SheetJS -- now genuinely
+      // round-trips into the saved file, telling Excel to recalculate on
+      // open as a second layer of protection for Excel specifically.
+      const formula = (cell.value as { formula: string }).formula;
+      cell.value = { formula, result: undefined };
       continue;
     }
-    delete ws[address];
+    cell.value = null;
   }
 }
 
@@ -243,13 +254,13 @@ export function clearIllustrativeRows(wb: XLSX.WorkBook): void {
 // caller can warn.
 export const SOURCE_STREAM_ROW_CAPACITY = 25;
 
-export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDetail[]): { omittedCount: number } {
+export function fillCoreSheets(wb: ExcelJS.Workbook, streamDetails: SourceStreamDetail[]): { omittedCount: number } {
   const calcStreams = streamDetails.filter((s) => s.approachTier === "calculation");
   const omittedCount = Math.max(0, calcStreams.length - SOURCE_STREAM_ROW_CAPACITY);
   const toFill = calcStreams.slice(0, SOURCE_STREAM_ROW_CAPACITY);
 
-  const streamSheet = wb.Sheets["3d1_Source Streams (Calculated)"];
-  const approachSheet = wb.Sheets["3d2_ Calculation Approaches"];
+  const streamSheet = wb.getWorksheet("3d1_Source Streams (Calculated)");
+  const approachSheet = wb.getWorksheet("3d2_ Calculation Approaches");
   // Same missing-sheet guard as clearIllustrativeRows -- a template
   // revision that renames or drops a sheet must not crash the export.
   if (!streamSheet || !approachSheet) return { omittedCount };
@@ -267,17 +278,17 @@ export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDet
     // sheet's own labeled data-entry header (see ILLUSTRATIVE_CELLS
     // comment for the 2c2!G75/H75 fix that keeps 3d2!D25/E25 correct
     // *without* touching their formula).
-    writeIfNotFormula(streamSheet, `C${row1}`, { t: "s", v: s.description ?? s.name });
-    writeIfNotFormula(streamSheet, `E${row1}`, { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 });
-    writeIfNotFormula(streamSheet, `F${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
-    writeIfNotFormula(streamSheet, `G${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
+    writeIfNotFormula(streamSheet, `C${row1}`, s.description ?? s.name);
+    writeIfNotFormula(streamSheet, `E${row1}`, s.estimatedAnnualEmissionsTco2e ?? 0);
+    writeIfNotFormula(streamSheet, `F${row1}`, titleCaseMateriality(s.materiality));
+    writeIfNotFormula(streamSheet, `G${row1}`, titleCaseMateriality(s.materiality));
 
     // Second table: Tier level, Category, Uncertainty, Fuel stream type,
     // Source of accuracy. Column B is again formula-linked, not written.
-    writeIfNotFormula(streamSheet, `C${row2}`, { t: "s", v: calc?.activityDataTier ?? "" });
-    writeIfNotFormula(streamSheet, `D${row2}`, { t: "s", v: titleCaseMateriality(s.materiality) });
-    writeIfNotFormula(streamSheet, `F${row2}`, { t: "s", v: calc?.fuelOrMaterialType ?? "" });
-    writeIfNotFormula(streamSheet, `G${row2}`, { t: "s", v: calc?.activityDataSource ?? "" });
+    writeIfNotFormula(streamSheet, `C${row2}`, calc?.activityDataTier ?? "");
+    writeIfNotFormula(streamSheet, `D${row2}`, titleCaseMateriality(s.materiality));
+    writeIfNotFormula(streamSheet, `F${row2}`, calc?.fuelOrMaterialType ?? "");
+    writeIfNotFormula(streamSheet, `G${row2}`, calc?.activityDataSource ?? "");
 
     // 3d2_Calculation Approaches, "Fuel" sub-table: Fuel Type, Activity
     // level, Unit, Source -- header at row 24, F01 example at row 25, so
@@ -295,10 +306,10 @@ export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDet
     // IFERROR instead of leaking "10000"/"MWh"; every other row's formula
     // was already blank-resolving with nothing to clear.
     const approachRow = 25 + i;
-    writeIfNotFormula(approachSheet, `C${approachRow}`, { t: "s", v: calc?.fuelOrMaterialType ?? "" });
-    writeIfNotFormula(approachSheet, `D${approachRow}`, { t: "n", v: calc?.activityDataValue ?? 0 });
-    writeIfNotFormula(approachSheet, `E${approachRow}`, { t: "s", v: calc?.activityDataUnit ?? "" });
-    writeIfNotFormula(approachSheet, `F${approachRow}`, { t: "s", v: calc?.activityDataSource ?? "" });
+    writeIfNotFormula(approachSheet, `C${approachRow}`, calc?.fuelOrMaterialType ?? "");
+    writeIfNotFormula(approachSheet, `D${approachRow}`, calc?.activityDataValue ?? 0);
+    writeIfNotFormula(approachSheet, `E${approachRow}`, calc?.activityDataUnit ?? "");
+    writeIfNotFormula(approachSheet, `F${approachRow}`, calc?.activityDataSource ?? "");
   });
 
   return { omittedCount };
@@ -309,21 +320,21 @@ export function fillCoreSheets(wb: XLSX.WorkBook, streamDetails: SourceStreamDet
 const DATA_GAP_ROW_CAPACITY = 10;
 
 export function fillDataGapsSheet(
-  wb: XLSX.WorkBook,
+  wb: ExcelJS.Workbook,
   gaps: { sourceStreamOrOtherId: string; from: string; until: string; description: string; estimatedEmissionsTco2e: number | null; source: string }[],
 ): { omittedCount: number } {
-  const sheet = wb.Sheets["4h_Verification and Data Gaps"];
+  const sheet = wb.getWorksheet("4h_Verification and Data Gaps");
   if (!sheet) return { omittedCount: 0 };
   const omittedCount = Math.max(0, gaps.length - DATA_GAP_ROW_CAPACITY);
   const toFill = gaps.slice(0, DATA_GAP_ROW_CAPACITY);
   toFill.forEach((g, i) => {
     const row = 20 + i; // column B (row number 1-10) is a static label, not written
-    writeIfNotFormula(sheet, `C${row}`, { t: "s", v: g.sourceStreamOrOtherId });
-    writeIfNotFormula(sheet, `D${row}`, { t: "s", v: g.from });
-    writeIfNotFormula(sheet, `E${row}`, { t: "s", v: g.until });
-    writeIfNotFormula(sheet, `F${row}`, { t: "s", v: g.description });
-    writeIfNotFormula(sheet, `H${row}`, { t: "n", v: g.estimatedEmissionsTco2e ?? 0 });
-    writeIfNotFormula(sheet, `J${row}`, { t: "s", v: g.source });
+    writeIfNotFormula(sheet, `C${row}`, g.sourceStreamOrOtherId);
+    writeIfNotFormula(sheet, `D${row}`, g.from);
+    writeIfNotFormula(sheet, `E${row}`, g.until);
+    writeIfNotFormula(sheet, `F${row}`, g.description);
+    writeIfNotFormula(sheet, `H${row}`, g.estimatedEmissionsTco2e ?? 0);
+    writeIfNotFormula(sheet, `J${row}`, g.source);
   });
   return { omittedCount };
 }
@@ -337,24 +348,23 @@ export function fillDataGapsSheet(
 // grouping).
 //
 // Every address below was independently re-verified against the real
-// template file (`XLSX.readFile(..., { cellFormula: true })`, direct cell
-// reads plus `ws["!merges"]` inspection) before use, per the same
-// discipline Task 4/5 required after the blankrows-derivation bug. Two
-// real, verified defects were found and corrected here relative to the
-// task brief as originally drafted (not just re-confirmed, actually
+// template file (direct cell reads plus merge inspection) before use, per
+// the same discipline Task 4/5 required after the blankrows-derivation
+// bug. Two real, verified defects were found and corrected here relative
+// to the task brief as originally drafted (not just re-confirmed, actually
 // wrong):
 //   1. "4I - Management & QA": the brief's B7/E7 (record 0) and D17/D23/
 //      D28/D33 (records 1/2) all target either a blank margin column (B,
-//      outside every merge -- verified via ws["!merges"]) or the *label*
-//      half of a merged label/value pair (e.g. C17:D17 is one merged
-//      "Title of procedure" label cell; the value lives in the separate
-//      E17:L17 merge, anchored at E17 -- confirmed by reading E17 back and
-//      finding the template's own real value "ETS QA/QC of MI" there, not
-//      at D17). Writing to the brief's original addresses would produce
-//      cells that are either genuinely blank in the rendered sheet or
-//      silently swallowed inside a merge Excel doesn't display (only a
-//      merge's top-left anchor cell renders). Corrected to the verified
-//      anchor cells: C7/F7, E17/E23, E28/E33.
+//      outside every merge) or the *label* half of a merged label/value
+//      pair (e.g. C17:D17 is one merged "Title of procedure" label cell;
+//      the value lives in the separate E17:L17 merge, anchored at E17 --
+//      confirmed by reading E17 back and finding the template's own real
+//      value "ETS QA/QC of MI" there, not at D17). Writing to the brief's
+//      original addresses would produce cells that are either genuinely
+//      blank in the rendered sheet or silently swallowed inside a merge
+//      Excel doesn't display (only a merge's top-left anchor cell
+//      renders). Corrected to the verified anchor cells: C7/F7, E17/E23,
+//      E28/E33.
 //   2. "4J - Mitigation Measures": the brief's G/I column assignment
 //      doesn't match the sheet's own row-5 header ("Start year" is G,
 //      "Status" is H; "Pre-measure reference (tCO2e/yr)" is I, "Reporting
@@ -389,7 +399,7 @@ export const MITIGATION_MEASURE_ROW_CAPACITY = 8;
 export const MEASUREMENT_STREAM_ROW_CAPACITY = 25;
 
 export function fillRemainingSheets(
-  wb: XLSX.WorkBook,
+  wb: ExcelJS.Workbook,
   streamDetails: SourceStreamDetail[],
   methaneReports: MethaneReport[],
   mitigationMeasures: MitigationMeasure[],
@@ -403,7 +413,7 @@ export function fillRemainingSheets(
   // text). Table 2 header row 39, S01 example row 40 -> data rows 40-64
   // (row 64 is the last S25 row, row 67 is "* End of this worksheet *").
   const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
-  const emissionSourceSheet = wb.Sheets["3e1_Emission Sources (Measured)"];
+  const emissionSourceSheet = wb.getWorksheet("3e1_Emission Sources (Measured)");
   if (emissionSourceSheet) {
     measurementStreams.forEach((s, i) => {
       const row1 = 9 + i;
@@ -412,10 +422,10 @@ export function fillRemainingSheets(
       // measured quantity (I4 fix). E9's only content is the template's
       // own static "Illustrative" label, not a real header -- E is never
       // written here (was previously, incorrectly, getting materiality).
-      writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
-      writeIfNotFormula(emissionSourceSheet, `D${row2}`, { t: "s", v: titleCaseMateriality(s.materiality) });
-      writeIfNotFormula(emissionSourceSheet, `F${row2}`, { t: "s", v: s.measurementApproach?.measurementMethod ?? "" });
-      writeIfNotFormula(emissionSourceSheet, `G${row2}`, { t: "s", v: s.measurementApproach?.qaqcProcedure ?? "" });
+      writeIfNotFormula(emissionSourceSheet, `D${row1}`, titleCaseMateriality(s.materiality));
+      writeIfNotFormula(emissionSourceSheet, `D${row2}`, titleCaseMateriality(s.materiality));
+      writeIfNotFormula(emissionSourceSheet, `F${row2}`, s.measurementApproach?.measurementMethod ?? "");
+      writeIfNotFormula(emissionSourceSheet, `G${row2}`, s.measurementApproach?.qaqcProcedure ?? "");
     });
   }
 
@@ -426,11 +436,11 @@ export function fillRemainingSheets(
   // it. This mapping stays approximate by nature of the sheet's own
   // design, disclosed as such rather than presented as precise (per task
   // instruction, used verbatim from the brief -- not "fixed").
-  const measureSheet = wb.Sheets["3e2_MeasurementBasedApproaches"];
+  const measureSheet = wb.getWorksheet("3e2_MeasurementBasedApproaches");
   if (measureSheet && measurementStreams.length > 0) {
     const first = measurementStreams[0].measurementApproach;
-    writeIfNotFormula(measureSheet, "C6", { t: "s", v: first?.measurementMethod ?? "" });
-    writeIfNotFormula(measureSheet, "C8", { t: "s", v: first?.monitoringFrequency ?? "" });
+    writeIfNotFormula(measureSheet, "C6", first?.measurementMethod ?? "");
+    writeIfNotFormula(measureSheet, "C8", first?.monitoringFrequency ?? "");
   }
 
   // 3f_Fallback Approach -- one description per workbook (the template has
@@ -438,10 +448,10 @@ export function fillRemainingSheets(
   // description instruction at row 7-8; (b) justification instruction at
   // row 19-20. Same narrative-section caveat as above.
   const fallbackStreams = streamDetails.filter((s) => s.approachTier === "fallback");
-  const fallbackSheet = wb.Sheets["3f_Fallback Approach"];
+  const fallbackSheet = wb.getWorksheet("3f_Fallback Approach");
   if (fallbackSheet && fallbackStreams.length > 0) {
-    writeIfNotFormula(fallbackSheet, "C8", { t: "s", v: fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "" });
-    writeIfNotFormula(fallbackSheet, "C20", { t: "s", v: fallbackStreams[0].fallbackApproach?.justification ?? "" });
+    writeIfNotFormula(fallbackSheet, "C8", fallbackStreams[0].fallbackApproach?.fallbackMethodDescription ?? "");
+    writeIfNotFormula(fallbackSheet, "C20", fallbackStreams[0].fallbackApproach?.justification ?? "");
   }
 
   // 3g_Methane -- facility-wide, per the schema comment on methaneReports
@@ -450,12 +460,12 @@ export function fillRemainingSheets(
   // one, since the template's Methane sheet is a single narrative section,
   // not a per-facility table. (a) block spans rows 7-11, (b) block rows
   // 12-14 -- another narrative section, approximate by nature.
-  const methaneSheet = wb.Sheets["3g_Methane"];
+  const methaneSheet = wb.getWorksheet("3g_Methane");
   if (methaneSheet && methaneReports.length > 0) {
     const m = methaneReports[0];
-    writeIfNotFormula(methaneSheet, "C9", { t: "n", v: m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0 });
-    writeIfNotFormula(methaneSheet, "C10", { t: "s", v: m.quantificationMethod ?? "" });
-    writeIfNotFormula(methaneSheet, "C13", { t: "s", v: m.methaneSourcesDescription ?? "" });
+    writeIfNotFormula(methaneSheet, "C9", m.annualMethaneEmissions ? Number(m.annualMethaneEmissions) : 0);
+    writeIfNotFormula(methaneSheet, "C10", m.quantificationMethod ?? "");
+    writeIfNotFormula(methaneSheet, "C13", m.methaneSourcesDescription ?? "");
   }
 
   // 4I - Management & QA -- the template wants three distinct narrative
@@ -476,18 +486,18 @@ export function fillRemainingSheets(
   // 33, same E-column correction). Any beyond the third are not
   // represented on this sheet -- they remain fully visible in the generic
   // workbook.
-  const qaSheet = wb.Sheets["4I - Management & QA"];
+  const qaSheet = wb.getWorksheet("4I - Management & QA");
   if (qaSheet && managementQaRecords[0]) {
-    writeIfNotFormula(qaSheet, "C7", { t: "s", v: managementQaRecords[0].responsiblePerson ?? "" });
-    writeIfNotFormula(qaSheet, "F7", { t: "s", v: managementQaRecords[0].qaProcedureDescription ?? "" });
+    writeIfNotFormula(qaSheet, "C7", managementQaRecords[0].responsiblePerson ?? "");
+    writeIfNotFormula(qaSheet, "F7", managementQaRecords[0].qaProcedureDescription ?? "");
   }
   if (qaSheet && managementQaRecords[1]) {
-    writeIfNotFormula(qaSheet, "E17", { t: "s", v: managementQaRecords[1].qaProcedureDescription ?? "" });
-    writeIfNotFormula(qaSheet, "E23", { t: "s", v: managementQaRecords[1].responsiblePerson ?? "" });
+    writeIfNotFormula(qaSheet, "E17", managementQaRecords[1].qaProcedureDescription ?? "");
+    writeIfNotFormula(qaSheet, "E23", managementQaRecords[1].responsiblePerson ?? "");
   }
   if (qaSheet && managementQaRecords[2]) {
-    writeIfNotFormula(qaSheet, "E28", { t: "s", v: managementQaRecords[2].qaProcedureDescription ?? "" });
-    writeIfNotFormula(qaSheet, "E33", { t: "s", v: managementQaRecords[2].responsiblePerson ?? "" });
+    writeIfNotFormula(qaSheet, "E28", managementQaRecords[2].qaProcedureDescription ?? "");
+    writeIfNotFormula(qaSheet, "E33", managementQaRecords[2].responsiblePerson ?? "");
   }
 
   // 4J - Mitigation Measures -- one row per measure. Header at row 5,
@@ -498,13 +508,13 @@ export function fillRemainingSheets(
   // "Description of measure", H="Status" (not G, which is "Start year"),
   // J="Reporting year reduction (tCO2e)" (not I, which is "Pre-measure
   // reference (tCO2e/yr)").
-  const measuresSheet = wb.Sheets["4J - Mitigation Measures"];
+  const measuresSheet = wb.getWorksheet("4J - Mitigation Measures");
   if (measuresSheet) {
     mitigationMeasures.slice(0, MITIGATION_MEASURE_ROW_CAPACITY).forEach((m, i) => {
       const row = 7 + i;
-      writeIfNotFormula(measuresSheet, `C${row}`, { t: "s", v: m.measureDescription });
-      writeIfNotFormula(measuresSheet, `H${row}`, { t: "s", v: m.status });
-      writeIfNotFormula(measuresSheet, `J${row}`, { t: "n", v: m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0 });
+      writeIfNotFormula(measuresSheet, `C${row}`, m.measureDescription);
+      writeIfNotFormula(measuresSheet, `H${row}`, m.status);
+      writeIfNotFormula(measuresSheet, `J${row}`, m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0);
     });
   }
 }
@@ -524,7 +534,7 @@ export const PRODUCT_ROW_CAPACITY = 10;
 // 100000). See task-11-brief.md for the full cell-by-cell verification
 // this function's addresses are based on.
 export function fillFacilityDescriptionSheets(
-  wb: XLSX.WorkBook,
+  wb: ExcelJS.Workbook,
   facility: { id: number; name: string },
   facilityIdentifier: FacilityIdentifier | undefined,
   facilityContacts: FacilityContact[],
@@ -533,68 +543,68 @@ export function fillFacilityDescriptionSheets(
 ): void {
   // 2c1_ Identifiers: facility info (rows 5-11, all verified answer
   // cells are column H even where -- unlike every other row here -- H6/
-  // H8 aren't part of a <mergeCell>, confirmed via raw OOXML), the
+  // H8 aren't part of a merged range, confirmed via raw OOXML), the
   // description (C16), and the primary/alternative contact blocks
   // (rows 30-44). This sheet ships with no illustrative content at all
   // (confirmed directly) -- nothing to clear here, only to fill.
-  const idSheet = wb.Sheets["2c1_ Identifiers"];
+  const idSheet = wb.getWorksheet("2c1_ Identifiers");
   if (idSheet) {
-    writeIfNotFormula(idSheet, "H5", { t: "s", v: facility.name });
+    writeIfNotFormula(idSheet, "H5", facility.name);
     if (facilityIdentifier?.groupParentEntity) {
-      writeIfNotFormula(idSheet, "H6", { t: "s", v: facilityIdentifier.groupParentEntity });
+      writeIfNotFormula(idSheet, "H6", facilityIdentifier.groupParentEntity);
     }
-    writeIfNotFormula(idSheet, "H7", { t: "s", v: facility.name });
+    writeIfNotFormula(idSheet, "H7", facility.name);
     if (facilityIdentifier?.economicLicenceNumber) {
-      writeIfNotFormula(idSheet, "H8", { t: "s", v: facilityIdentifier.economicLicenceNumber });
+      writeIfNotFormula(idSheet, "H8", facilityIdentifier.economicLicenceNumber);
     }
     if (facilityIdentifier?.environmentalPermitNumber) {
-      writeIfNotFormula(idSheet, "H9", { t: "s", v: facilityIdentifier.environmentalPermitNumber });
+      writeIfNotFormula(idSheet, "H9", facilityIdentifier.environmentalPermitNumber);
     }
     if (facilityIdentifier?.address) {
-      writeIfNotFormula(idSheet, "H10", { t: "s", v: facilityIdentifier.address });
+      writeIfNotFormula(idSheet, "H10", facilityIdentifier.address);
     }
     if (facilityIdentifier?.coordinatesLat != null && facilityIdentifier?.coordinatesLng != null) {
-      writeIfNotFormula(idSheet, "H11", { t: "s", v: `${facilityIdentifier.coordinatesLat}, ${facilityIdentifier.coordinatesLng}` });
+      writeIfNotFormula(idSheet, "H11", `${facilityIdentifier.coordinatesLat}, ${facilityIdentifier.coordinatesLng}`);
     }
     if (facilityIdentifier?.activityDescription) {
-      writeIfNotFormula(idSheet, "C16", { t: "s", v: facilityIdentifier.activityDescription });
+      writeIfNotFormula(idSheet, "C16", facilityIdentifier.activityDescription);
     }
 
     const primary = facilityContacts.find((c) => c.contactType === "primary");
     if (primary) {
-      if (primary.title) writeIfNotFormula(idSheet, "H30", { t: "s", v: primary.title });
-      if (primary.firstName) writeIfNotFormula(idSheet, "H31", { t: "s", v: primary.firstName });
-      if (primary.surname) writeIfNotFormula(idSheet, "H32", { t: "s", v: primary.surname });
-      if (primary.jobTitle) writeIfNotFormula(idSheet, "H33", { t: "s", v: primary.jobTitle });
-      if (primary.organisationName) writeIfNotFormula(idSheet, "H34", { t: "s", v: primary.organisationName });
-      if (primary.phone) writeIfNotFormula(idSheet, "H35", { t: "s", v: primary.phone });
-      if (primary.email) writeIfNotFormula(idSheet, "H36", { t: "s", v: primary.email });
+      if (primary.title) writeIfNotFormula(idSheet, "H30", primary.title);
+      if (primary.firstName) writeIfNotFormula(idSheet, "H31", primary.firstName);
+      if (primary.surname) writeIfNotFormula(idSheet, "H32", primary.surname);
+      if (primary.jobTitle) writeIfNotFormula(idSheet, "H33", primary.jobTitle);
+      if (primary.organisationName) writeIfNotFormula(idSheet, "H34", primary.organisationName);
+      if (primary.phone) writeIfNotFormula(idSheet, "H35", primary.phone);
+      if (primary.email) writeIfNotFormula(idSheet, "H36", primary.email);
     }
     const alternative = facilityContacts.find((c) => c.contactType === "alternative");
     if (alternative) {
-      if (alternative.title) writeIfNotFormula(idSheet, "H38", { t: "s", v: alternative.title });
-      if (alternative.firstName) writeIfNotFormula(idSheet, "H39", { t: "s", v: alternative.firstName });
-      if (alternative.surname) writeIfNotFormula(idSheet, "H40", { t: "s", v: alternative.surname });
-      if (alternative.jobTitle) writeIfNotFormula(idSheet, "H41", { t: "s", v: alternative.jobTitle });
-      if (alternative.organisationName) writeIfNotFormula(idSheet, "H42", { t: "s", v: alternative.organisationName });
-      if (alternative.phone) writeIfNotFormula(idSheet, "H43", { t: "s", v: alternative.phone });
-      if (alternative.email) writeIfNotFormula(idSheet, "H44", { t: "s", v: alternative.email });
+      if (alternative.title) writeIfNotFormula(idSheet, "H38", alternative.title);
+      if (alternative.firstName) writeIfNotFormula(idSheet, "H39", alternative.firstName);
+      if (alternative.surname) writeIfNotFormula(idSheet, "H40", alternative.surname);
+      if (alternative.jobTitle) writeIfNotFormula(idSheet, "H41", alternative.jobTitle);
+      if (alternative.organisationName) writeIfNotFormula(idSheet, "H42", alternative.organisationName);
+      if (alternative.phone) writeIfNotFormula(idSheet, "H43", alternative.phone);
+      if (alternative.email) writeIfNotFormula(idSheet, "H44", alternative.email);
     }
   }
 
-  const descSheet = wb.Sheets["2c2_Facility Description"];
+  const descSheet = wb.getWorksheet("2c2_Facility Description");
   if (descSheet) {
     // Product table (header row 16, data rows 17-26, P01-P10).
     facilityProducts.slice(0, PRODUCT_ROW_CAPACITY).forEach((p, i) => {
       const row = 17 + i;
-      if (p.productCategory) writeIfNotFormula(descSheet, `D${row}`, { t: "s", v: p.productCategory });
-      if (p.productionTechnology) writeIfNotFormula(descSheet, `E${row}`, { t: "s", v: p.productionTechnology });
-      writeIfNotFormula(descSheet, `G${row}`, { t: "b", v: p.energyRelatedEmissions ?? false });
-      writeIfNotFormula(descSheet, `H${row}`, { t: "b", v: p.processEmissions ?? false });
-      if (p.productionCapacity != null) writeIfNotFormula(descSheet, `I${row}`, { t: "n", v: Number(p.productionCapacity) });
-      if (p.productionCapacityUnit) writeIfNotFormula(descSheet, `J${row}`, { t: "s", v: p.productionCapacityUnit });
-      if (p.actualProduction != null) writeIfNotFormula(descSheet, `K${row}`, { t: "n", v: Number(p.actualProduction) });
-      if (p.actualProductionUnit) writeIfNotFormula(descSheet, `L${row}`, { t: "s", v: p.actualProductionUnit });
+      if (p.productCategory) writeIfNotFormula(descSheet, `D${row}`, p.productCategory);
+      if (p.productionTechnology) writeIfNotFormula(descSheet, `E${row}`, p.productionTechnology);
+      writeIfNotFormula(descSheet, `G${row}`, p.energyRelatedEmissions ?? false);
+      writeIfNotFormula(descSheet, `H${row}`, p.processEmissions ?? false);
+      if (p.productionCapacity != null) writeIfNotFormula(descSheet, `I${row}`, Number(p.productionCapacity));
+      if (p.productionCapacityUnit) writeIfNotFormula(descSheet, `J${row}`, p.productionCapacityUnit);
+      if (p.actualProduction != null) writeIfNotFormula(descSheet, `K${row}`, Number(p.actualProduction));
+      if (p.actualProductionUnit) writeIfNotFormula(descSheet, `L${row}`, p.actualProductionUnit);
     });
 
     // Emission Source table (header row 42, data rows 43-67, S01-S25).
@@ -608,8 +618,8 @@ export function fillFacilityDescriptionSheets(
     const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
     measurementStreams.forEach((s, i) => {
       const row = 43 + i;
-      writeIfNotFormula(descSheet, `D${row}`, { t: "s", v: s.description ?? s.name });
-      writeIfNotFormula(descSheet, `G${row}`, { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 });
+      writeIfNotFormula(descSheet, `D${row}`, s.description ?? s.name);
+      writeIfNotFormula(descSheet, `G${row}`, s.estimatedAnnualEmissionsTco2e ?? 0);
       // E (Associated Product ID), F (Types of GHGs emitted), H (Energy
       // related emissions?), I (Process emissions?) are never written --
       // no foreign key links a source stream to a facilityProducts row
