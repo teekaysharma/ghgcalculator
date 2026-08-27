@@ -1148,18 +1148,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           storage.listFacilityProducts(req.organizationId!, facilityId),
         ]);
         const methaneReportsData = methaneReport ? [methaneReport] : [];
-        // facilityIdentifier/facilityContacts/facilityProducts are fetched
-        // here in Task 10 (the data-fetching is already correct and
-        // facility-scoped) but not used yet -- Task 11 adds the
-        // fillFacilityDescriptionSheets import and call below, once that
-        // function exists. Until Task 11 lands, 2c1/2c2 ship exactly as
-        // they do today (unfilled), which is a correct, known state, not a
-        // silent regression -- everything else in the file (3d1/3d2/3e1/
-        // 4J) is already properly facility-isolated by this task alone.
 
-        const { loadEadTemplate, clearIllustrativeRows, fillCoreSheets, fillRemainingSheets, fillDataGapsSheet } = await import(
-          "./utils/ead-template-fill"
-        );
+        const {
+          loadEadTemplate,
+          clearIllustrativeRows,
+          fillCoreSheets,
+          fillRemainingSheets,
+          fillDataGapsSheet,
+          fillFacilityDescriptionSheets,
+        } = await import("./utils/ead-template-fill");
         const wb = loadEadTemplate();
         clearIllustrativeRows(wb);
         fillCoreSheets(wb, streamDetails);
@@ -1171,7 +1168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // would misrepresent it as facility-specific when it isn't).
         fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, []);
         fillDataGapsSheet(wb, []);
-        // TASK 11 ADDS HERE: fillFacilityDescriptionSheets(wb, facility, facilityIdentifier, facilityContacts, facilityProducts, streamDetails);
+        fillFacilityDescriptionSheets(wb, facility, facilityIdentifier, facilityContacts, facilityProducts, streamDetails);
 
         wb.Workbook = { ...(wb.Workbook ?? {}), CalcPr: { ...(wb.Workbook?.CalcPr ?? {}), fullCalcOnLoad: 1 } };
         const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

@@ -14,7 +14,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import type { SourceStreamDetail } from "../storage";
-import type { MethaneReport, MitigationMeasure, ManagementQaRecord } from "@shared/schema";
+import type { MethaneReport, MitigationMeasure, ManagementQaRecord, FacilityIdentifier, FacilityContact, FacilityProduct } from "@shared/schema";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -161,6 +161,42 @@ const ILLUSTRATIVE_CELLS: [string, string][] = [
   // completely untouched.
   ["2c2_Facility Description", "G75"],
   ["2c2_Facility Description", "H75"],
+  // 2c2_Facility Description Product table (header row 16): illustrative
+  // only at rows 17-18 (P01/P02), confirmed every other cell in this
+  // 10-row table already genuinely blank.
+  ["2c2_Facility Description", "D17"],
+  ["2c2_Facility Description", "D18"],
+  ["2c2_Facility Description", "G17"],
+  ["2c2_Facility Description", "G18"],
+  ["2c2_Facility Description", "H17"],
+  ["2c2_Facility Description", "H18"],
+  // 2c2_Facility Description Emission Source table (header row 42):
+  // column D has fabricated placeholder text in ALL 25 rows (43-67,
+  // unlike every other illustrative table in this file, which only
+  // fills its first row/first few rows) -- confirmed by direct read,
+  // not assumed from the row-17/18 pattern above.
+  ["2c2_Facility Description", "D43"], ["2c2_Facility Description", "D44"],
+  ["2c2_Facility Description", "D45"], ["2c2_Facility Description", "D46"],
+  ["2c2_Facility Description", "D47"], ["2c2_Facility Description", "D48"],
+  ["2c2_Facility Description", "D49"], ["2c2_Facility Description", "D50"],
+  ["2c2_Facility Description", "D51"], ["2c2_Facility Description", "D52"],
+  ["2c2_Facility Description", "D53"], ["2c2_Facility Description", "D54"],
+  ["2c2_Facility Description", "D55"], ["2c2_Facility Description", "D56"],
+  ["2c2_Facility Description", "D57"], ["2c2_Facility Description", "D58"],
+  ["2c2_Facility Description", "D59"], ["2c2_Facility Description", "D60"],
+  ["2c2_Facility Description", "D61"], ["2c2_Facility Description", "D62"],
+  ["2c2_Facility Description", "D63"], ["2c2_Facility Description", "D64"],
+  ["2c2_Facility Description", "D65"], ["2c2_Facility Description", "D66"],
+  ["2c2_Facility Description", "D67"],
+  // E43:E46 only (P01/P02/P03/P03) -- E47:E67 confirmed already blank.
+  ["2c2_Facility Description", "E43"],
+  ["2c2_Facility Description", "E44"],
+  ["2c2_Facility Description", "E45"],
+  ["2c2_Facility Description", "E46"],
+  // G43/H43/I43 only (row 1 of the table) -- rows 44-67 confirmed blank.
+  ["2c2_Facility Description", "G43"],
+  ["2c2_Facility Description", "H43"],
+  ["2c2_Facility Description", "I43"],
 ];
 
 // Shared write guard for every fill function (Tasks 5 and 6): never
@@ -391,8 +427,11 @@ export function fillRemainingSheets(
     measurementStreams.forEach((s, i) => {
       const row1 = 9 + i;
       const row2 = 40 + i;
-      writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "n", v: s.measurementApproach?.annualMeasuredQuantity ?? 0 });
-      writeIfNotFormula(emissionSourceSheet, `E${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
+      // D8 header is "Category (see above)" -- materiality, not a raw
+      // measured quantity (I4 fix). E9's only content is the template's
+      // own static "Illustrative" label, not a real header -- E is never
+      // written here (was previously, incorrectly, getting materiality).
+      writeIfNotFormula(emissionSourceSheet, `D${row1}`, { t: "s", v: titleCaseMateriality(s.materiality) });
       writeIfNotFormula(emissionSourceSheet, `D${row2}`, { t: "s", v: titleCaseMateriality(s.materiality) });
       writeIfNotFormula(emissionSourceSheet, `F${row2}`, { t: "s", v: s.measurementApproach?.measurementMethod ?? "" });
       writeIfNotFormula(emissionSourceSheet, `G${row2}`, { t: "s", v: s.measurementApproach?.qaqcProcedure ?? "" });
@@ -485,6 +524,117 @@ export function fillRemainingSheets(
       writeIfNotFormula(measuresSheet, `C${row}`, { t: "s", v: m.measureDescription });
       writeIfNotFormula(measuresSheet, `H${row}`, { t: "s", v: m.status });
       writeIfNotFormula(measuresSheet, `J${row}`, { t: "n", v: m.estimatedReductionTco2e ? Number(m.estimatedReductionTco2e) : 0 });
+    });
+  }
+}
+
+// 2c2_Facility Description's Product table has exactly 10 pre-labeled
+// rows (P01-P10, rows 17-26) -- confirmed by direct read, row 27
+// transitions to an unrelated "Estimated annual emissions" narrative
+// section with zero buffer, same pattern as every other capped sheet
+// in this file.
+export const PRODUCT_ROW_CAPACITY = 10;
+
+// Task 11: 2c1_Identifiers/2c2_Facility Description's facility-identity
+// data (previously never filled by any prior task -- the ROOT CAUSE of
+// 3e1's I4 bug: 3e1's "Total emissions" column is a formula reading from
+// 2c2!G43:G67, which nothing had ever written to, so every measured
+// emission source always reported 0 or the template's own fabricated
+// 100000). See task-11-brief.md for the full cell-by-cell verification
+// this function's addresses are based on.
+export function fillFacilityDescriptionSheets(
+  wb: XLSX.WorkBook,
+  facility: { id: number; name: string },
+  facilityIdentifier: FacilityIdentifier | undefined,
+  facilityContacts: FacilityContact[],
+  facilityProducts: FacilityProduct[],
+  streamDetails: SourceStreamDetail[],
+): void {
+  // 2c1_ Identifiers: facility info (rows 5-11, all verified answer
+  // cells are column H even where -- unlike every other row here -- H6/
+  // H8 aren't part of a <mergeCell>, confirmed via raw OOXML), the
+  // description (C16), and the primary/alternative contact blocks
+  // (rows 30-44). This sheet ships with no illustrative content at all
+  // (confirmed directly) -- nothing to clear here, only to fill.
+  const idSheet = wb.Sheets["2c1_ Identifiers"];
+  if (idSheet) {
+    writeIfNotFormula(idSheet, "H5", { t: "s", v: facility.name });
+    if (facilityIdentifier?.groupParentEntity) {
+      writeIfNotFormula(idSheet, "H6", { t: "s", v: facilityIdentifier.groupParentEntity });
+    }
+    writeIfNotFormula(idSheet, "H7", { t: "s", v: facility.name });
+    if (facilityIdentifier?.economicLicenceNumber) {
+      writeIfNotFormula(idSheet, "H8", { t: "s", v: facilityIdentifier.economicLicenceNumber });
+    }
+    if (facilityIdentifier?.environmentalPermitNumber) {
+      writeIfNotFormula(idSheet, "H9", { t: "s", v: facilityIdentifier.environmentalPermitNumber });
+    }
+    if (facilityIdentifier?.address) {
+      writeIfNotFormula(idSheet, "H10", { t: "s", v: facilityIdentifier.address });
+    }
+    if (facilityIdentifier?.coordinatesLat != null && facilityIdentifier?.coordinatesLng != null) {
+      writeIfNotFormula(idSheet, "H11", { t: "s", v: `${facilityIdentifier.coordinatesLat}, ${facilityIdentifier.coordinatesLng}` });
+    }
+    if (facilityIdentifier?.activityDescription) {
+      writeIfNotFormula(idSheet, "C16", { t: "s", v: facilityIdentifier.activityDescription });
+    }
+
+    const primary = facilityContacts.find((c) => c.contactType === "primary");
+    if (primary) {
+      if (primary.title) writeIfNotFormula(idSheet, "H30", { t: "s", v: primary.title });
+      if (primary.firstName) writeIfNotFormula(idSheet, "H31", { t: "s", v: primary.firstName });
+      if (primary.surname) writeIfNotFormula(idSheet, "H32", { t: "s", v: primary.surname });
+      if (primary.jobTitle) writeIfNotFormula(idSheet, "H33", { t: "s", v: primary.jobTitle });
+      if (primary.organisationName) writeIfNotFormula(idSheet, "H34", { t: "s", v: primary.organisationName });
+      if (primary.phone) writeIfNotFormula(idSheet, "H35", { t: "s", v: primary.phone });
+      if (primary.email) writeIfNotFormula(idSheet, "H36", { t: "s", v: primary.email });
+    }
+    const alternative = facilityContacts.find((c) => c.contactType === "alternative");
+    if (alternative) {
+      if (alternative.title) writeIfNotFormula(idSheet, "H38", { t: "s", v: alternative.title });
+      if (alternative.firstName) writeIfNotFormula(idSheet, "H39", { t: "s", v: alternative.firstName });
+      if (alternative.surname) writeIfNotFormula(idSheet, "H40", { t: "s", v: alternative.surname });
+      if (alternative.jobTitle) writeIfNotFormula(idSheet, "H41", { t: "s", v: alternative.jobTitle });
+      if (alternative.organisationName) writeIfNotFormula(idSheet, "H42", { t: "s", v: alternative.organisationName });
+      if (alternative.phone) writeIfNotFormula(idSheet, "H43", { t: "s", v: alternative.phone });
+      if (alternative.email) writeIfNotFormula(idSheet, "H44", { t: "s", v: alternative.email });
+    }
+  }
+
+  const descSheet = wb.Sheets["2c2_Facility Description"];
+  if (descSheet) {
+    // Product table (header row 16, data rows 17-26, P01-P10).
+    facilityProducts.slice(0, PRODUCT_ROW_CAPACITY).forEach((p, i) => {
+      const row = 17 + i;
+      if (p.productCategory) writeIfNotFormula(descSheet, `D${row}`, { t: "s", v: p.productCategory });
+      if (p.productionTechnology) writeIfNotFormula(descSheet, `E${row}`, { t: "s", v: p.productionTechnology });
+      writeIfNotFormula(descSheet, `G${row}`, { t: "b", v: p.energyRelatedEmissions ?? false });
+      writeIfNotFormula(descSheet, `H${row}`, { t: "b", v: p.processEmissions ?? false });
+      if (p.productionCapacity != null) writeIfNotFormula(descSheet, `I${row}`, { t: "n", v: Number(p.productionCapacity) });
+      if (p.productionCapacityUnit) writeIfNotFormula(descSheet, `J${row}`, { t: "s", v: p.productionCapacityUnit });
+      if (p.actualProduction != null) writeIfNotFormula(descSheet, `K${row}`, { t: "n", v: Number(p.actualProduction) });
+      if (p.actualProductionUnit) writeIfNotFormula(descSheet, `L${row}`, { t: "s", v: p.actualProductionUnit });
+    });
+
+    // Emission Source table (header row 42, data rows 43-67, S01-S25).
+    // Same measurement-tier streams, same array index, as
+    // fillRemainingSheets' 3e1 loop -- S01 in this table lines up
+    // positionally with S01 in 3e1. This is the actual fix for I4:
+    // 3e1!C9:C33's own formulas read directly from this table's G
+    // column (confirmed: 3e1!C9.f === "'2c2_Facility Description'!G43"),
+    // so filling G here is what makes 3e1's "Total emissions" figures
+    // resolve to real numbers instead of 0 or a fabricated value.
+    const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
+    measurementStreams.forEach((s, i) => {
+      const row = 43 + i;
+      writeIfNotFormula(descSheet, `D${row}`, { t: "s", v: s.description ?? s.name });
+      writeIfNotFormula(descSheet, `G${row}`, { t: "n", v: s.estimatedAnnualEmissionsTco2e ?? 0 });
+      // E (Associated Product ID), F (Types of GHGs emitted), H (Energy
+      // related emissions?), I (Process emissions?) are never written --
+      // no foreign key links a source stream to a facilityProducts row
+      // in this schema, so any value here would be fabricated. Genuine,
+      // disclosed gap -- matches the client-facing help text already
+      // shipped (commit 3b3d695).
     });
   }
 }
