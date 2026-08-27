@@ -456,7 +456,7 @@ export function fillRemainingSheets(
     // redirects a write to a merge slave onto its master (SheetJS did
     // not, so this write was simply invisible before, never destructive).
     // The real, blank answer merge for each part sits one row below
-    // (B7:L7 / B9:K16 -- rows 10-15 are merge slaves of row 9, one large
+    // (B7:L7 / B9:K15 -- rows 10-15 are merge slaves of row 9, one large
     // answer box), confirmed isMaster and value === null before writing.
     writeIfNotFormula(measureSheet, "B7", first?.measurementMethod ?? "");
     writeIfNotFormula(measureSheet, "B9", first?.monitoringFrequency ?? "");
