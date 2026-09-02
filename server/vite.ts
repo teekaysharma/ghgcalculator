@@ -65,8 +65,13 @@ export async function setupVite(app: Express, server: Server) {
   });
 }
 
-export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+export function serveStatic(app: Express, distPathOverride?: string) {
+  // Defaults to __dirname-relative, correct for this app's own esbuild
+  // output (dist/index.js sits next to dist/public). Vercel's serverless
+  // function bundler (see api/index.ts) does not preserve that same
+  // relative layout, so it passes an explicit override instead of relying
+  // on this default.
+  const distPath = distPathOverride ?? path.resolve(__dirname, "public");
 
   if (!fs.existsSync(distPath)) {
     throw new Error(

@@ -1,0 +1,119 @@
+import "dotenv/config";
+import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import { Pool } from "pg";
+import { type Server } from "http";
+import { registerRoutes } from "./routes";
+import { setupVite, serveStatic, log } from "./vite";
+import { passport } from "./auth";
+
+if (!process.env.SESSION_SECRET) {
+  throw new Error(
+    "SESSION_SECRET is not set. Set a long random string as SESSION_SECRET in your .env file (see .env.example).",
+  );
+}
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set. See .env.example.");
+}
+// Captured once the guards above have run -- TS narrowing doesn't carry
+// module-level `process.env` checks across the function boundary into
+// createApp() below, since createApp can (in principle) be called at any
+// later time. These consts are what actually get used there.
+const SESSION_SECRET = process.env.SESSION_SECRET;
+const DATABASE_URL = process.env.DATABASE_URL;
+
+// Everything needed to build the fully-configured Express app, minus
+// actually listening on a port -- shared by server/index.ts (local dev /
+// persistent-host, calls .listen() on the returned server) and
+// api/index.ts (Vercel serverless function, never listens, just exports
+// the app as the request handler).
+export async function createApp(options?: { staticDistPath?: string }): Promise<{ app: express.Express; server: Server }> {
+  const app = express();
+
+  // Vercel (and any TLS-terminating proxy) forwards to this app over plain
+  // HTTP internally -- without trusting the proxy, Express can't tell the
+  // original request was HTTPS, which breaks the secure cookie flag below
+  // (session/login would silently fail on Vercel). Harmless for local dev
+  // (no proxy in front there).
+  app.set("trust proxy", 1);
+
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+
+  // Session store lives in the same Postgres database as everything else.
+  // connect-pg-simple talks to it over the standard Postgres wire protocol via
+  // `pg`, separate from the @neondatabase/serverless HTTP driver used for app
+  // queries in server/db.ts -- both point at the same DATABASE_URL, Neon
+  // supports both protocols on one connection string.
+  const PgSession = connectPgSimple(session);
+  const sessionPool = new Pool({ connectionString: DATABASE_URL });
+
+  app.use(
+    session({
+      store: new PgSession({ pool: sessionPool, tableName: "session", createTableIfMissing: true }),
+      secret: SESSION_SECRET,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+      },
+    }),
+  );
+
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  app.use((req, res, next) => {
+    const start = Date.now();
+    const path = req.path;
+    let capturedJsonResponse: Record<string, any> | undefined = undefined;
+
+    const originalResJson = res.json;
+    res.json = function (bodyJson, ...args) {
+      capturedJsonResponse = bodyJson;
+      return originalResJson.apply(res, [bodyJson, ...args]);
+    };
+
+    res.on("finish", () => {
+      const duration = Date.now() - start;
+      if (path.startsWith("/api")) {
+        let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+        if (capturedJsonResponse) {
+          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        }
+
+        if (logLine.length > 80) {
+          logLine = logLine.slice(0, 79) + "…";
+        }
+
+        log(logLine);
+      }
+    });
+
+    next();
+  });
+
+  const server = await registerRoutes(app);
+
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+
+    res.status(status).json({ message });
+  });
+
+  // importantly only setup vite in development and after
+  // setting up all the other routes so the catch-all route
+  // doesn't interfere with the other routes
+  if (app.get("env") === "development") {
+    await setupVite(app, server);
+  } else {
+    serveStatic(app, options?.staticDistPath);
+  }
+
+  return { app, server };
+}
