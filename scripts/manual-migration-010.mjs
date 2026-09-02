@@ -10,9 +10,19 @@
 // convention). See
 // docs/superpowers/specs/2026-09-02-scope3-factor-library-design.md.
 //
-// Idempotent: skips any of the three seed steps if that table already has
-// rows. Wrapped in one transaction, same pattern as every prior manual
-// migration in this project.
+// Idempotent: skips the epa_naics_factors and country_exiobase_regions seed
+// steps if that table already has rows. exiobase_factors is handled
+// differently (see EXIOBASE_NOTES_MARKER below): the whole-branch review
+// found the original seed captured only ~70% of true GHG mass and stored
+// undefined cells as 0.0 instead of NULL (see
+// .superpowers/sdd/2026-09-02-scope3-factor-library/final-review-fix-report.md).
+// scripts/exiobase/build_factors.py now emits corrected JSON with a
+// per-row `notes` marker; this script detects rows missing that marker
+// (the old/incomplete seed) and TRUNCATEs + reseeds rather than leaving
+// stale data alongside or requiring a manual DB edit -- if every row
+// already carries the marker, the step is a no-op. Wrapped in one
+// transaction, same pattern as every prior manual migration in this
+// project.
 //
 // Usage: node scripts/manual-migration-010.mjs
 
@@ -140,6 +150,28 @@ async function bulkInsert(client, table, columns, rows, conflictDdl, chunkSize =
 // Extend with more RoW-member countries only when a real client needs one
 // not yet listed here -- do not speculatively fill in the remaining ~145
 // countries against unverified assumptions.
+// Fixed retrieval-date constant, not `new Date()` at migration-run time.
+// This is when this session actually retrieved the source CSV from
+// data.gov, not when this migration script happens to execute (which could
+// be re-run, on a fresh DB, long after retrieval). Sourced from the
+// Downloads-folder file's own OS mtime for
+// SupplyChainGHGEmissionFactors_v1.3.0_NAICS_CO2e_USD2022.csv, checked
+// this session: 2026-08-17 22:34 local time -- the earliest of the two
+// copies found there (a same-named "(1)" duplicate exists at 2026-08-23,
+// consistent with a browser re-download of the same file, not a newer
+// dataset revision; the file bundled into this repo at
+// server/assets/epa-naics-factors-v1.3.0-2022.csv is byte-identical to
+// both).
+const EPA_RETRIEVAL_DATE = "2026-08-17T22:34:00";
+
+// Marker written into every exiobase_factors row's `notes` column,
+// distinguishing the corrected (full 25-row GHG stressor set, NULL for
+// undefined output cells) seed from the old incomplete one. Doubles as the
+// idempotency signal below: any row missing this exact marker means the
+// table holds pre-fix data and needs a truncate+reseed, not a skip.
+const EXIOBASE_NOTES_MARKER =
+  "EXIOBASE v3.10.2 -- non-commercial license only, see LICENSE.txt at https://zenodo.org/records/20051562";
+
 const NAMED_COUNTRIES = [
   ["AT", "Austria"], ["BE", "Belgium"], ["BG", "Bulgaria"], ["CY", "Cyprus"], ["CZ", "Czechia"],
   ["DE", "Germany"], ["DK", "Denmark"], ["EE", "Estonia"], ["ES", "Spain"], ["FI", "Finland"],
@@ -189,7 +221,7 @@ async function main() {
         region_label TEXT NOT NULL,
         sector TEXT NOT NULL,
         table_type TEXT NOT NULL,
-        kg_co2e_per_eur NUMERIC(20, 10) NOT NULL,
+        kg_co2e_per_eur NUMERIC(20, 10), -- nullable: undefined (zero-output) cells store NULL, not 0.0 -- see shared/schema.ts comment
         factor_year INTEGER NOT NULL,
         exiobase_version TEXT NOT NULL,
         computed_at TIMESTAMP NOT NULL,
@@ -218,7 +250,6 @@ async function main() {
     if ((await tableRowCount(client, "epa_naics_factors")) > 0) {
       skipped.push(`epa_naics_factors seed (${epaRows.length} rows -- table already populated)`);
     } else {
-      const now = new Date().toISOString();
       const inserted = await bulkInsert(
         client,
         "epa_naics_factors",
@@ -233,11 +264,28 @@ async function main() {
           factor_year: 2022,
           source_dataset: "U.S. EPA Supply Chain GHG Emission Factors v1.3 by NAICS-6",
           source_url: "https://catalog.data.gov/dataset/supply-chain-greenhouse-gas-emission-factors-v1-3-by-naics-6",
-          retrieval_date: now,
+          retrieval_date: EPA_RETRIEVAL_DATE,
         })),
         "ON CONFLICT DO NOTHING",
       );
       applied.push(`epa_naics_factors seed: ${inserted} rows`);
+    }
+
+    // --- correction: fix retrieval_date on rows seeded before EPA_RETRIEVAL_DATE was a fixed constant ---
+    // Whole-branch review found retrieval_date recorded migration-run time
+    // (`new Date()`) rather than when the CSV was actually retrieved --
+    // wrong provenance. The seed step above is skip-if-populated and won't
+    // re-run to pick up the fix, so self-heal already-seeded rows here,
+    // same pattern as the CRLF correction above: unconditional, a no-op
+    // once every row already carries the correct constant.
+    const epaDateCorrectionRes = await client.query(
+      `UPDATE epa_naics_factors SET retrieval_date = $1 WHERE retrieval_date IS DISTINCT FROM $1::timestamp`,
+      [EPA_RETRIEVAL_DATE],
+    );
+    if (epaDateCorrectionRes.rowCount > 0) {
+      applied.push(`epa_naics_factors correction: set retrieval_date = ${EPA_RETRIEVAL_DATE} on ${epaDateCorrectionRes.rowCount} rows`);
+    } else {
+      skipped.push("epa_naics_factors retrieval_date correction (all rows already correct)");
     }
 
     // --- correction: strip stray trailing \r from reference_useeio_code ---
@@ -267,29 +315,55 @@ async function main() {
     // pre-customer; commercial license to be obtained from
     // exiobase-support@googlegroups.com before this product is sold.
     // Do not remove this comment until that license is confirmed in hand.
-    if ((await tableRowCount(client, "exiobase_factors")) > 0) {
-      skipped.push("exiobase_factors seed (table already populated)");
+    // Reseed logic (not a plain skip-if-populated seed): the whole-branch
+    // review found the original seed captured only ~70% of true GHG mass
+    // (4 of 25 GHG-bearing air_emissions stressor rows) and stored
+    // mathematically-undefined region-sector cells as 0.0 instead of NULL.
+    // scripts/exiobase/build_factors.py now writes corrected JSON with
+    // every row's `notes` set to EXIOBASE_NOTES_MARKER. Detect old data by
+    // its ABSENCE: if any existing row lacks the marker, the table holds
+    // the pre-fix seed and must be TRUNCATEd and reseeded wholesale (not
+    // appended to, not left stale alongside corrected rows) -- if every
+    // existing row already carries the marker, this is a no-op.
+    const exiobaseExisting = await tableRowCount(client, "exiobase_factors");
+    let exiobaseNeedsReseed = exiobaseExisting === 0;
+    if (exiobaseExisting > 0) {
+      const markedRes = await client.query(
+        `SELECT COUNT(*)::int AS n FROM exiobase_factors WHERE notes = $1`,
+        [EXIOBASE_NOTES_MARKER],
+      );
+      exiobaseNeedsReseed = markedRes.rows[0].n < exiobaseExisting;
+    }
+    if (exiobaseExisting > 0 && !exiobaseNeedsReseed) {
+      skipped.push(`exiobase_factors seed (${exiobaseExisting} rows already corrected -- notes marker present on all rows)`);
     } else {
+      if (exiobaseExisting > 0) {
+        await client.query(`TRUNCATE TABLE exiobase_factors`);
+        applied.push(`exiobase_factors: TRUNCATEd ${exiobaseExisting} old/incomplete row(s) before reseeding`);
+      }
       let total = 0;
       for (const tableType of ["pxp", "ixi"]) {
         const rows = JSON.parse(
           readFileSync(join(__dirname, "exiobase", "output", `exiobase_${tableType}_2022.json`), "utf-8"),
         );
-        const now = new Date().toISOString();
         total += await bulkInsert(
           client,
           "exiobase_factors",
-          ["region", "region_label", "sector", "table_type", "kg_co2e_per_eur", "factor_year", "exiobase_version", "computed_at", "source_url"],
+          ["region", "region_label", "sector", "table_type", "kg_co2e_per_eur", "factor_year", "exiobase_version", "computed_at", "source_url", "notes"],
           rows.map((r) => ({
             region: r.region,
             region_label: r.regionLabel,
             sector: r.sector,
             table_type: r.tableType,
-            kg_co2e_per_eur: r.kgCo2ePerEur,
+            kg_co2e_per_eur: r.kgCo2ePerEur, // null for mathematically-undefined (zero-output) cells -- see build_factors.py
             factor_year: r.factorYear,
             exiobase_version: r.exiobaseVersion,
-            computed_at: now,
+            // computedAt from the JSON itself -- when build_factors.py
+            // actually ran the pymrio computation -- not `new Date()` at
+            // migration-run time (whole-branch review finding).
+            computed_at: r.computedAt,
             source_url: r.sourceUrl,
+            notes: EXIOBASE_NOTES_MARKER,
           })),
           "ON CONFLICT (region, sector, table_type, factor_year) DO NOTHING",
         );
@@ -324,7 +398,11 @@ async function main() {
     console.log(`Skipped ${skipped.length}:`);
     skipped.forEach((s) => console.log(`  = ${s}`));
   } catch (err) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackErr) {
+      console.error("ROLLBACK itself failed:", rollbackErr);
+    }
     console.error("Migration failed, rolled back. No partial changes were applied.");
     console.error(err);
     process.exitCode = 1;
@@ -334,4 +412,7 @@ async function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});
