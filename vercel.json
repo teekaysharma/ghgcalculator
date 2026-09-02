@@ -2,12 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "vite build && esbuild server/vercel-entry.ts --platform=node --packages=external --bundle --format=esm --outfile=api/index.js",
   "outputDirectory": "dist/public",
-  "functions": {
-    "api/index.js": {
-      "includeFiles": "dist/public/**"
-    }
-  },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api" }
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
