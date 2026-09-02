@@ -1,0 +1,32 @@
+{
+  "CH4 (fossil)": {
+    "gwpValue": 29.8,
+    "formula": "CH4",
+    "gwpVersion": "AR6",
+    "gwpSource": "GHG Protocol, 'IPCC Global Warming Potential Values', Version 2.0, August 7, 2024 (adapted from IPCC AR6, 2021) -- https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf"
+  },
+  "CH4 (non-fossil)": {
+    "gwpValue": 27,
+    "formula": "CH4",
+    "gwpVersion": "AR6",
+    "gwpSource": "GHG Protocol, 'IPCC Global Warming Potential Values', Version 2.0, August 7, 2024 (adapted from IPCC AR6, 2021) -- https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf"
+  },
+  "CO2": {
+    "gwpValue": 1,
+    "formula": "CO2",
+    "gwpVersion": "AR6",
+    "gwpSource": "GHG Protocol, 'IPCC Global Warming Potential Values', Version 2.0, August 7, 2024 (adapted from IPCC AR6, 2021) -- https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf"
+  },
+  "N2O": {
+    "gwpValue": 273,
+    "formula": "N2O",
+    "gwpVersion": "AR6",
+    "gwpSource": "GHG Protocol, 'IPCC Global Warming Potential Values', Version 2.0, August 7, 2024 (adapted from IPCC AR6, 2021) -- https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf"
+  },
+  "SF6": {
+    "gwpValue": 24300,
+    "formula": "SF6",
+    "gwpVersion": "AR6",
+    "gwpSource": "GHG Protocol, 'IPCC Global Warming Potential Values', Version 2.0, August 7, 2024 (adapted from IPCC AR6, 2021) -- https://ghgprotocol.org/sites/default/files/2024-08/Global-Warming-Potential-Values%20(August%202024).pdf"
+  }
+}
