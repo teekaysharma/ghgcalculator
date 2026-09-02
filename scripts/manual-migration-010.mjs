@@ -94,7 +94,13 @@ function parseCsvLine(line) {
 
 function parseEpaCsv(path) {
   const text = readFileSync(path, "utf-8").replace(/^\uFEFF/, ""); // strip BOM
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  // Split on CRLF or bare LF -- this source file uses CRLF line endings
+  // throughout (confirmed: 1,017 "\r\n" sequences, one per line, zero bare
+  // "\r"). Splitting on "\n" alone previously left a trailing "\r" on the
+  // last field of every row (reference_useeio_code), e.g. "1111A0\r"
+  // instead of "1111A0". Bug found by code review 2026-09-02, confirmed
+  // live against NAICS 111110's seeded row; fixed here.
+  const lines = text.split(/\r\n|\n/).filter((l) => l.trim().length > 0);
   const rows = lines.slice(1).map(parseCsvLine);
   return rows.map((r) => ({
     naicsCode: r[0],
@@ -232,6 +238,25 @@ async function main() {
         "ON CONFLICT DO NOTHING",
       );
       applied.push(`epa_naics_factors seed: ${inserted} rows`);
+    }
+
+    // --- correction: strip stray trailing \r from reference_useeio_code ---
+    // Bug found by code review 2026-09-02: the source CSV uses CRLF line
+    // endings; parseEpaCsv originally split on "\n" only, leaving a
+    // trailing "\r" on the last field of every row (reference_useeio_code).
+    // Fixed in parseEpaCsv above, but that fix alone doesn't heal rows
+    // already seeded into the live DB before the fix landed (the seed step
+    // itself is skip-if-populated and won't re-run). This correction runs
+    // unconditionally on every execution -- a harmless no-op once the data
+    // is clean -- so the fix is baked into the reproducible migration
+    // artifact rather than a one-off manual DB edit outside it.
+    const correctionRes = await client.query(
+      `UPDATE epa_naics_factors SET reference_useeio_code = TRIM(TRAILING E'\r' FROM reference_useeio_code) WHERE reference_useeio_code LIKE '%' || E'\r'`,
+    );
+    if (correctionRes.rowCount > 0) {
+      applied.push(`epa_naics_factors correction: stripped trailing \\r from ${correctionRes.rowCount} rows`);
+    } else {
+      skipped.push("epa_naics_factors correction (no rows had a trailing \\r)");
     }
 
     // EXIOBASE v3.10.2 data. Non-commercial license only as of this
