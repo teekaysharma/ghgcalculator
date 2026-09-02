@@ -1271,3 +1271,68 @@ export const gwpValues = pgTable("gwp_values", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 export type GwpValue = typeof gwpValues.$inferSelect;
+
+// Scope 3 spend-based factor library, phase 1. Two independent global
+// reference sources (no organizationId, same shared-seeded-data pattern as
+// ipccDefaultFactors/gwpValues above), each computed/reshaped offline and
+// loaded via scripts/manual-migration-010.mjs -- see
+// docs/superpowers/specs/2026-09-02-scope3-factor-library-design.md for the
+// full rationale, including why these are new tables rather than reusing
+// emissionFactorsTable (that table's country/source columns would collide
+// in meaning, not just name, with these sources' own geography/dataset
+// fields).
+
+export const epaNaicsFactors = pgTable(
+  "epa_naics_factors",
+  {
+    id: serial("id").primaryKey(),
+    naicsCode: text("naics_code").notNull(), // 6-digit 2017 NAICS
+    naicsTitle: text("naics_title").notNull(),
+    sefKgCo2ePerUsd: numeric("sef_kg_co2e_per_usd", { precision: 20, scale: 8 }).notNull(), // without margins
+    mefKgCo2ePerUsd: numeric("mef_kg_co2e_per_usd", { precision: 20, scale: 8 }), // margins
+    sefPlusMefKgCo2ePerUsd: numeric("sef_plus_mef_kg_co2e_per_usd", { precision: 20, scale: 8 }).notNull(), // headline figure
+    referenceUseeioCode: text("reference_useeio_code"),
+    factorYear: integer("factor_year").notNull(), // 2022
+    sourceDataset: text("source_dataset").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    retrievalDate: timestamp("retrieval_date").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    naicsIdx: index("epa_naics_factors_code_idx").on(table.naicsCode),
+  }),
+);
+export type EpaNaicsFactor = typeof epaNaicsFactors.$inferSelect;
+
+export const exiobaseFactors = pgTable(
+  "exiobase_factors",
+  {
+    id: serial("id").primaryKey(),
+    region: text("region").notNull(), // 2-letter EXIOBASE code, e.g. "WM"
+    regionLabel: text("region_label").notNull(),
+    sector: text("sector").notNull(),
+    tableType: text("table_type").notNull(), // "pxp" | "ixi"
+    kgCo2ePerEur: numeric("kg_co2e_per_eur", { precision: 20, scale: 10 }).notNull(),
+    factorYear: integer("factor_year").notNull(), // 2022
+    exiobaseVersion: text("exiobase_version").notNull(), // "3.10.2"
+    computedAt: timestamp("computed_at").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    regionSectorIdx: index("exiobase_factors_region_sector_idx").on(table.region, table.sector, table.tableType),
+    uniqueRow: unique("exiobase_factors_unique").on(table.region, table.sector, table.tableType, table.factorYear),
+  }),
+);
+export type ExiobaseFactor = typeof exiobaseFactors.$inferSelect;
+
+export const countryExiobaseRegions = pgTable("country_exiobase_regions", {
+  id: serial("id").primaryKey(),
+  countryCode: text("country_code").notNull().unique(), // ISO 3166-1 alpha-2, e.g. "AE"
+  countryName: text("country_name").notNull(),
+  exiobaseRegion: text("exiobase_region").notNull(), // "WM" for AE, self ("US") for the 44 named countries
+  isDirectMatch: boolean("is_direct_match").notNull(), // false for RoW-aggregate mappings
+});
+export type CountryExiobaseRegion = typeof countryExiobaseRegions.$inferSelect;
