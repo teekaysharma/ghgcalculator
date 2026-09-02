@@ -1256,11 +1256,13 @@ export type IpccDefaultFactor = typeof ipccDefaultFactors.$inferSelect;
 // important to disclose" which values/version were used) rather than a
 // hardcoded constant buried in application code.
 //
-// Only the 4 gases Stationary Combustion needs are seeded here (CO2, CH4
-// fossil, CH4 non-fossil, N2O) -- the xlsx has all 266 AR6 gases; the rest
-// can be loaded in a later pass when fugitive-emissions/refrigerant scopes
-// need them, same "seed what the current task needs" discipline as
-// ipccDefaultFactors above.
+// Seeded on a "what the current task needs" basis, same discipline as
+// ipccDefaultFactors above -- not all 266 AR6 gases the xlsx carries.
+// manual-migration-006.mjs seeded the 4 gases Stationary Combustion needs
+// (CO2, CH4 fossil, CH4 non-fossil, N2O); manual-migration-011.mjs added a
+// 5th (SF6) for the EXIOBASE Scope 3 factor pipeline's fuller GHG-stressor
+// set (scripts/exiobase/build_factors.py). The rest can be loaded in a
+// later pass when fugitive-emissions/refrigerant scopes need them.
 export const gwpValues = pgTable("gwp_values", {
   id: serial("id").primaryKey(),
   gas: text("gas").notNull(),
@@ -1305,6 +1307,20 @@ export const epaNaicsFactors = pgTable(
 );
 export type EpaNaicsFactor = typeof epaNaicsFactors.$inferSelect;
 
+// EXIOBASE v3.10.2 data. Non-commercial license only as of this migration
+// (see LICENSE.txt at https://zenodo.org/records/20051562) -- explicitly
+// excludes "any use by for-profit or commercial entities" and "any use
+// intended to generate revenue." User's explicit decision (2026-09-02):
+// build now, pre-revenue/pre-customer; commercial license to be obtained
+// from exiobase-support@googlegroups.com before this product is sold.
+// Do not remove this comment until that license is confirmed in hand.
+//
+// kgCo2ePerEur is nullable: a region-sector cell whose EXIOBASE total
+// output is zero (or NaN) makes the multiplier mathematically undefined
+// (0/0), not "zero emissions" -- those cells are stored as NULL, never as
+// a computed 0. See scripts/exiobase/build_factors.py's undefined-output
+// handling and the "EXIOBASE v3.10.2 -- non-commercial license only" notes
+// marker distinguishing corrected rows from the earlier incomplete seed.
 export const exiobaseFactors = pgTable(
   "exiobase_factors",
   {
@@ -1313,7 +1329,7 @@ export const exiobaseFactors = pgTable(
     regionLabel: text("region_label").notNull(),
     sector: text("sector").notNull(),
     tableType: text("table_type").notNull(), // "pxp" | "ixi"
-    kgCo2ePerEur: numeric("kg_co2e_per_eur", { precision: 20, scale: 10 }).notNull(),
+    kgCo2ePerEur: numeric("kg_co2e_per_eur", { precision: 20, scale: 10 }), // nullable -- see comment above
     factorYear: integer("factor_year").notNull(), // 2022
     exiobaseVersion: text("exiobase_version").notNull(), // "3.10.2"
     computedAt: timestamp("computed_at").notNull(),
@@ -1323,7 +1339,11 @@ export const exiobaseFactors = pgTable(
   },
   (table) => ({
     regionSectorIdx: index("exiobase_factors_region_sector_idx").on(table.region, table.sector, table.tableType),
-    uniqueRow: unique("exiobase_factors_unique").on(table.region, table.sector, table.tableType, table.factorYear),
+    // uniqueIndex (not unique()), matching what the migration actually
+    // creates: `CREATE UNIQUE INDEX exiobase_factors_unique ON ...` -- see
+    // the emissionRecordsTable.calcApproachUnique comment above for why
+    // this project distinguishes the two Drizzle helpers.
+    uniqueRow: uniqueIndex("exiobase_factors_unique").on(table.region, table.sector, table.tableType, table.factorYear),
   }),
 );
 export type ExiobaseFactor = typeof exiobaseFactors.$inferSelect;
