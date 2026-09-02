@@ -28,7 +28,15 @@ const DATABASE_URL = process.env.DATABASE_URL;
 // persistent-host, calls .listen() on the returned server) and
 // api/index.ts (Vercel serverless function, never listens, just exports
 // the app as the request handler).
-export async function createApp(options?: { staticDistPath?: string }): Promise<{ app: express.Express; server: Server }> {
+export async function createApp(options?: {
+  staticDistPath?: string;
+  // Vercel serves dist/public directly via its own static hosting +
+  // rewrites (see vercel.json) -- the function only ever receives /api/*
+  // requests, so it never needs dist/public in its own filesystem.
+  // Without this flag, serveStatic() would throw on a missing directory
+  // it will genuinely never need under that deployment target.
+  skipStaticServing?: boolean;
+}): Promise<{ app: express.Express; server: Server }> {
   const app = express();
 
   // Vercel (and any TLS-terminating proxy) forwards to this app over plain
@@ -111,7 +119,7 @@ export async function createApp(options?: { staticDistPath?: string }): Promise<
   // doesn't interfere with the other routes
   if (app.get("env") === "development") {
     await setupVite(app, server);
-  } else {
+  } else if (!options?.skipStaticServing) {
     serveStatic(app, options?.staticDistPath);
   }
 
