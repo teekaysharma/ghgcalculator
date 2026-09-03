@@ -117,9 +117,22 @@ export async function createApp(options?: {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
+  //
+  // skipStaticServing is checked first and takes priority over the
+  // NODE_ENV check below: it's the explicit signal from the Vercel
+  // entrypoint that this is a serverless function invocation, where
+  // neither setupVite() nor serveStatic() are ever correct (Vercel's own
+  // static hosting serves the built client directly). Checking NODE_ENV
+  // first was a real, confirmed bug -- Vercel's Node.js function runtime
+  // does not reliably set NODE_ENV=production, so app.get("env") read
+  // "development" there too, calling setupVite() for real on every
+  // request and crashing on vite's rollup dependency (which isn't meant
+  // to run outside a build step at all, let alone in that runtime).
+  if (options?.skipStaticServing) {
+    // Nothing to do -- Vercel serves dist/public directly.
+  } else if (app.get("env") === "development") {
     await setupVite(app, server);
-  } else if (!options?.skipStaticServing) {
+  } else {
     serveStatic(app, options?.staticDistPath);
   }
 
