@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "./db";
 import { MODULE_REGISTRY, isKnownModuleKey } from "./modules";
 import {
@@ -209,6 +209,7 @@ export interface IStorage {
   getUserByVerificationToken(token: string): Promise<User | undefined>;
   verifyUserEmail(userId: number): Promise<void>;
   setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  deleteExpiredUnverifiedRegistrations(): Promise<number>;
 
   // Memberships (the tenant-scoping join)
   createMembership(membership: InsertMembership): Promise<Membership>;
@@ -397,6 +398,31 @@ export class DbStorage implements IStorage {
       .update(users)
       .set({ emailVerificationToken: token, emailVerificationTokenExpiresAt: expiresAt })
       .where(eq(users.id, userId));
+  }
+
+  async deleteExpiredUnverifiedRegistrations(): Promise<number> {
+    const now = new Date();
+    const expired = await db
+      .select({ userId: users.id, organizationId: memberships.organizationId })
+      .from(users)
+      .innerJoin(memberships, eq(memberships.userId, users.id))
+      .where(and(eq(users.emailVerified, false), lt(users.emailVerificationTokenExpiresAt, now)));
+
+    if (expired.length === 0) return 0;
+
+    const orgIds = Array.from(new Set(expired.map((r) => r.organizationId)));
+    const userIds = Array.from(new Set(expired.map((r) => r.userId)));
+
+    // organizations.id cascades to memberships (see shared/schema.ts), so
+    // deleting the org already clears its membership row(s). Deleting the
+    // users afterward is defensive -- in case a user row ever exists
+    // without a membership, which shouldn't happen given registration
+    // always creates exactly one, but this keeps the sweep correct even if
+    // that ever changes.
+    await db.delete(organizations).where(inArray(organizations.id, orgIds));
+    await db.delete(users).where(inArray(users.id, userIds));
+
+    return userIds.length;
   }
 
   async createMembership(membership: InsertMembership): Promise<Membership> {

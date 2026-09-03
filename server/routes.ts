@@ -545,6 +545,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.status(200).json(genericResponse);
   });
 
+  app.get("/api/cron/cleanup-unverified-users", async (req, res) => {
+    const expected = process.env.CRON_SECRET;
+    const authHeader = req.get("authorization");
+    if (!expected || authHeader !== `Bearer ${expected}`) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const deletedCount = await storage.deleteExpiredUnverifiedRegistrations();
+    return res.status(200).json({ deletedCount });
+  });
+
   app.post("/api/auth/login", loginLimiter, (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
