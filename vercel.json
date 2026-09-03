@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "express",
-  "buildCommand": "npx vite build && node -e \"require('fs').cpSync('dist/public','public',{recursive:true})\""
+  "buildCommand": "vite build && esbuild server/vercel-entry.ts --platform=node --packages=external --bundle --format=esm --outfile='api/[...path].js'",
+  "outputDirectory": "dist/public",
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
 }
