@@ -2,15 +2,11 @@ import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
-import viteConfig from "../vite.config";
 import { nanoid } from "nanoid";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const viteLogger = createLogger();
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -24,6 +20,18 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  // Dynamically imported (not a static top-level import) so this dev-only
+  // dependency is never loaded by the production Vercel function, which
+  // never calls setupVite() (see createApp() in server/app.ts) but
+  // previously still eagerly pulled in vite -- and transitively rollup,
+  // which has a well-known platform-specific optional-binary resolution
+  // bug (github.com/npm/cli/issues/4828) -- crashing every request with
+  // "Cannot find module @rollup/rollup-linux-x64-gnu" (confirmed via
+  // Vercel's own runtime logs, not assumed).
+  const { createServer: createViteServer, createLogger } = await import("vite");
+  const viteConfig = (await import("../vite.config")).default;
+  const viteLogger = createLogger();
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
@@ -68,9 +76,10 @@ export async function setupVite(app: Express, server: Server) {
 export function serveStatic(app: Express, distPathOverride?: string) {
   // Defaults to __dirname-relative, correct for this app's own esbuild
   // output (dist/index.js sits next to dist/public). Vercel's serverless
-  // function bundler (see api/index.ts) does not preserve that same
-  // relative layout, so it passes an explicit override instead of relying
-  // on this default.
+  // function (server/vercel-entry.ts, skipStaticServing: true) never
+  // calls this at all -- Vercel's own static hosting serves dist/public
+  // directly -- so the override only matters for other non-default
+  // callers, if any are ever added.
   const distPath = distPathOverride ?? path.resolve(__dirname, "public");
 
   if (!fs.existsSync(distPath)) {
