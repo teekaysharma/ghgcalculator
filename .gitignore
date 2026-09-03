@@ -3,10 +3,11 @@ node_modules
 dist
 .env
 
-# Vercel build artifact (esbuild --bundle output of server/vercel-entry.ts,
-# see vercel.json's buildCommand -- built fresh on every Vercel deploy,
-# never hand-edited or committed, same convention as dist/ above)
-api/index.js
+# Vercel build artifact: vercel.json's buildCommand copies the Vite build
+# output here so it matches Vercel's zero-config Express convention (static
+# assets must live in public/** at project root) -- built fresh on every
+# Vercel deploy, never hand-edited or committed, same convention as dist/
+public
 
 # Logs
 npm-debug.log*
