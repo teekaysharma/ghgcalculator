@@ -505,12 +505,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/auth/verify-email", async (req, res) => {
-    const parsed = z.object({ token: z.string().min(1) }).safeParse(req.body);
+    const parsed = z.object({ token: z.string().min(1), email: z.string().optional() }).safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input" });
     }
     const user = await storage.getUserByVerificationToken(parsed.data.token);
     if (!user) {
+      // A user who already verified has their token nulled out by
+      // verifyUserEmail below, so a second click of the same link (double
+      // email-client prefetch, or clicking twice) lands here too. Tell that
+      // case apart from a genuinely invalid/expired/removed token so the
+      // client doesn't show the alarming "your registration was removed"
+      // message to someone who is, in fact, already verified.
+      if (parsed.data.email) {
+        const existing = await storage.getUserByEmail(parsed.data.email);
+        if (existing?.emailVerified) {
+          return res.status(409).json({
+            message: "This email is already verified.",
+            reason: "already_verified",
+          });
+        }
+      }
       return res.status(400).json({ message: "This verification link is invalid or has expired." });
     }
     if (!user.emailVerificationTokenExpiresAt || user.emailVerificationTokenExpiresAt < new Date()) {
