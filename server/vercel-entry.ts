@@ -1,24 +1,31 @@
 import type { Request, Response } from "express";
 import { createApp } from "./app";
 
-// Vercel serverless entrypoint. Built (not committed) via esbuild --bundle
-// into api/[...path].js -- see vercel.json's buildCommand. Bundling here
-// matters: Vercel's own zero-config TypeScript handling for files under
-// /api transpiles each file individually without inlining relative
-// imports, which fails at runtime with ERR_MODULE_NOT_FOUND for anything
-// this file imports (confirmed directly via Vercel's runtime logs during
-// this feature's own verification, not assumed).
+// Vercel serverless entrypoint. Built via esbuild --bundle into api/index.js
+// -- see vercel.json's buildCommand -- overwriting a placeholder committed
+// at that same path (api/index.js is deliberately NOT gitignored; see the
+// comment there). Both facts matter and were confirmed the hard way on
+// this branch: Vercel's function-to-route wiring requires the file to
+// exist in the pre-build git tree (a build-time-only file, even with an
+// identical final filename, never got routed to), and Vercel's own
+// zero-config TypeScript handling for files under /api transpiles each
+// file individually without inlining relative imports, which fails at
+// runtime with ERR_MODULE_NOT_FOUND for anything this file imports
+// (confirmed via Vercel's runtime logs) -- hence bundling with esbuild
+// instead of leaving this as source TS for Vercel to handle natively.
 //
-// The [...path] catch-all filename is Vercel's own native dynamic-function
-// routing convention (the same one Next.js API routes use) -- it makes
-// every request under /api/* invoke this function directly via Vercel's
-// filesystem-based routing, with no vercel.json rewrite needed for the API
-// itself. This replaced an earlier api/index.js (exact-match only, needed
-// a rewrite that never actually routed to it) and, before that, a
-// zero-config "Express framework" entrypoint attempt (server.ts at the
-// project root) whose build-time detector required express to be imported
-// directly in the entrypoint file, not via this project's createApp()
-// factory -- both dead ends, documented in this branch's commit history.
+// api/index.js only naturally matches the exact path /api, so
+// vercel.json's /api/:path* rewrite routes every sub-path here too. A
+// [...path] catch-all filename (Vercel/Next.js's dynamic-function naming
+// convention) was tried first and deployed fine as a function but was
+// never actually invocable at any sub-path -- apparently not parsed as a
+// wildcard segment outside a framework that implements that convention
+// itself, so this reverted to a plain exact-match filename plus an
+// explicit rewrite. A zero-config "Express framework" entrypoint attempt
+// (server.ts at the project root) was also tried and hit a different dead
+// end: its build-time detector required express to be imported directly
+// in the entrypoint file, not via this project's createApp() factory. All
+// three approaches are documented in this branch's commit history.
 //
 // vercel.json's outputDirectory serves dist/public directly for everything
 // else, so this function never needs static assets in its own filesystem.
