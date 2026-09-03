@@ -157,9 +157,18 @@ async function step3_dbPush() {
       SELECT table_name, column_name FROM information_schema.columns
       WHERE (table_name = 'emission_factors' AND column_name = 'year')
          OR (table_name = 'emission_records' AND column_name = 'scope3_category')
+         OR (table_name = 'users' AND column_name IN (
+              'email_verified', 'email_verification_token', 'email_verification_token_expires_at'
+            ))
     `);
     const found = new Set(res.rows.map((r) => `${r.table_name}.${r.column_name}`));
-    const required = ["emission_factors.year", "emission_records.scope3_category"];
+    const required = [
+      "emission_factors.year",
+      "emission_records.scope3_category",
+      "users.email_verified",
+      "users.email_verification_token",
+      "users.email_verification_token_expires_at",
+    ];
     const missing = required.filter((r) => !found.has(r));
     if (missing.length > 0) {
       throw new Error(
@@ -171,7 +180,10 @@ async function step3_dbPush() {
     await pool.end();
   }
 
-  ok("schema check", "emission_factors.year and emission_records.scope3_category present");
+  ok(
+    "schema check",
+    "emission_factors.year, emission_records.scope3_category, and users email-verification columns present",
+  );
 }
 
 async function step4_startServer() {
@@ -250,6 +262,70 @@ async function step5_smokeTest() {
       });
       if (res.status === 204) ok("POST /api/auth/verify-email", "204");
       else fail("POST /api/auth/verify-email", `expected 204, got ${res.status}`);
+    }
+  }
+
+  // --- resend verification email (previously had zero automated coverage).
+  // Uses its own RUN_TAG-tagged user rather than TEST_EMAIL, because
+  // TEST_EMAIL is already verified by this point in the flow and
+  // resend-verification-email is a deliberate no-op for verified users --
+  // it would never actually rotate the token. ---
+  {
+    const resendEmail = `${RUN_TAG}-resend@example.invalid`;
+    const registerRes = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: resendEmail,
+        password: TEST_PASSWORD,
+        name: "Smoke Test Resend",
+        organizationName: `${RUN_TAG}-resend`,
+      }),
+    });
+    if (registerRes.status !== 201) {
+      fail("POST /api/auth/register (resend setup)", `expected 201, got ${registerRes.status}`);
+    } else {
+      let tokenBefore;
+      {
+        const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+        try {
+          const res = await pool.query("SELECT email_verification_token FROM users WHERE email = $1", [resendEmail]);
+          tokenBefore = res.rows[0]?.email_verification_token;
+        } finally {
+          await pool.end();
+        }
+      }
+      if (!tokenBefore) {
+        fail("resend-verification-email setup", "no email_verification_token found for the resend test user");
+      } else {
+        const resendRes = await fetch(`${BASE_URL}/api/auth/resend-verification-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: resendEmail }),
+        });
+        if (resendRes.status !== 200) {
+          fail("POST /api/auth/resend-verification-email", `expected 200, got ${resendRes.status}`);
+        } else {
+          let tokenAfter;
+          {
+            const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+            try {
+              const res = await pool.query("SELECT email_verification_token FROM users WHERE email = $1", [resendEmail]);
+              tokenAfter = res.rows[0]?.email_verification_token;
+            } finally {
+              await pool.end();
+            }
+          }
+          if (tokenAfter && tokenAfter !== tokenBefore) {
+            ok("POST /api/auth/resend-verification-email", "email_verification_token changed after resend");
+          } else {
+            fail(
+              "POST /api/auth/resend-verification-email",
+              `token did not change (before: ${tokenBefore}, after: ${tokenAfter})`,
+            );
+          }
+        }
+      }
     }
   }
 
@@ -429,7 +505,10 @@ async function step6_revert() {
       await pool.query("DELETE FROM memberships WHERE organization_id = ANY($1)", [orgIds]);
       await pool.query("DELETE FROM organizations WHERE id = ANY($1)", [orgIds]);
     }
-    await pool.query("DELETE FROM users WHERE email = $1", [TEST_EMAIL]);
+    // LIKE, not an exact match on TEST_EMAIL: this run also creates a
+    // second RUN_TAG-tagged user (the resend-verification-email test), and
+    // both share the RUN_TAG prefix.
+    await pool.query("DELETE FROM users WHERE email LIKE $1", [`${RUN_TAG}%`]);
 
     ok("data cleanup", `removed test org/user/factor/record rows tagged ${RUN_TAG}`);
   } catch (err) {
