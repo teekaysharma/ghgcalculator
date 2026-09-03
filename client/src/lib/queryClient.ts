@@ -4,15 +4,21 @@ async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
     let message = `${res.status}: ${text}`;
+    let reason: string | undefined;
     try {
       const parsed = JSON.parse(text);
       if (parsed && typeof parsed.message === "string") {
         message = parsed.message;
       }
+      if (parsed && typeof parsed.reason === "string") {
+        reason = parsed.reason;
+      }
     } catch {
       // not JSON, or no .message field -- keep the raw text fallback above
     }
-    throw new Error(message);
+    const error = new Error(message) as Error & { reason?: string };
+    if (reason) error.reason = reason;
+    throw error;
   }
 }
 

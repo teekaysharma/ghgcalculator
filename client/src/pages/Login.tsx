@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { apiRequest } from "@/lib/queryClient";
 
 const loginFormSchema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -21,6 +22,8 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const { login, loginPending } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginFormSchema),
@@ -29,11 +32,27 @@ export default function Login() {
 
   const onSubmit = async (values: LoginFormValues) => {
     setError(null);
+    setUnverifiedEmail(null);
     try {
       await login(values);
       setLocation("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to log in");
+      const reason = (err as Error & { reason?: string }).reason;
+      if (reason === "unverified") {
+        setUnverifiedEmail(values.email);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to log in");
+      }
+    }
+  };
+
+  const resend = async () => {
+    if (!unverifiedEmail) return;
+    setResendState("sending");
+    try {
+      await apiRequest("POST", "/api/auth/resend-verification-email", { email: unverifiedEmail });
+    } finally {
+      setResendState("sent");
     }
   };
 
@@ -43,6 +62,22 @@ export default function Login() {
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {unverifiedEmail && (
+          <Alert>
+            <AlertDescription className="space-y-2">
+              <p>Please verify your email before logging in.</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={resend}
+                disabled={resendState === "sending"}
+              >
+                {resendState === "sending" ? "Sending..." : resendState === "sent" ? "Sent — check your inbox" : "Resend verification email"}
+              </Button>
+            </AlertDescription>
           </Alert>
         )}
         <div className="space-y-2">

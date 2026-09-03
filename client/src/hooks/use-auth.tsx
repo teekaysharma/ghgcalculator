@@ -42,6 +42,12 @@ interface LoginInput {
   password: string;
 }
 
+interface RegisterResult {
+  status: "pending_verification";
+  email: string;
+  emailSendFailed: boolean;
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   memberships: Membership[];
@@ -49,7 +55,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (input: LoginInput) => Promise<void>;
-  register: (input: RegisterInput) => Promise<void>;
+  register: (input: RegisterInput) => Promise<RegisterResult>;
   logout: () => Promise<void>;
   loginPending: boolean;
   registerPending: boolean;
@@ -82,13 +88,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const registerMutation = useMutation({
-    mutationFn: async (input: RegisterInput) => {
+    mutationFn: async (input: RegisterInput): Promise<RegisterResult> => {
       const res = await apiRequest("POST", "/api/auth/register", input);
       return res.json();
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-    },
+    // No /api/auth/me invalidation here -- registration no longer starts a
+    // session (see server/routes.ts), so there is nothing new for that
+    // query to pick up until the user actually verifies and logs in.
   });
 
   const logoutMutation = useMutation({
@@ -113,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await loginMutation.mutateAsync(input);
     },
     register: async (input) => {
-      await registerMutation.mutateAsync(input);
+      return await registerMutation.mutateAsync(input);
     },
     logout: async () => {
       await logoutMutation.mutateAsync();
