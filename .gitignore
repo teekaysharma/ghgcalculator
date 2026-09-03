@@ -3,11 +3,10 @@ node_modules
 dist
 .env
 
-# api/[...path].js is deliberately NOT gitignored, unlike dist/ above --
-# see the comment in that file. Vercel's function-to-route wiring requires
-# the file to exist in the pre-build git tree (confirmed for the
-# `functions` vercel.json key earlier on this branch; a build-time-only
-# file never got a route no matter what routing mechanism was tried).
+# api/index.js is deliberately NOT gitignored, unlike dist/ above -- see
+# the comment in that file. Vercel's function-to-route wiring requires the
+# file to exist in the pre-build git tree; a gitignored, build-time-only
+# file at this same path was never routed to, confirmed on this branch.
 # vercel.json's buildCommand overwrites its real contents on every deploy.
 
 # Logs
