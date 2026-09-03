@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { apiRequest } from "@/lib/queryClient";
 
-type Phase = "verifying" | "success" | "failed";
+type Phase = "verifying" | "success" | "alreadyVerified" | "failed";
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
@@ -18,7 +18,7 @@ export default function VerifyEmail() {
 
   const verifyMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/auth/verify-email", { token });
+      await apiRequest("POST", "/api/auth/verify-email", { token, email: email || undefined });
     },
   });
 
@@ -32,12 +32,24 @@ export default function VerifyEmail() {
     if (firedRef.current) return;
     firedRef.current = true;
     if (!token) {
+      // No token at all -- there was never a verify attempt, so mirror the
+      // same auto-resend the onError path below fires, rather than showing
+      // failed-state copy that (falsely) claims a link was already sent.
       setPhase("failed");
+      if (email) resendMutation.mutate();
       return;
     }
     verifyMutation.mutate(undefined, {
       onSuccess: () => setPhase("success"),
-      onError: () => {
+      onError: (err) => {
+        const reason = (err as Error & { reason?: string }).reason;
+        if (reason === "already_verified") {
+          // Already verified (e.g. the link was clicked twice) -- this is
+          // not a failure, so skip the resend and show a distinct state
+          // instead of the alarming "registration was removed" message.
+          setPhase("alreadyVerified");
+          return;
+        }
         setPhase("failed");
         if (email) resendMutation.mutate();
       },
@@ -71,14 +83,36 @@ export default function VerifyEmail() {
     );
   }
 
+  if (phase === "alreadyVerified") {
+    return (
+      <AuthLayout heading="You're already verified" subheading="No need to verify again.">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 text-neutral-700">
+            <CheckCircle2 className="h-8 w-8 text-primary shrink-0" />
+            <p>This account is already verified — you can log in now.</p>
+          </div>
+          <Button asChild className="w-full">
+            <Link href="/login">Log in</Link>
+          </Button>
+        </div>
+      </AuthLayout>
+    );
+  }
+
   return (
     <AuthLayout heading="That link has expired" subheading="Here's how to get back on track.">
       <div className="space-y-4">
         <Alert>
           <AlertDescription>
-            {email
-              ? `We've sent a fresh verification link to ${email} — check your inbox (and spam folder).`
-              : "This verification link is invalid."}
+            {!email
+              ? "This verification link is invalid."
+              : resendMutation.isPending
+                ? "Sending a fresh verification link..."
+                : resendMutation.isSuccess
+                  ? `We've sent a fresh verification link to ${email} — check your inbox (and spam folder).`
+                  : resendMutation.isError
+                    ? "We couldn't send a fresh link just now — request a new one from the login page."
+                    : "This verification link is invalid."}
           </AlertDescription>
         </Alert>
         <p className="text-sm text-neutral-600">
