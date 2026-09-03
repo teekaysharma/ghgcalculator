@@ -419,8 +419,22 @@ export class DbStorage implements IStorage {
     // without a membership, which shouldn't happen given registration
     // always creates exactly one, but this keeps the sweep correct even if
     // that ever changes.
-    await db.delete(organizations).where(inArray(organizations.id, orgIds));
-    await db.delete(users).where(inArray(users.id, userIds));
+    //
+    // Both deletes run via db.batch() (a single atomic HTTP round-trip on
+    // Neon's driver) rather than sequential awaits, so a crash between the
+    // two can't happen. That matters here specifically: if the org delete
+    // committed but the user delete didn't, the orphaned user would no
+    // longer join to any membership row on the next sweep (it cascaded away
+    // with the org) and would become a permanently invisible leak that no
+    // future run could ever find. Note db.transaction() is NOT an option
+    // here -- this project's db client uses drizzle-orm/neon-http, whose
+    // .transaction() throws "No transactions support in neon-http driver"
+    // at runtime; db.batch() is the driver's actual atomic-multi-statement
+    // primitive.
+    await db.batch([
+      db.delete(organizations).where(inArray(organizations.id, orgIds)),
+      db.delete(users).where(inArray(users.id, userIds)),
+    ]);
 
     return userIds.length;
   }
