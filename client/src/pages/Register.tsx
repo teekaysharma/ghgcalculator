@@ -52,10 +52,14 @@ export default function Register() {
   const resend = async () => {
     if (!pendingEmail) return;
     setResendState("sending");
+    setError(null);
     try {
       await apiRequest("POST", "/api/auth/resend-verification-email", { email: pendingEmail });
-    } finally {
       setResendState("sent");
+      setEmailSendFailed(false);
+    } catch {
+      setResendState("idle");
+      setError("Couldn't resend — try again.");
     }
   };
 
@@ -63,6 +67,11 @@ export default function Register() {
     return (
       <AuthLayout heading="Check your email" subheading="One more step before your account is ready.">
         <div className="space-y-4">
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
           <div className="flex items-center gap-3 text-neutral-700">
             <MailCheck className="h-8 w-8 text-primary shrink-0" />
             {emailSendFailed ? (

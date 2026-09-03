@@ -49,10 +49,13 @@ export default function Login() {
   const resend = async () => {
     if (!unverifiedEmail) return;
     setResendState("sending");
+    setError(null);
     try {
       await apiRequest("POST", "/api/auth/resend-verification-email", { email: unverifiedEmail });
-    } finally {
       setResendState("sent");
+    } catch {
+      setResendState("idle");
+      setError("Couldn't resend — try again.");
     }
   };
 
