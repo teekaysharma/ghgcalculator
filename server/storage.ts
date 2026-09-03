@@ -206,6 +206,9 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByVerificationToken(token: string): Promise<User | undefined>;
+  verifyUserEmail(userId: number): Promise<void>;
+  setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
 
   // Memberships (the tenant-scoping join)
   createMembership(membership: InsertMembership): Promise<Membership>;
@@ -375,6 +378,25 @@ export class DbStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [row] = await db.select().from(users).where(eq(users.email, email));
     return row;
+  }
+
+  async getUserByVerificationToken(token: string): Promise<User | undefined> {
+    const [row] = await db.select().from(users).where(eq(users.emailVerificationToken, token));
+    return row;
+  }
+
+  async verifyUserEmail(userId: number): Promise<void> {
+    await db
+      .update(users)
+      .set({ emailVerified: true, emailVerificationToken: null, emailVerificationTokenExpiresAt: null })
+      .where(eq(users.id, userId));
+  }
+
+  async setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({ emailVerificationToken: token, emailVerificationTokenExpiresAt: expiresAt })
+      .where(eq(users.id, userId));
   }
 
   async createMembership(membership: InsertMembership): Promise<Membership> {

@@ -191,7 +191,7 @@ async function step5_smokeTest() {
   log("5/6", "running end-to-end smoke test");
   let cookie = "";
 
-  // --- register ---
+  // --- register (no session until verified) ---
   {
     const res = await fetch(`${BASE_URL}/api/auth/register`, {
       method: "POST",
@@ -203,10 +203,51 @@ async function step5_smokeTest() {
         organizationName: TEST_ORG_NAME,
       }),
     });
+    const body = await res.json().catch(() => ({}));
+    const noCookie = !res.headers.get("set-cookie");
+    if (res.status === 201 && body.status === "pending_verification" && noCookie) {
+      ok("POST /api/auth/register", "201, pending_verification, no session cookie");
+    } else {
+      fail("POST /api/auth/register", `status ${res.status}, body ${JSON.stringify(body)}`);
+    }
+  }
+
+  // --- verify email (token pulled directly from the DB -- this script has
+  // no inbox to click a real link from) ---
+  {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    let token;
+    try {
+      const res = await pool.query("SELECT email_verification_token FROM users WHERE email = $1", [TEST_EMAIL]);
+      token = res.rows[0]?.email_verification_token;
+    } finally {
+      await pool.end();
+    }
+    if (!token) {
+      fail("verify-email setup", "no email_verification_token found for the test user");
+    } else {
+      const res = await fetch(`${BASE_URL}/api/auth/verify-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      if (res.status === 204) ok("POST /api/auth/verify-email", "204");
+      else fail("POST /api/auth/verify-email", `expected 204, got ${res.status}`);
+    }
+  }
+
+  // --- login (register no longer starts a session -- this is now the
+  // only way this script gets a session cookie) ---
+  {
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
+    });
     const setCookie = res.headers.get("set-cookie");
     if (setCookie) cookie = setCookie.split(";")[0];
-    if (res.status === 201 && cookie) ok("POST /api/auth/register", `201, session cookie received`);
-    else fail("POST /api/auth/register", `expected 201 + cookie, got ${res.status}`);
+    if (res.status === 200 && cookie) ok("POST /api/auth/login", "200, session cookie received");
+    else fail("POST /api/auth/login", `expected 200 + cookie, got ${res.status}`);
   }
 
   // --- me ---
