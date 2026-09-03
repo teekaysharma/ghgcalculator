@@ -5,7 +5,7 @@ import connectPgSimple from "connect-pg-simple";
 import { Pool } from "pg";
 import { type Server } from "http";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { serveStatic, log } from "./vite";
 import { passport } from "./auth";
 
 if (!process.env.SESSION_SECRET) {
@@ -126,11 +126,25 @@ export async function createApp(options?: {
   // first was a real, confirmed bug -- Vercel's Node.js function runtime
   // does not reliably set NODE_ENV=production, so app.get("env") read
   // "development" there too, calling setupVite() for real on every
-  // request and crashing on vite's rollup dependency (which isn't meant
-  // to run outside a build step at all, let alone in that runtime).
+  // request.
+  //
+  // setupVite is imported dynamically, from a module (./vite-dev, not
+  // ./vite) that vercel.json's buildCommand marks --external for esbuild
+  // -- deliberately never inlined into the deployed function bundle.
+  // Confirmed the hard way on this branch: esbuild inlines any *locally*
+  // imported file regardless of whether the import is static or dynamic
+  // (no --splitting for a single-outfile build), and inlining hoists
+  // that file's own top-level `import ... from "vite"` (needed by
+  // vite.config.ts, which setupVite also loads) to the top of the
+  // combined output -- making it eager again even when the import()
+  // call site itself is conditional. Only a genuinely external,
+  // never-inlined module keeps it truly lazy, so this dynamic import is
+  // only ever reached, and only ever attempts to resolve, on this exact
+  // branch (never on Vercel).
   if (options?.skipStaticServing) {
     // Nothing to do -- Vercel serves dist/public directly.
   } else if (app.get("env") === "development") {
+    const { setupVite } = await import("./vite-dev");
     await setupVite(app, server);
   } else {
     serveStatic(app, options?.staticDistPath);
