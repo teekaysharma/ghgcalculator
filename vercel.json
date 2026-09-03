@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "express",
-  "buildCommand": "npx vite build && node -e \"require('fs').cpSync('dist/public','public',{recursive:true})\"",
-  "outputDirectory": "public"
+  "buildCommand": "npx vite build && node -e \"require('fs').cpSync('dist/public','public',{recursive:true})\""
 }
