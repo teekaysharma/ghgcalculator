@@ -38,6 +38,14 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   name: text("name"),
+  // Registration hardening (2026-09-03): no session is created until this
+  // flips true via POST /api/auth/verify-email. Existing rows are
+  // grandfathered to true by scripts/manual-migration-012.mjs -- this gate
+  // only applies to registrations created after that migration runs. See
+  // docs/superpowers/specs/2026-09-03-registration-hardening-design.md.
+  emailVerified: boolean("email_verified").notNull().default(false),
+  emailVerificationToken: text("email_verification_token"),
+  emailVerificationTokenExpiresAt: timestamp("email_verification_token_expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -45,6 +53,9 @@ export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
   passwordHash: true,
   name: true,
+  emailVerified: true,
+  emailVerificationToken: true,
+  emailVerificationTokenExpiresAt: true,
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -55,7 +66,12 @@ export type User = typeof users.$inferSelect;
 // accidentally skipped by reusing insertUserSchema directly on request input.
 export const registerSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[a-z]/, "Password must include a lowercase letter")
+    .regex(/[A-Z]/, "Password must include an uppercase letter")
+    .regex(/[0-9]/, "Password must include a number"),
   name: z.string().min(1).optional(),
   organizationName: z.string().min(1, "Organization name is required"),
 });

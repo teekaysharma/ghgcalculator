@@ -3,8 +3,10 @@ import { createServer, type Server } from "http";
 import { z } from "zod";
 import rateLimit from "express-rate-limit";
 import * as XLSX from "xlsx";
+import crypto from "crypto";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
+import { sendVerificationEmail } from "./email";
 import { requireAuth, requireOrg } from "./middleware/tenant";
 import {
   Emission,
@@ -454,7 +456,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const passwordHash = await hashPassword(password);
-      const user = await storage.createUser({ email, passwordHash, name: name ?? null });
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const user = await storage.createUser({
+        email,
+        passwordHash,
+        name: name ?? null,
+        emailVerified: false,
+        emailVerificationToken: token,
+        emailVerificationTokenExpiresAt: expiresAt,
+      });
 
       let slug = slugify(organizationName);
       let org = await storage.getOrganizationBySlug(slug);
@@ -466,17 +477,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const organization = await storage.createOrganization({ name: organizationName, slug });
       await storage.createMembership({ userId: user.id, organizationId: organization.id, role: "owner" });
 
-      req.login(user, (err) => {
-        if (err) return res.status(500).json({ message: "Registered, but failed to start session" });
-        return res.status(201).json({
-          user: { id: user.id, email: user.email, name: user.name },
-          organization: { id: organization.id, name: organization.name, slug: organization.slug },
+      let emailSendFailed = false;
+      try {
+        await sendVerificationEmail({
+          to: email,
+          token,
+          requestOrigin: `${req.protocol}://${req.get("host")}`,
         });
-      });
+      } catch (emailError) {
+        console.error("Failed to send verification email:", emailError);
+        emailSendFailed = true;
+      }
+
+      return res.status(201).json({ status: "pending_verification", email, emailSendFailed });
     } catch (error) {
       console.error("Registration error:", error);
       return res.status(500).json({ message: "Failed to register" });
     }
+  });
+
+  const resendVerificationLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many requests, try again later." },
+  });
+
+  app.post("/api/auth/verify-email", async (req, res) => {
+    const parsed = z.object({ token: z.string().min(1), email: z.string().optional() }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input" });
+    }
+    const user = await storage.getUserByVerificationToken(parsed.data.token);
+    if (!user) {
+      // A user who already verified has their token nulled out by
+      // verifyUserEmail below, so a second click of the same link (double
+      // email-client prefetch, or clicking twice) lands here too. Tell that
+      // case apart from a genuinely invalid/expired/removed token so the
+      // client doesn't show the alarming "your registration was removed"
+      // message to someone who is, in fact, already verified.
+      if (parsed.data.email) {
+        const existing = await storage.getUserByEmail(parsed.data.email);
+        if (existing?.emailVerified) {
+          return res.status(409).json({
+            message: "This email is already verified.",
+            reason: "already_verified",
+          });
+        }
+      }
+      return res.status(400).json({ message: "This verification link is invalid or has expired." });
+    }
+    if (!user.emailVerificationTokenExpiresAt || user.emailVerificationTokenExpiresAt < new Date()) {
+      return res.status(400).json({ message: "This verification link is invalid or has expired." });
+    }
+    await storage.verifyUserEmail(user.id);
+    return res.status(204).end();
+  });
+
+  app.post("/api/auth/resend-verification-email", resendVerificationLimiter, async (req, res) => {
+    const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input" });
+    }
+    const genericResponse = { message: "If that email has a pending registration, we've sent a new link." };
+    const user = await storage.getUserByEmail(parsed.data.email);
+    if (!user || user.emailVerified) {
+      return res.status(200).json(genericResponse);
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await storage.setEmailVerificationToken(user.id, token, expiresAt);
+    try {
+      await sendVerificationEmail({
+        to: user.email,
+        token,
+        requestOrigin: `${req.protocol}://${req.get("host")}`,
+      });
+    } catch (emailError) {
+      console.error("Failed to send verification email (resend):", emailError);
+    }
+    return res.status(200).json(genericResponse);
+  });
+
+  app.get("/api/cron/cleanup-unverified-users", async (req, res) => {
+    const expected = process.env.CRON_SECRET;
+    const authHeader = req.get("authorization");
+    if (!expected || authHeader !== `Bearer ${expected}`) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const deletedCount = await storage.deleteExpiredUnverifiedRegistrations();
+    return res.status(200).json({ deletedCount });
   });
 
   app.post("/api/auth/login", loginLimiter, (req, res, next) => {
@@ -484,14 +575,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
     }
-    passport.authenticate("local", (err: unknown, user: Express.User | false, info: { message?: string }) => {
-      if (err) return next(err);
-      if (!user) return res.status(401).json({ message: info?.message || "Invalid email or password" });
-      req.login(user, (loginErr) => {
-        if (loginErr) return next(loginErr);
-        return res.json({ user: { id: user.id, email: user.email, name: user.name } });
-      });
-    })(req, res, next);
+    passport.authenticate(
+      "local",
+      (err: unknown, user: Express.User | false, info: { message?: string; reason?: string }) => {
+        if (err) return next(err);
+        if (!user) {
+          return res.status(401).json({ message: info?.message || "Invalid email or password", reason: info?.reason });
+        }
+        req.login(user, (loginErr) => {
+          if (loginErr) return next(loginErr);
+          return res.json({ user: { id: user.id, email: user.email, name: user.name } });
+        });
+      },
+    )(req, res, next);
   });
 
   app.post("/api/auth/logout", (req, res, next) => {

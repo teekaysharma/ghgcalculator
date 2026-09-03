@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "./db";
 import { MODULE_REGISTRY, isKnownModuleKey } from "./modules";
 import {
@@ -206,6 +206,10 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByVerificationToken(token: string): Promise<User | undefined>;
+  verifyUserEmail(userId: number): Promise<void>;
+  setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  deleteExpiredUnverifiedRegistrations(): Promise<number>;
 
   // Memberships (the tenant-scoping join)
   createMembership(membership: InsertMembership): Promise<Membership>;
@@ -375,6 +379,64 @@ export class DbStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [row] = await db.select().from(users).where(eq(users.email, email));
     return row;
+  }
+
+  async getUserByVerificationToken(token: string): Promise<User | undefined> {
+    const [row] = await db.select().from(users).where(eq(users.emailVerificationToken, token));
+    return row;
+  }
+
+  async verifyUserEmail(userId: number): Promise<void> {
+    await db
+      .update(users)
+      .set({ emailVerified: true, emailVerificationToken: null, emailVerificationTokenExpiresAt: null })
+      .where(eq(users.id, userId));
+  }
+
+  async setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({ emailVerificationToken: token, emailVerificationTokenExpiresAt: expiresAt })
+      .where(eq(users.id, userId));
+  }
+
+  async deleteExpiredUnverifiedRegistrations(): Promise<number> {
+    const now = new Date();
+    const expired = await db
+      .select({ userId: users.id, organizationId: memberships.organizationId })
+      .from(users)
+      .innerJoin(memberships, eq(memberships.userId, users.id))
+      .where(and(eq(users.emailVerified, false), lt(users.emailVerificationTokenExpiresAt, now)));
+
+    if (expired.length === 0) return 0;
+
+    const orgIds = Array.from(new Set(expired.map((r) => r.organizationId)));
+    const userIds = Array.from(new Set(expired.map((r) => r.userId)));
+
+    // organizations.id cascades to memberships (see shared/schema.ts), so
+    // deleting the org already clears its membership row(s). Deleting the
+    // users afterward is defensive -- in case a user row ever exists
+    // without a membership, which shouldn't happen given registration
+    // always creates exactly one, but this keeps the sweep correct even if
+    // that ever changes.
+    //
+    // Both deletes run via db.batch() (a single atomic HTTP round-trip on
+    // Neon's driver) rather than sequential awaits, so a crash between the
+    // two can't happen. That matters here specifically: if the org delete
+    // committed but the user delete didn't, the orphaned user would no
+    // longer join to any membership row on the next sweep (it cascaded away
+    // with the org) and would become a permanently invisible leak that no
+    // future run could ever find. Note db.transaction() is NOT an option
+    // here -- this project's db client uses drizzle-orm/neon-http, whose
+    // .transaction() throws "No transactions support in neon-http driver"
+    // at runtime; db.batch() is the driver's actual atomic-multi-statement
+    // primitive.
+    await db.batch([
+      db.delete(organizations).where(inArray(organizations.id, orgIds)),
+      db.delete(users).where(inArray(users.id, userIds)),
+    ]);
+
+    return userIds.length;
   }
 
   async createMembership(membership: InsertMembership): Promise<Membership> {
