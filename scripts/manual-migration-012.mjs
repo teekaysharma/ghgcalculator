@@ -28,6 +28,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const applied = [];
 const skipped = [];
 
+// Returns true if the column was just added, false if it already existed.
+// Caller uses this to gate the grandfather backfill: only fire the UPDATE
+// when the email_verified column is newly created, not on every invocation.
 async function addColumnIfMissing(client, columnName, ddl) {
   const res = await client.query(
     `SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = $1`,
@@ -35,10 +38,11 @@ async function addColumnIfMissing(client, columnName, ddl) {
   );
   if (res.rowCount > 0) {
     skipped.push(`users.${columnName} (already exists)`);
-    return;
+    return false;
   }
   await client.query(ddl);
   applied.push(`ALTER TABLE users ADD COLUMN ${columnName}`);
+  return true;
 }
 
 async function main() {
@@ -46,7 +50,12 @@ async function main() {
   try {
     await client.query("BEGIN");
 
-    await addColumnIfMissing(
+    // Capture whether email_verified column was just added; only run the
+    // grandfather backfill if this is the first time the column was created.
+    // This prevents silent re-verification of pending users on subsequent
+    // re-runs (critical for idempotency: the gating ensures the UPDATE runs
+    // exactly once at column creation time, not every invocation).
+    const emailVerifiedWasJustAdded = await addColumnIfMissing(
       client,
       "email_verified",
       `ALTER TABLE users ADD COLUMN email_verified boolean NOT NULL DEFAULT false`,
@@ -62,11 +71,18 @@ async function main() {
       `ALTER TABLE users ADD COLUMN email_verification_token_expires_at timestamp`,
     );
 
-    const backfill = await client.query(`UPDATE users SET email_verified = true WHERE email_verified = false`);
-    if (backfill.rowCount > 0) {
-      applied.push(`grandfathered ${backfill.rowCount} existing user(s) as email_verified = true`);
+    // Only run the grandfather backfill if email_verified column was just
+    // created in this invocation. Skip entirely on re-runs to avoid
+    // accidentally re-verifying mid-registration users.
+    if (emailVerifiedWasJustAdded) {
+      const backfill = await client.query(`UPDATE users SET email_verified = true WHERE email_verified = false`);
+      if (backfill.rowCount > 0) {
+        applied.push(`grandfathered ${backfill.rowCount} existing user(s) as email_verified = true`);
+      } else {
+        skipped.push("grandfather backfill (no unverified rows found)");
+      }
     } else {
-      skipped.push("grandfather backfill (no unverified rows found)");
+      skipped.push("grandfather backfill (email_verified column already existed, no update required)");
     }
 
     await client.query("COMMIT");
