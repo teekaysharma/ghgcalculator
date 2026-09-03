@@ -3,13 +3,12 @@ node_modules
 dist
 .env
 
-# Vercel build artifact: esbuild --bundle output of server/vercel-entry.ts,
-# see vercel.json's buildCommand -- built fresh on every Vercel deploy,
-# never hand-edited or committed, same convention as dist/ above. The
-# whole directory is ignored rather than the file itself since its name
-# (api/[...path].js, Vercel's own catch-all Function convention) contains
-# gitignore glob metacharacters.
-api
+# api/[...path].js is deliberately NOT gitignored, unlike dist/ above --
+# see the comment in that file. Vercel's function-to-route wiring requires
+# the file to exist in the pre-build git tree (confirmed for the
+# `functions` vercel.json key earlier on this branch; a build-time-only
+# file never got a route no matter what routing mechanism was tried).
+# vercel.json's buildCommand overwrites its real contents on every deploy.
 
 # Logs
 npm-debug.log*
