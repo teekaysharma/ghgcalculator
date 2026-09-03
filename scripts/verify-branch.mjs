@@ -212,6 +212,23 @@ async function step5_smokeTest() {
     }
   }
 
+  // --- login rejected while unverified (the one genuinely new,
+  // security-relevant behavior this gate adds -- confirm it actually
+  // rejects, not just that a later successful login works) ---
+  {
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && body.reason === "unverified") {
+      ok("POST /api/auth/login (unverified)", "401, reason: unverified");
+    } else {
+      fail("POST /api/auth/login (unverified)", `expected 401 + reason unverified, got ${res.status}, body ${JSON.stringify(body)}`);
+    }
+  }
+
   // --- verify email (token pulled directly from the DB -- this script has
   // no inbox to click a real link from) ---
   {
