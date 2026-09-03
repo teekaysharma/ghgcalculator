@@ -14,7 +14,7 @@ This branch rebuilds the persistence and identity layer on top of the working ca
 ### Setup
 
 1. Create a free Neon project at [console.neon.tech](https://console.neon.tech) and copy the connection string from **Connection Details**.
-2. `cp .env.example .env` and fill in `DATABASE_URL` and a generated `SESSION_SECRET` (command is in the file's comments).
+2. `cp .env.example .env` and fill in `DATABASE_URL` and a generated `SESSION_SECRET` (command is in the file's comments). Also fill in `RESEND_API_KEY` (from [resend.com](https://resend.com), used to send registration-verification emails — see "Registration hardening" below) and `CRON_SECRET` (any random string; authorizes the daily cleanup cron). `EMAIL_FROM` is optional, defaults to `onboarding@resend.dev`.
 3. `npm install`
 4. Apply the schema: `node scripts/manual-migration-001.mjs`. This creates/updates all tables (`organizations`, `users`, `memberships`, `emission_factors`, `emission_records`, `reporting_entities`, `facilities`, `reporting_boundaries`) directly against `DATABASE_URL`, idempotent, safe to re-run. **Do not use `npm run db:push`** — see [MIGRATIONS.md](./MIGRATIONS.md) for why (`drizzle-kit push` failed repeatedly against this schema in testing, confirmed to be a tool issue, not a data or state issue). The `session` table used by `connect-pg-simple` is created automatically on first server start (`createTableIfMissing: true`), no separate step needed.
 5. `npm run dev`
@@ -29,10 +29,13 @@ Works on Windows, macOS, and Linux (uses `taskkill /T` to fully stop the server 
 
 ### New endpoints
 
-- `POST /api/auth/register` — `{ email, password, name?, organizationName }`. Creates a user, an organization, and an owner membership in one call.
-- `POST /api/auth/login` — `{ email, password }`
+- `POST /api/auth/register` — `{ email, password, name?, organizationName }`. Creates a user, an organization, and an owner membership in one call. Password must be 8+ chars with upper/lower/number. Does not start a session — see "Registration hardening" below.
+- `POST /api/auth/verify-email` — `{ token }`. Marks the account verified; required before login succeeds.
+- `POST /api/auth/resend-verification-email` — `{ email }`. Always returns a generic 200 (no account-enumeration signal), rate-limited to 5/hour.
+- `POST /api/auth/login` — `{ email, password }`. Rejects with `401 { reason: "unverified" }` if the account hasn't verified its email yet.
 - `POST /api/auth/logout`
 - `GET /api/auth/me` — current user + memberships
+- `GET /api/cron/cleanup-unverified-users` — deletes registrations left unverified 24h+. Requires `Authorization: Bearer <CRON_SECRET>`; triggered daily by Vercel Cron (`vercel.json`), Production only.
 - `GET /api/emission-factors`, `POST /api/emission-factors`, `DELETE /api/emission-factors/:id` — tenant-scoped, requires auth
 - `GET /api/emission-records` — tenant-scoped, requires auth
 - `GET/POST/PUT/DELETE /api/reporting-entities` — the entity being measured (e.g. the client company a tenant is reporting GHG data for). Tenant-scoped.
@@ -59,14 +62,28 @@ Also ported: `scope3Category` on emission inputs/records, `source`/`year` on emi
 - `TeamPanel` — lists org members, lets owner/admin add an *existing* user by email. No email delivery, no invite tokens, the invited person has to register themselves first. Stated in the UI itself, not hidden.
 - `EmissionCalculator` now sends `persist: true` on every calculation — previously computed and discarded even after the backend supported persistence.
 
+### Registration hardening (redesign-auth-pages branch, merged into main)
+
+Two related changes shipped together: a branded redesign of `/login` and `/register` (shared `AuthLayout`, value-prop copy — was previously a bare unstyled form), and hardening of registration itself:
+
+- **Password complexity**: 8+ chars, at least one uppercase, one lowercase, one number. Enforced client- and server-side (`shared/schema.ts`'s `registerSchema`).
+- **Email verification, required before login**: registering no longer starts a session. A 24h-expiring verification link is emailed via [Resend](https://resend.com) (`server/email.ts`); `/verify-email` handles success, an already-verified re-click (distinct "you're already verified" message, doesn't imply removal), and invalid/expired links (auto-resend + honest state-gated messaging, not a false "we sent it" claim). Login returns `401 { reason: "unverified" }` until the link is clicked.
+- **Expired-registration cleanup**: a Vercel Cron job (`vercel.json`, daily, `GET /api/cron/cleanup-unverified-users`) deletes any registration left unverified past 24h — the organization and membership cascade-delete with the user (`shared/schema.ts`'s `onDelete: "cascade"`). Auth'd via `CRON_SECRET`, fails closed if unset.
+- **Existing users grandfathered**: the migration (`scripts/manual-migration-012.mjs`) marks all pre-existing accounts as already-verified; only newly registered accounts are gated.
+
+Built via this project's Subagent-Driven Development process (see `docs/superpowers/plans/2026-09-03-registration-hardening.md` and the paired design spec for the full history: task-by-task implementation, review, and one whole-branch review + fix wave before merge).
+
+**Operational note:** the live Resend account is in sandbox/test mode — it can only deliver to its own account-owner email address until a sending domain is verified at [resend.com/domains](https://resend.com/domains). Until that's done, real registrants (anyone other than the account owner) will get `emailSendFailed: true` on the register response and no email.
+
 ### Known gaps in this branch (not done, scoped honestly)
 
 - No real invite flow (email delivery + signup-by-token). Current invite only attaches an already-registered account to an org.
-- No rate limiting on `/api/team/invite` or other authenticated write endpoints (login/register are covered).
+- No rate limiting on `/api/team/invite` or other authenticated write endpoints (login/register/resend-verification are covered).
 - The `X-Organization-Id` header path in `requireOrg` (for a user in more than one org) has no UI — not needed while it's one-org-per-user in practice, only relevant once someone's in multiple orgs.
 - No password reset / forgot-password flow.
 - No UI test coverage — `npm run verify` exercises the API end-to-end but doesn't drive a browser. The UI changes in this session were type-checked and build-verified (`tsc --noEmit`, `npm run build`) but not click-tested by a human yet.
 - Compliance/framework layer beyond ISO 14064-1 boundary setup (DEFRA integration, GHG Protocol/CDP/GRI/TCFD/BRSR-specific fields) is still out of scope per the project instructions.
+- No admin/control-panel path to manually verify or manage accounts across tenants — `admin` in `memberships.role` is org-scoped only (can invite/manage within one's own org), not a platform-level role. A stuck unverified account (e.g. before a Resend domain is verified) can currently only be fixed with a direct database write.
 
 ## Features
 
