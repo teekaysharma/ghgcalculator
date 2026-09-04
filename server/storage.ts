@@ -524,6 +524,7 @@ export class DbStorage implements IStorage {
         userId: memberships.userId,
         organizationId: memberships.organizationId,
         role: memberships.role,
+        isActive: memberships.isActive,
         createdAt: memberships.createdAt,
         userEmail: users.email,
         userName: users.name,

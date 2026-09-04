@@ -56,6 +56,19 @@ export const users = pgTable("users", {
   // after that. See
   // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md.
   isSuperAdmin: boolean("is_super_admin").notNull().default(false),
+  // Account-lifecycle flag (2026-09-04), independent of any single
+  // organization -- blocks login entirely regardless of which orgs the
+  // account belongs to. Orthogonal to emailVerified: unverified+active is
+  // the normal pending state; verified+inactive is a suspended account.
+  // Reversible. See
+  // docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md.
+  isActive: boolean("is_active").notNull().default(true),
+  // Mirrors emailVerificationToken/emailVerificationTokenExpiresAt exactly:
+  // random token, an expiry, cleared on successful use. Backs self-service
+  // forgot-password, admin-triggered password reset, and email-change (which
+  // reuses this same token instead of an admin ever typing a password).
+  passwordResetToken: text("password_reset_token"),
+  passwordResetTokenExpiresAt: timestamp("password_reset_token_expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -105,6 +118,12 @@ export const memberships = pgTable(
     userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("member"),
+    // Access-lifecycle flag (2026-09-04): requireOrg (server/middleware/tenant.ts)
+    // only resolves active memberships -- deactivating one revokes that org's
+    // access on the user's very next request, without touching their account
+    // or any other membership. See
+    // docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md.
+    isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -160,16 +179,28 @@ export type OrganizationModule = typeof organizationModules.$inferSelect;
 // the /admin panel) -- this acts across other tenants' data and can grant
 // or revoke platform-wide privileges, so every action is recorded and
 // readable via GET /api/admin/action-log.
-export const adminActionLogActions = ["verify", "delete", "promote", "demote"] as const;
+export const adminActionLogActions = [
+  "verify",
+  "delete",
+  "promote",
+  "demote",
+  "deactivate_membership",
+  "activate_membership",
+  "deactivate_user",
+  "activate_user",
+  "change_email",
+  "reset_password",
+] as const;
 export type AdminActionLogAction = (typeof adminActionLogActions)[number];
 
 export const adminActionLog = pgTable("admin_action_log", {
   id: serial("id").primaryKey(),
   // The admin who performed the action. A real FK (unlike
   // organizationModules.enabledBy below) -- the actor here is always an
-  // authenticated super-admin session, never a vendor-script identity.
+  // authenticated super-admin or org-admin session, never a vendor-script
+  // identity.
   actorUserId: integer("actor_user_id").notNull().references(() => users.id),
-  action: text("action").notNull(), // "verify" | "delete" | "promote" | "demote"
+  action: text("action").notNull(),
   // Deliberately NOT a foreign key: the delete action's entire point is
   // removing this row, and a hard FK would either block the delete or
   // depend on ON DELETE SET NULL firing correctly inside a db.batch() --
@@ -179,9 +210,18 @@ export const adminActionLog = pgTable("admin_action_log", {
   // of whether targetUserId still resolves to a live row (it won't, after
   // a delete action).
   targetEmail: text("target_email").notNull(),
-  // Free-text justification, required by the demote route (validated
-  // there, not at the DB level -- nullable here since verify/delete/promote
-  // never send one) so a demotion always carries a recorded reason.
+  // Set for an org-scoped action (deactivate/activate a membership, or an
+  // account-wide action an org-admin performed within their own tenant);
+  // null for a cross-tenant super-admin action. Also not a foreign key, for
+  // the same reason as targetUserId -- a denormalized reference that must
+  // survive whatever it points to changing later, not a constraint. Lets
+  // GET /api/team/action-log filter to "my org's rows" while the
+  // super-admin's GET /api/admin/action-log keeps seeing everything.
+  organizationId: integer("organization_id"),
+  organizationName: text("organization_name"),
+  // Free-text justification. Required (validated at the route, not the DB
+  // level) for deactivate-membership, deactivate-user, change-email, and
+  // admin-triggered reset-password; optional for the rest.
   note: text("note"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -191,6 +231,8 @@ export const insertAdminActionLogSchema = createInsertSchema(adminActionLog).pic
   action: true,
   targetUserId: true,
   targetEmail: true,
+  organizationId: true,
+  organizationName: true,
   note: true,
 });
 
