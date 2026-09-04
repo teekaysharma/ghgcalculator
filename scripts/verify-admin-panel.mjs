@@ -439,6 +439,72 @@ async function main() {
         fail("GET /api/admin/action-log", `status ${res.status}, entries ${JSON.stringify(body.entries?.slice(0, 5))}`);
       }
     }
+
+    // --- scenario 15: deleting a user who ALSO holds a membership in a
+    // different, live organization must never touch that live org
+    // (regression test for the deleteUnverifiedUserById fix -- the old
+    // arbitrary userMemberships[0] pick could select the invited-into org
+    // instead of the target's own, and hard-delete an unrelated tenant).
+    // Reuses unverifiedId/unverifiedEmail from scenario 6 above (instead of
+    // registering a fresh account) to stay within POST /api/auth/register's
+    // 5-per-hour rate limit -- this script's other five registrations
+    // already use up that budget in a single run. ---
+    if (unverifiedId) {
+      // plainEmail invites the still-UNVERIFIED account into its own org --
+      // POST /api/team/invite has no emailVerified check (the real-world
+      // hole this scenario reproduces), so this succeeds and unverifiedId
+      // ends up with two memberships: owner of its own solo org (from
+      // scenario 6's registration), and member of plainEmail's separate,
+      // live org.
+      const inviteRes = await fetch(`${BASE_URL}/api/team/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: plainCookie },
+        body: JSON.stringify({ email: unverifiedEmail }),
+      });
+      if (inviteRes.status === 201) {
+        ok("POST /api/team/invite (unverified user into a different live org)", "201");
+      } else {
+        fail("POST /api/team/invite (unverified user into a different live org)", `expected 201, got ${inviteRes.status}`);
+      }
+
+      const plainId = await getUserId(pool, plainEmail);
+      const plainOrgRow = await pool.query(
+        "SELECT organization_id FROM memberships WHERE user_id = $1 AND role = 'owner'",
+        [plainId],
+      );
+      const plainOrgId = plainOrgRow.rows[0]?.organization_id;
+
+      const deleteRes = await fetch(`${BASE_URL}/api/admin/users/${unverifiedId}`, {
+        method: "DELETE",
+        headers: { Cookie: adminCookie },
+      });
+      const targetGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [unverifiedId]);
+      const targetOrgGone = await pool.query("SELECT 1 FROM organizations WHERE name = $1", [`${RUN_TAG}-unverified`]);
+      if (deleteRes.status === 204 && targetGone.rowCount === 0 && targetOrgGone.rowCount === 0) {
+        ok("DELETE /api/admin/users/:id (cross-membership target)", "204, target row and its own solo-owned org both gone");
+      } else {
+        fail(
+          "DELETE /api/admin/users/:id (cross-membership target)",
+          `status ${deleteRes.status}, target row gone: ${targetGone.rowCount === 0}, target org gone: ${targetOrgGone.rowCount === 0}`,
+        );
+      }
+
+      const plainOrgStill = plainOrgId
+        ? await pool.query("SELECT 1 FROM organizations WHERE id = $1", [plainOrgId])
+        : { rowCount: 0 };
+      const plainUserStill = await pool.query("SELECT 1 FROM users WHERE id = $1", [plainId]);
+      if (plainOrgId && plainOrgStill.rowCount === 1 && plainUserStill.rowCount === 1) {
+        ok(
+          "deleteUnverifiedUserById leaves the invited-into live org untouched",
+          `org ${plainOrgId} and plainEmail's user row both still present`,
+        );
+      } else {
+        fail(
+          "deleteUnverifiedUserById leaves the invited-into live org untouched",
+          `plainOrgId ${plainOrgId}, org present: ${plainOrgStill.rowCount === 1}, plainEmail user present: ${plainUserStill.rowCount === 1}`,
+        );
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as
@@ -447,12 +513,12 @@ async function main() {
     // the exact FK failure the feature's delete-scope decision was
     // designed around. Target-side log rows from scenarios 4, 5, 10, and
     // 12 also need direct cleanup (their users weren't deleted by the
-    // endpoints under test). Scenario 11's target user is already gone --
-    // only its now-orphaned log row remains, caught by the same LIKE query
-    // below. pendingEmail1 was promoted to super-admin during the run
-    // (then demoted back), so it also needs its own admin_action_log rows
-    // cleared before it can be deleted (it was briefly an actor-eligible
-    // account, not just a target).
+    // endpoints under test). Scenario 11's and scenario 15's target users
+    // are already gone -- only their now-orphaned log rows remain, caught
+    // by the same LIKE query below. pendingEmail1 was promoted to
+    // super-admin during the run (then demoted back), so it also needs its
+    // own admin_action_log rows cleared before it can be deleted (it was
+    // briefly an actor-eligible account, not just a target).
     try {
       const emailsToClean = [...createdEmails];
       const pendingId1Email = `${RUN_TAG}-pending1@example.invalid`;

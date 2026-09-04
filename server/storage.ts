@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { MODULE_REGISTRY, isKnownModuleKey } from "./modules";
 import {
@@ -1602,37 +1602,58 @@ export class DbStorage implements IStorage {
     if (!target) return "not_found";
     if (target.emailVerified) return "already_verified";
 
-    const userMemberships = await db.select().from(memberships).where(eq(memberships.userId, userId));
-    // A pending (just-registered, unverified) user always has exactly one
-    // membership -- registration creates it atomically. orgId is only
-    // undefined in a data-integrity-violation scenario this shouldn't ever
-    // reach, handled defensively below rather than assumed away.
-    const orgId = userMemberships[0]?.organizationId;
+    // Only ever delete an organization this user OWNS (registration always
+    // creates role: "owner" for the org it creates; a membership added via
+    // POST /api/team/invite is "member"/"admin" in a DIFFERENT, live
+    // organization -- that must never be touched, even if it's the only
+    // membership row this query happens to see first). Additionally require
+    // that no other user holds a membership in the owned org, as
+    // defense-in-depth: an unverified owner cannot invite anyone else
+    // (inviting requires an authenticated session, and login is blocked
+    // until the account is verified), so this should always hold -- but the
+    // delete must never rely on that invariant alone.
+    const ownedMemberships = await db
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.userId, userId), eq(memberships.role, "owner")));
+
+    let orgIdToDelete: number | undefined;
+    if (ownedMemberships.length > 0) {
+      const candidateOrgId = ownedMemberships[0].organizationId;
+      const otherMembers = await db
+        .select()
+        .from(memberships)
+        .where(and(eq(memberships.organizationId, candidateOrgId), ne(memberships.userId, userId)));
+      if (otherMembers.length === 0) {
+        orgIdToDelete = candidateOrgId;
+      }
+      // If otherMembers.length > 0, this "owned" org unexpectedly has other
+      // members -- do not delete it. The target user's own row (and every
+      // membership row of theirs, in any org) still gets removed below via
+      // the users delete, which cascades on memberships.userId.
+    }
 
     // Same db.batch() requirement as deleteExpiredUnverifiedRegistrations
     // above -- db.transaction() throws on this project's neon-http driver.
     // The audit-log insert rides in the same batch as the deletes so "the
     // row is gone" and "there's a record of who removed it" are one atomic
     // fact, never one without the other.
-    if (orgId) {
+    const logEntry = db.insert(adminActionLog).values({
+      actorUserId,
+      action: "delete" as const,
+      targetUserId: target.id,
+      targetEmail: target.email,
+    });
+
+    if (orgIdToDelete) {
       await db.batch([
-        db.insert(adminActionLog).values({
-          actorUserId,
-          action: "delete",
-          targetUserId: target.id,
-          targetEmail: target.email,
-        }),
-        db.delete(organizations).where(eq(organizations.id, orgId)),
+        logEntry,
+        db.delete(organizations).where(eq(organizations.id, orgIdToDelete)),
         db.delete(users).where(eq(users.id, userId)),
       ]);
     } else {
       await db.batch([
-        db.insert(adminActionLog).values({
-          actorUserId,
-          action: "delete",
-          targetUserId: target.id,
-          targetEmail: target.email,
-        }),
+        logEntry,
         db.delete(users).where(eq(users.id, userId)),
       ]);
     }
