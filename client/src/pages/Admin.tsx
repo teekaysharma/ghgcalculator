@@ -201,11 +201,23 @@ export default function Admin() {
             />
           </CardHeader>
           <CardContent>
-            {usersQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
-            {!usersQuery.isLoading && rows.length === 0 && (
+            {usersQuery.isError && (
+              <div className="flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+                <span className="text-destructive">
+                  Couldn't load accounts. {(usersQuery.error as Error)?.message}
+                </span>
+                <Button variant="outline" size="sm" onClick={() => usersQuery.refetch()}>
+                  Retry
+                </Button>
+              </div>
+            )}
+            {!usersQuery.isError && usersQuery.isLoading && (
+              <div className="text-sm text-neutral-500">Loading...</div>
+            )}
+            {!usersQuery.isError && !usersQuery.isLoading && rows.length === 0 && (
               <p className="text-sm text-neutral-500">No accounts found.</p>
             )}
-            {rows.length > 0 && (
+            {!usersQuery.isError && rows.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -353,7 +365,7 @@ export default function Admin() {
                 </TableBody>
               </Table>
             )}
-            {total > 0 && (
+            {!usersQuery.isError && total > 0 && (
               <div className="flex items-center justify-between mt-4">
                 <p className="text-sm text-neutral-500">
                   Showing {rangeStart}–{rangeEnd} of {total}
@@ -387,11 +399,23 @@ export default function Admin() {
             <CardDescription>The most recent admin actions across the platform.</CardDescription>
           </CardHeader>
           <CardContent>
-            {actionLogQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
-            {!actionLogQuery.isLoading && entries.length === 0 && (
+            {actionLogQuery.isError && (
+              <div className="flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+                <span className="text-destructive">
+                  Couldn't load activity. {(actionLogQuery.error as Error)?.message}
+                </span>
+                <Button variant="outline" size="sm" onClick={() => actionLogQuery.refetch()}>
+                  Retry
+                </Button>
+              </div>
+            )}
+            {!actionLogQuery.isError && actionLogQuery.isLoading && (
+              <div className="text-sm text-neutral-500">Loading...</div>
+            )}
+            {!actionLogQuery.isError && !actionLogQuery.isLoading && entries.length === 0 && (
               <p className="text-sm text-neutral-500">No admin actions recorded yet.</p>
             )}
-            {entries.length > 0 && (
+            {!actionLogQuery.isError && entries.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow>
