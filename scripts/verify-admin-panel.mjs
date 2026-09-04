@@ -345,6 +345,7 @@ async function main() {
       if (registerRes.status !== 201) {
         fail("POST /api/auth/register (pending2 setup)", `expected 201, got ${registerRes.status}`);
       } else {
+        createdEmails.push(pendingEmail2);
         const targetId = await getUserId(pool, pendingEmail2);
         const res = await fetch(`${BASE_URL}/api/admin/users/${targetId}`, {
           method: "DELETE",
