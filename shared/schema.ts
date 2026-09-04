@@ -46,6 +46,16 @@ export const users = pgTable("users", {
   emailVerified: boolean("email_verified").notNull().default(false),
   emailVerificationToken: text("email_verification_token"),
   emailVerificationTokenExpiresAt: timestamp("email_verification_token_expires_at"),
+  // Platform-wide admin flag (2026-09-04), distinct from the per-organization
+  // owner/admin/member roles in `memberships.role` below. Deliberately
+  // excluded from insertUserSchema's pick list -- self-serve registration
+  // must never be able to set this. The FIRST super-admin is seeded only
+  // via scripts/manual-migration-013.mjs (hardcoded to the project owner's
+  // email); any super-admin can promote another verified account, or
+  // demote another super-admin (never themselves), from the /admin panel
+  // after that. See
+  // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md.
+  isSuperAdmin: boolean("is_super_admin").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -145,6 +155,47 @@ export const insertOrganizationModuleSchema = createInsertSchema(organizationMod
 
 export type InsertOrganizationModule = z.infer<typeof insertOrganizationModuleSchema>;
 export type OrganizationModule = typeof organizationModules.$inferSelect;
+
+// Audit log for platform-admin actions (verify/delete/promote/demote from
+// the /admin panel) -- this acts across other tenants' data and can grant
+// or revoke platform-wide privileges, so every action is recorded and
+// readable via GET /api/admin/action-log.
+export const adminActionLogActions = ["verify", "delete", "promote", "demote"] as const;
+export type AdminActionLogAction = (typeof adminActionLogActions)[number];
+
+export const adminActionLog = pgTable("admin_action_log", {
+  id: serial("id").primaryKey(),
+  // The admin who performed the action. A real FK (unlike
+  // organizationModules.enabledBy below) -- the actor here is always an
+  // authenticated super-admin session, never a vendor-script identity.
+  actorUserId: integer("actor_user_id").notNull().references(() => users.id),
+  action: text("action").notNull(), // "verify" | "delete" | "promote" | "demote"
+  // Deliberately NOT a foreign key: the delete action's entire point is
+  // removing this row, and a hard FK would either block the delete or
+  // depend on ON DELETE SET NULL firing correctly inside a db.batch() --
+  // not worth the fragility.
+  targetUserId: integer("target_user_id"),
+  // Denormalized snapshot so the log row stays legible forever, independent
+  // of whether targetUserId still resolves to a live row (it won't, after
+  // a delete action).
+  targetEmail: text("target_email").notNull(),
+  // Free-text justification, required by the demote route (validated
+  // there, not at the DB level -- nullable here since verify/delete/promote
+  // never send one) so a demotion always carries a recorded reason.
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertAdminActionLogSchema = createInsertSchema(adminActionLog).pick({
+  actorUserId: true,
+  action: true,
+  targetUserId: true,
+  targetEmail: true,
+  note: true,
+});
+
+export type InsertAdminActionLog = z.infer<typeof insertAdminActionLogSchema>;
+export type AdminActionLog = typeof adminActionLog.$inferSelect;
 
 // GHG Emission types
 export type ScopeType = 'scope1' | 'scope2' | 'scope3';
