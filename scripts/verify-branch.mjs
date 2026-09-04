@@ -158,7 +158,8 @@ async function step3_dbPush() {
       WHERE (table_name = 'emission_factors' AND column_name = 'year')
          OR (table_name = 'emission_records' AND column_name = 'scope3_category')
          OR (table_name = 'users' AND column_name IN (
-              'email_verified', 'email_verification_token', 'email_verification_token_expires_at'
+              'email_verified', 'email_verification_token', 'email_verification_token_expires_at',
+              'is_super_admin'
             ))
     `);
     const found = new Set(res.rows.map((r) => `${r.table_name}.${r.column_name}`));
@@ -168,6 +169,7 @@ async function step3_dbPush() {
       "users.email_verified",
       "users.email_verification_token",
       "users.email_verification_token_expires_at",
+      "users.is_super_admin",
     ];
     const missing = required.filter((r) => !found.has(r));
     if (missing.length > 0) {
@@ -176,13 +178,23 @@ async function step3_dbPush() {
           `script in scripts/ against DATABASE_URL before re-running verify.`,
       );
     }
+
+    const adminLogTable = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'admin_action_log'`,
+    );
+    if (adminLogTable.rowCount === 0) {
+      throw new Error(
+        "Schema is out of sync: missing table admin_action_log. Run scripts/manual-migration-013.mjs " +
+          "against DATABASE_URL before re-running verify.",
+      );
+    }
   } finally {
     await pool.end();
   }
 
   ok(
     "schema check",
-    "emission_factors.year, emission_records.scope3_category, and users email-verification columns present",
+    "emission_factors.year, emission_records.scope3_category, users email-verification/is_super_admin columns, and admin_action_log table present",
   );
 }
 
