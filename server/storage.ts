@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { MODULE_REGISTRY, isKnownModuleKey } from "./modules";
 import {
@@ -28,12 +28,14 @@ import {
   isicDivisions,
   ipccDefaultFactors,
   gwpValues,
+  adminActionLog,
   type Organization,
   type InsertOrganization,
   type User,
   type InsertUser,
   type Membership,
   type InsertMembership,
+  type AdminActionLog,
   type EmissionFactorRow,
   type InsertEmissionFactorRow,
   type EmissionRecordRow,
@@ -185,6 +187,35 @@ export interface SourceStreamDetail {
     fallbackMethodDescription: string | null;
     estimatedEmissionsTco2e: number | null;
   } | null;
+}
+
+// -----------------------------------------------------------------------
+// AdminUserListItem / AdminActionLogEntry
+//
+// Response shapes for the platform-admin panel. organizations is an array
+// (not a single object) on AdminUserListItem because the schema itself
+// allows a user to belong to more than one organization even though
+// nothing in the product creates that today (memberships only enforces
+// uniqueness on (userId, organizationId), not on userId alone) -- this is
+// the honest shape rather than silently assuming one org per user forever.
+// -----------------------------------------------------------------------
+export interface AdminUserListItem {
+  id: number;
+  email: string;
+  name: string | null;
+  emailVerified: boolean;
+  isSuperAdmin: boolean;
+  createdAt: Date;
+  organizations: { organizationId: number; organizationName: string; role: string }[];
+}
+
+export interface AdminActionLogEntry {
+  id: number;
+  actorEmail: string;
+  action: "verify" | "delete" | "promote" | "demote";
+  targetEmail: string;
+  note: string | null;
+  createdAt: Date;
 }
 
 // -----------------------------------------------------------------------
@@ -348,6 +379,22 @@ export interface IStorage {
   // Per-source-stream calculation detail for Excel export: data neither the
   // consolidated report nor any other existing query provides.
   getSourceStreamDetailForBoundary(organizationId: number, reportingBoundaryId: number): Promise<SourceStreamDetail[]>;
+
+  // Platform admin (super-admin only, cross-tenant). Like
+  // deleteExpiredUnverifiedRegistrations above, these take no
+  // organizationId -- a super-admin isn't scoped to one tenant.
+  listAllUsersForAdmin(params: { search?: string; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>;
+  deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">;
+  promoteToSuperAdmin(userId: number): Promise<void>;
+  demoteFromSuperAdmin(userId: number): Promise<void>;
+  logAdminAction(entry: {
+    actorUserId: number;
+    action: "verify" | "delete" | "promote" | "demote";
+    targetUserId: number;
+    targetEmail: string;
+    note?: string;
+  }): Promise<AdminActionLog>;
+  listAdminActionLog(): Promise<AdminActionLogEntry[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -1487,6 +1534,145 @@ export class DbStorage implements IStorage {
           : null,
       };
     });
+  }
+
+  async listAllUsersForAdmin(params: {
+    search?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ users: AdminUserListItem[]; total: number }> {
+    const { search, limit, offset } = params;
+    const searchFilter = search ? or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`)) : undefined;
+
+    const totalRes = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(users)
+      .where(searchFilter);
+    const total = totalRes[0]?.count ?? 0;
+
+    const pageUsers = await db
+      .select()
+      .from(users)
+      .where(searchFilter)
+      .orderBy(desc(users.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const userIds = pageUsers.map((u) => u.id);
+    const pageMemberships =
+      userIds.length > 0
+        ? await db
+            .select({
+              userId: memberships.userId,
+              organizationId: memberships.organizationId,
+              role: memberships.role,
+              organizationName: organizations.name,
+            })
+            .from(memberships)
+            .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
+            .where(inArray(memberships.userId, userIds))
+        : [];
+
+    const orgsByUserId = new Map<number, { organizationId: number; organizationName: string; role: string }[]>();
+    for (const m of pageMemberships) {
+      const list = orgsByUserId.get(m.userId) ?? [];
+      list.push({ organizationId: m.organizationId, organizationName: m.organizationName, role: m.role });
+      orgsByUserId.set(m.userId, list);
+    }
+
+    return {
+      users: pageUsers.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        emailVerified: u.emailVerified,
+        isSuperAdmin: u.isSuperAdmin,
+        createdAt: u.createdAt,
+        organizations: orgsByUserId.get(u.id) ?? [],
+      })),
+      total,
+    };
+  }
+
+  async deleteUnverifiedUserById(
+    userId: number,
+    actorUserId: number,
+  ): Promise<"deleted" | "not_found" | "already_verified"> {
+    const [target] = await db.select().from(users).where(eq(users.id, userId));
+    if (!target) return "not_found";
+    if (target.emailVerified) return "already_verified";
+
+    const userMemberships = await db.select().from(memberships).where(eq(memberships.userId, userId));
+    // A pending (just-registered, unverified) user always has exactly one
+    // membership -- registration creates it atomically. orgId is only
+    // undefined in a data-integrity-violation scenario this shouldn't ever
+    // reach, handled defensively below rather than assumed away.
+    const orgId = userMemberships[0]?.organizationId;
+
+    // Same db.batch() requirement as deleteExpiredUnverifiedRegistrations
+    // above -- db.transaction() throws on this project's neon-http driver.
+    // The audit-log insert rides in the same batch as the deletes so "the
+    // row is gone" and "there's a record of who removed it" are one atomic
+    // fact, never one without the other.
+    if (orgId) {
+      await db.batch([
+        db.insert(adminActionLog).values({
+          actorUserId,
+          action: "delete",
+          targetUserId: target.id,
+          targetEmail: target.email,
+        }),
+        db.delete(organizations).where(eq(organizations.id, orgId)),
+        db.delete(users).where(eq(users.id, userId)),
+      ]);
+    } else {
+      await db.batch([
+        db.insert(adminActionLog).values({
+          actorUserId,
+          action: "delete",
+          targetUserId: target.id,
+          targetEmail: target.email,
+        }),
+        db.delete(users).where(eq(users.id, userId)),
+      ]);
+    }
+
+    return "deleted";
+  }
+
+  async promoteToSuperAdmin(userId: number): Promise<void> {
+    await db.update(users).set({ isSuperAdmin: true }).where(eq(users.id, userId));
+  }
+
+  async demoteFromSuperAdmin(userId: number): Promise<void> {
+    await db.update(users).set({ isSuperAdmin: false }).where(eq(users.id, userId));
+  }
+
+  async logAdminAction(entry: {
+    actorUserId: number;
+    action: "verify" | "delete" | "promote" | "demote";
+    targetUserId: number;
+    targetEmail: string;
+    note?: string;
+  }): Promise<AdminActionLog> {
+    const [row] = await db.insert(adminActionLog).values(entry).returning();
+    return row;
+  }
+
+  async listAdminActionLog(): Promise<AdminActionLogEntry[]> {
+    return db
+      .select({
+        id: adminActionLog.id,
+        actorEmail: users.email,
+        action: adminActionLog.action,
+        targetEmail: adminActionLog.targetEmail,
+        note: adminActionLog.note,
+        createdAt: adminActionLog.createdAt,
+      })
+      .from(adminActionLog)
+      .innerJoin(users, eq(users.id, adminActionLog.actorUserId))
+      .orderBy(desc(adminActionLog.createdAt))
+      .limit(200) as Promise<AdminActionLogEntry[]>;
   }
 }
 

@@ -8,6 +8,7 @@ import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
 import { sendVerificationEmail } from "./email";
 import { requireAuth, requireOrg } from "./middleware/tenant";
+import { requireSuperAdmin } from "./middleware/admin";
 import {
   Emission,
   GasComponent,
@@ -584,7 +585,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         req.login(user, (loginErr) => {
           if (loginErr) return next(loginErr);
-          return res.json({ user: { id: user.id, email: user.email, name: user.name } });
+          return res.json({ user: { id: user.id, email: user.email, name: user.name, isSuperAdmin: user.isSuperAdmin } });
         });
       },
     )(req, res, next);
@@ -601,7 +602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/me", requireAuth, async (req, res) => {
-    const user = req.user as { id: number; email: string; name: string | null };
+    const user = req.user as { id: number; email: string; name: string | null; isSuperAdmin: boolean };
     const memberships = await storage.getMembershipsForUser(user.id);
     const organizations = await Promise.all(
       memberships.map(async (m) => {
@@ -616,7 +617,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       }),
     );
-    return res.json({ user: { id: user.id, email: user.email, name: user.name }, memberships, organizations });
+    return res.json({
+      user: { id: user.id, email: user.email, name: user.name, isSuperAdmin: user.isSuperAdmin },
+      memberships,
+      organizations,
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Platform admin (super-admin only, cross-tenant). See
+  // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md. Delete is
+  // deliberately scoped to pending/unverified accounts only -- a verified
+  // tenant's organization cascades through every tenant-scoped table, and
+  // emission_factors.uploaded_by/emission_records.created_by reference
+  // users.id with no cascade, so deleting a user who's created data would
+  // hit a hard FK failure. Removing a live tenant is out of scope here.
+  // Self-demote is rejected unconditionally so the panel can never drop the
+  // platform to zero super-admins.
+  // -----------------------------------------------------------------------
+  app.get("/api/admin/users", requireAuth, requireSuperAdmin, async (req, res) => {
+    const search = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 25;
+    const rawOffset = Number(req.query.offset);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+    const result = await storage.listAllUsersForAdmin({ search: search || undefined, limit, offset });
+    return res.json(result);
+  });
+
+  app.post("/api/admin/users/:id/verify", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    await storage.verifyUserEmail(target.id);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "verify",
+        targetUserId: target.id,
+        targetEmail: target.email,
+      });
+    } catch (err) {
+      // A logging failure must never turn a successful verify into a 500 --
+      // the admin's action already succeeded.
+      console.error("Failed to write admin action log (verify):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, emailVerified: true } });
+  });
+
+  app.delete("/api/admin/users/:id", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (target.emailVerified) {
+      return res.status(409).json({ message: "Cannot delete a verified account from this panel.", reason: "already_verified" });
+    }
+    const result = await storage.deleteUnverifiedUserById(targetId, (req.user as { id: number }).id);
+    if (result === "not_found") return res.status(404).json({ message: "User not found" });
+    if (result === "already_verified") {
+      return res.status(409).json({ message: "Cannot delete a verified account from this panel.", reason: "already_verified" });
+    }
+    return res.status(204).end();
+  });
+
+  app.post("/api/admin/users/:id/promote", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!target.emailVerified) {
+      return res.status(400).json({ message: "Account must be verified before it can be promoted to super-admin." });
+    }
+    await storage.promoteToSuperAdmin(target.id);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "promote",
+        targetUserId: target.id,
+        targetEmail: target.email,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (promote):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: true } });
+  });
+
+  app.post("/api/admin/users/:id/demote", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to demote an account." });
+    }
+    const actorId = (req.user as { id: number }).id;
+    if (targetId === actorId) {
+      // The one hard guard rail in this feature: without it, the last
+      // remaining super-admin could demote themselves and lock the
+      // platform out of this panel entirely (the migration's seed only
+      // ever fires once, so there is no automatic way back in).
+      return res.status(400).json({ message: "You cannot demote yourself." });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!target.isSuperAdmin) {
+      return res.status(400).json({ message: "Account is not a super-admin." });
+    }
+    await storage.demoteFromSuperAdmin(target.id);
+    try {
+      await storage.logAdminAction({
+        actorUserId: actorId,
+        action: "demote",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (demote):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: false } });
+  });
+
+  app.get("/api/admin/action-log", requireAuth, requireSuperAdmin, async (_req, res) => {
+    const entries = await storage.listAdminActionLog();
+    return res.json({ entries });
   });
 
   // -----------------------------------------------------------------------
