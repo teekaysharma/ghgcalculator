@@ -10,13 +10,14 @@
 //
 // Order, all in one transaction:
 //   1. ADD COLUMN IF NOT EXISTS users.is_super_admin boolean (defaults false)
-//   2. Seed is_super_admin = true for the owner's account, but ONLY if step 1
-//      just created the column this run (same grandfather-gate pattern as
-//      scripts/manual-migration-012.mjs's email_verified backfill, so this
-//      never re-fires and can't accidentally re-promote/demote anyone
-//      later -- once panel-based promote/demote is live, re-running this
-//      seed unconditionally would be actively wrong, and would be the only
-//      way to undo a deliberate demotion of that very account).
+//   2. Seed is_super_admin = true for the owner's account, but ONLY if no
+//      super-admins currently exist (COUNT WHERE is_super_admin = true == 0).
+//      This self-heals: the seed fires as soon as the account exists and
+//      re-runs the script. It's still safe against accidental re-promotion
+//      of a deliberately demoted account because the panel forbids self-demote,
+//      so at least one super-admin always remains after any panel-based demote
+//      action. The count only reaches 0 again via direct DB manipulation
+//      (e.g. reset/testing), which is an appropriate case to self-heal on.
 //      If no user row exists yet for that email, this is skipped with a
 //      clear message rather than failing -- register that account first,
 //      then re-run this script.
@@ -71,20 +72,19 @@ async function main() {
   try {
     await client.query("BEGIN");
 
-    const isSuperAdminWasJustAdded = await addColumnIfMissing(
+    await addColumnIfMissing(
       client,
       "is_super_admin",
       `ALTER TABLE users ADD COLUMN is_super_admin boolean NOT NULL DEFAULT false`,
     );
 
-    // Gated exactly like manual-migration-012.mjs's email_verified
-    // grandfather backfill: only runs the one-time seed if the column was
-    // just created in THIS invocation, so re-running the script can never
-    // silently re-promote or demote the seeded account -- especially
-    // important once panel-based promote/demote is live, since this seed
-    // step must never overwrite whatever the panel has since done
-    // (including a deliberate demotion of this very account).
-    if (isSuperAdminWasJustAdded) {
+    // Gate on zero current super-admins for self-healing seeding. Safe against
+    // accidental re-promotion because the panel forbids self-demote, so at
+    // least one super-admin always remains after any panel-based demote.
+    // The count only reaches 0 via direct DB manipulation (e.g. reset/testing),
+    // which is an appropriate case to self-heal on.
+    const superAdminCount = await client.query(`SELECT COUNT(*)::int AS count FROM users WHERE is_super_admin = true`);
+    if (superAdminCount.rows[0].count === 0) {
       const owner = await client.query(`SELECT id FROM users WHERE email = $1`, [SUPER_ADMIN_EMAIL]);
       if (owner.rowCount > 0) {
         await client.query(`UPDATE users SET is_super_admin = true WHERE id = $1`, [owner.rows[0].id]);
@@ -95,7 +95,7 @@ async function main() {
         );
       }
     } else {
-      skipped.push("seed super-admin (is_super_admin column already existed, no seed re-run)");
+      skipped.push(`seed super-admin (${superAdminCount.rows[0].count} super-admin(s) already exist, no seed needed)`);
     }
 
     await createTableIfMissing(
