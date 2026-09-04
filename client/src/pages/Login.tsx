@@ -24,6 +24,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
+  const [deactivated, setDeactivated] = useState(false);
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginFormSchema),
@@ -33,6 +34,7 @@ export default function Login() {
   const onSubmit = async (values: LoginFormValues) => {
     setError(null);
     setUnverifiedEmail(null);
+    setDeactivated(false);
     try {
       await login(values);
       setLocation("/");
@@ -40,6 +42,8 @@ export default function Login() {
       const reason = (err as Error & { reason?: string }).reason;
       if (reason === "unverified") {
         setUnverifiedEmail(values.email);
+      } else if (reason === "deactivated") {
+        setDeactivated(true);
       } else {
         setError(err instanceof Error ? err.message : "Failed to log in");
       }
@@ -65,6 +69,13 @@ export default function Login() {
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {deactivated && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              This account has been deactivated. Contact your organization admin or support if you believe this is a mistake.
+            </AlertDescription>
           </Alert>
         )}
         {unverifiedEmail && (
@@ -101,7 +112,12 @@ export default function Login() {
           {loginPending ? "Signing in..." : "Log in"}
         </Button>
       </form>
-      <p className="text-sm text-neutral-600 mt-6 text-center">
+      <p className="text-sm text-neutral-600 text-center mt-4">
+        <Link href="/forgot-password" className="text-primary font-medium hover:underline">
+          Forgot your password?
+        </Link>
+      </p>
+      <p className="text-sm text-neutral-600 mt-2 text-center">
         Don't have an account?{" "}
         <Link href="/register" className="text-primary font-medium hover:underline">
           Create one
