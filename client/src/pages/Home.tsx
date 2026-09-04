@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import AppShell from "@/components/AppShell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -28,6 +29,11 @@ export default function Home() {
                 {org && <div className="font-medium text-neutral-800">{org.name}</div>}
                 {user && <div className="text-neutral-500">{user.email}</div>}
               </div>
+              {user?.isSuperAdmin && (
+                <Link href="/admin" className="text-sm text-primary-600 hover:underline">
+                  Admin
+                </Link>
+              )}
               <Button variant="outline" size="sm" onClick={() => logout()}>
                 Log out
               </Button>

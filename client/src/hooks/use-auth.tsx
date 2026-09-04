@@ -6,6 +6,7 @@ interface AuthUser {
   id: number;
   email: string;
   name: string | null;
+  isSuperAdmin: boolean;
 }
 
 interface Membership {
