@@ -808,6 +808,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ entries });
   });
 
+  app.post("/api/admin/memberships/:id/deactivate", requireAuth, requireSuperAdmin, async (req, res) => {
+    const membershipId = Number(req.params.id);
+    if (!Number.isInteger(membershipId) || membershipId <= 0) {
+      return res.status(400).json({ message: "Invalid membership id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to deactivate a membership." });
+    }
+    const updated = await storage.deactivateMembership(membershipId);
+    if (!updated) return res.status(404).json({ message: "Membership not found" });
+    const target = await storage.getUser(updated.userId);
+    const org = await storage.getOrganization(updated.organizationId);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "deactivate_membership",
+        targetUserId: updated.userId,
+        targetEmail: target?.email ?? "",
+        organizationId: updated.organizationId,
+        organizationName: org?.name,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (deactivate_membership):", err);
+    }
+    return res.status(200).json({ membership: { id: updated.id, isActive: updated.isActive } });
+  });
+
+  app.post("/api/admin/memberships/:id/activate", requireAuth, requireSuperAdmin, async (req, res) => {
+    const membershipId = Number(req.params.id);
+    if (!Number.isInteger(membershipId) || membershipId <= 0) {
+      return res.status(400).json({ message: "Invalid membership id" });
+    }
+    const updated = await storage.activateMembership(membershipId);
+    if (!updated) return res.status(404).json({ message: "Membership not found" });
+    const target = await storage.getUser(updated.userId);
+    const org = await storage.getOrganization(updated.organizationId);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "activate_membership",
+        targetUserId: updated.userId,
+        targetEmail: target?.email ?? "",
+        organizationId: updated.organizationId,
+        organizationName: org?.name,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (activate_membership):", err);
+    }
+    return res.status(200).json({ membership: { id: updated.id, isActive: updated.isActive } });
+  });
+
+  app.post("/api/admin/users/:id/deactivate", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to deactivate an account." });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!target.emailVerified) {
+      return res.status(400).json({ message: "This account isn't verified yet. Use delete instead." });
+    }
+    await storage.deactivateAccount(target.id);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "deactivate_user",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (deactivate_user):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, isActive: false } });
+  });
+
+  app.post("/api/admin/users/:id/reactivate", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    await storage.reactivateAccount(target.id);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "activate_user",
+        targetUserId: target.id,
+        targetEmail: target.email,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (activate_user):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, isActive: true } });
+  });
+
+  app.post("/api/admin/users/:id/change-email", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const parsed = z.object({ newEmail: z.string().email(), note: z.string().min(1) }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "A new email and a reason are both required." });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    const existing = await storage.getUserByEmail(parsed.data.newEmail);
+    if (existing && existing.id !== target.id) {
+      return res.status(409).json({ message: "An account with this email already exists" });
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await storage.setNewEmailPendingVerification(target.id, parsed.data.newEmail, token, expiresAt);
+    try {
+      await sendPasswordResetEmail({
+        to: parsed.data.newEmail,
+        token,
+        requestOrigin: `${req.protocol}://${req.get("host")}`,
+      });
+    } catch (emailError) {
+      console.error("Failed to send password reset email (change-email):", emailError);
+    }
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "change_email",
+        targetUserId: target.id,
+        targetEmail: parsed.data.newEmail,
+        note: parsed.data.note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (change_email):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: parsed.data.newEmail } });
+  });
+
+  app.post("/api/admin/users/:id/reset-password", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to reset a password." });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await storage.setPasswordResetToken(target.id, token, expiresAt);
+    try {
+      await sendPasswordResetEmail({
+        to: target.email,
+        token,
+        requestOrigin: `${req.protocol}://${req.get("host")}`,
+      });
+    } catch (emailError) {
+      console.error("Failed to send password reset email (admin reset-password):", emailError);
+    }
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "reset_password",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (reset_password):", err);
+    }
+    return res.status(200).json({ message: "Password reset email sent." });
+  });
+
   // -----------------------------------------------------------------------
   // Team -- list members of the caller's org, invite an existing user by
   // email. Deliberately minimal: invites only work for accounts that

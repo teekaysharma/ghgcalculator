@@ -205,15 +205,27 @@ export interface AdminUserListItem {
   name: string | null;
   emailVerified: boolean;
   isSuperAdmin: boolean;
+  isActive: boolean;
   createdAt: Date;
-  organizations: { organizationId: number; organizationName: string; role: string }[];
+  organizations: { membershipId: number; organizationId: number; organizationName: string; role: string; isActive: boolean }[];
 }
 
 export interface AdminActionLogEntry {
   id: number;
   actorEmail: string;
-  action: "verify" | "delete" | "promote" | "demote";
+  action:
+    | "verify"
+    | "delete"
+    | "promote"
+    | "demote"
+    | "deactivate_membership"
+    | "activate_membership"
+    | "deactivate_user"
+    | "activate_user"
+    | "change_email"
+    | "reset_password";
   targetEmail: string;
+  organizationName: string | null;
   note: string | null;
   createdAt: Date;
 }
@@ -387,16 +399,35 @@ export interface IStorage {
 
   // Platform admin (super-admin only, cross-tenant). Like
   // deleteExpiredUnverifiedRegistrations above, these take no
-  // organizationId -- a super-admin isn't scoped to one tenant.
+  // organizationId -- a super-admin isn't scoped to one tenant. The
+  // membership/account methods below double as the org-admin implementation
+  // too (Task 6) via the optional scopedToOrgId parameter.
   listAllUsersForAdmin(params: { search?: string; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>;
   deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">;
   promoteToSuperAdmin(userId: number): Promise<void>;
   demoteFromSuperAdmin(userId: number): Promise<void>;
+  deactivateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined>;
+  activateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined>;
+  deactivateAccount(userId: number): Promise<void>;
+  reactivateAccount(userId: number): Promise<void>;
+  setNewEmailPendingVerification(userId: number, newEmail: string, resetToken: string, resetTokenExpiresAt: Date): Promise<void>;
   logAdminAction(entry: {
     actorUserId: number;
-    action: "verify" | "delete" | "promote" | "demote";
+    action:
+      | "verify"
+      | "delete"
+      | "promote"
+      | "demote"
+      | "deactivate_membership"
+      | "activate_membership"
+      | "deactivate_user"
+      | "activate_user"
+      | "change_email"
+      | "reset_password";
     targetUserId: number;
     targetEmail: string;
+    organizationId?: number;
+    organizationName?: string;
     note?: string;
   }): Promise<AdminActionLog>;
   listAdminActionLog(): Promise<AdminActionLogEntry[]>;
@@ -1618,9 +1649,11 @@ export class DbStorage implements IStorage {
       userIds.length > 0
         ? await db
             .select({
+              membershipId: memberships.id,
               userId: memberships.userId,
               organizationId: memberships.organizationId,
               role: memberships.role,
+              isActive: memberships.isActive,
               organizationName: organizations.name,
             })
             .from(memberships)
@@ -1628,10 +1661,19 @@ export class DbStorage implements IStorage {
             .where(inArray(memberships.userId, userIds))
         : [];
 
-    const orgsByUserId = new Map<number, { organizationId: number; organizationName: string; role: string }[]>();
+    const orgsByUserId = new Map<
+      number,
+      { membershipId: number; organizationId: number; organizationName: string; role: string; isActive: boolean }[]
+    >();
     for (const m of pageMemberships) {
       const list = orgsByUserId.get(m.userId) ?? [];
-      list.push({ organizationId: m.organizationId, organizationName: m.organizationName, role: m.role });
+      list.push({
+        membershipId: m.membershipId,
+        organizationId: m.organizationId,
+        organizationName: m.organizationName,
+        role: m.role,
+        isActive: m.isActive,
+      });
       orgsByUserId.set(m.userId, list);
     }
 
@@ -1642,6 +1684,7 @@ export class DbStorage implements IStorage {
         name: u.name,
         emailVerified: u.emailVerified,
         isSuperAdmin: u.isSuperAdmin,
+        isActive: u.isActive,
         createdAt: u.createdAt,
         organizations: orgsByUserId.get(u.id) ?? [],
       })),
@@ -1724,11 +1767,73 @@ export class DbStorage implements IStorage {
     await db.update(users).set({ isSuperAdmin: false }).where(eq(users.id, userId));
   }
 
+  async deactivateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined> {
+    const where = scopedToOrgId
+      ? and(eq(memberships.id, membershipId), eq(memberships.organizationId, scopedToOrgId))
+      : eq(memberships.id, membershipId);
+    const [row] = await db.update(memberships).set({ isActive: false }).where(where).returning();
+    return row;
+  }
+
+  async activateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined> {
+    const where = scopedToOrgId
+      ? and(eq(memberships.id, membershipId), eq(memberships.organizationId, scopedToOrgId))
+      : eq(memberships.id, membershipId);
+    const [row] = await db.update(memberships).set({ isActive: true }).where(where).returning();
+    return row;
+  }
+
+  async deactivateAccount(userId: number): Promise<void> {
+    await db.update(users).set({ isActive: false }).where(eq(users.id, userId));
+  }
+
+  async reactivateAccount(userId: number): Promise<void> {
+    await db.update(users).set({ isActive: true }).where(eq(users.id, userId));
+  }
+
+  // Changing email never lets an admin set the account's password. The new
+  // occupant proves control of the new inbox and sets their own password
+  // via the SAME token-based flow POST /api/auth/reset-password serves for
+  // a plain forgot-password reset -- resetTokenExpiresAt/resetToken here are
+  // the password-reset token, not a fresh email-verification token; any
+  // stale email-verification token is cleared since it no longer applies to
+  // the new address.
+  async setNewEmailPendingVerification(
+    userId: number,
+    newEmail: string,
+    resetToken: string,
+    resetTokenExpiresAt: Date,
+  ): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        email: newEmail,
+        emailVerified: false,
+        emailVerificationToken: null,
+        emailVerificationTokenExpiresAt: null,
+        passwordResetToken: resetToken,
+        passwordResetTokenExpiresAt: resetTokenExpiresAt,
+      })
+      .where(eq(users.id, userId));
+  }
+
   async logAdminAction(entry: {
     actorUserId: number;
-    action: "verify" | "delete" | "promote" | "demote";
+    action:
+      | "verify"
+      | "delete"
+      | "promote"
+      | "demote"
+      | "deactivate_membership"
+      | "activate_membership"
+      | "deactivate_user"
+      | "activate_user"
+      | "change_email"
+      | "reset_password";
     targetUserId: number;
     targetEmail: string;
+    organizationId?: number;
+    organizationName?: string;
     note?: string;
   }): Promise<AdminActionLog> {
     const [row] = await db.insert(adminActionLog).values(entry).returning();
@@ -1742,6 +1847,7 @@ export class DbStorage implements IStorage {
         actorEmail: users.email,
         action: adminActionLog.action,
         targetEmail: adminActionLog.targetEmail,
+        organizationName: adminActionLog.organizationName,
         note: adminActionLog.note,
         createdAt: adminActionLog.createdAt,
       })
