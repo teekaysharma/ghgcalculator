@@ -599,7 +599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/reset-password", async (req, res) => {
     const parsed = z
-      .object({ token: z.string().min(1), newPassword: z.string().min(8) })
+      .object({ token: z.string().min(1), newPassword: registerSchema.shape.password })
       .safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input" });
