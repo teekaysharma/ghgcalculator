@@ -44,6 +44,12 @@ Works on Windows, macOS, and Linux (uses `taskkill /T` to fully stop the server 
 - `GET /api/setup-status` — `{ reportingEntityCount, facilityCount, boundaryCount, readyForCalculation }` for the caller's tenant.
 - `GET /api/team` — list org members. `POST /api/team/invite` — `{ email, role? }`, adds an existing user to the org, owner/admin only.
 - Existing `/api/calculate`, `/api/download-csv`, `/api/yearly-comparison`, `/api/product-intensity` are unchanged in behavior but now require auth. `/api/calculate` additionally accepts `persist: true` in the request body to save results to `emission_records`; the existing calculator UI does not send this flag yet, so current behavior (compute and return, nothing saved) is preserved unless a caller opts in. **`/api/calculate` now also requires setup completeness**: at least one reporting entity, facility, and reporting boundary must exist for the tenant, or it returns 400. See "Reconciled from codex" below.
+- `GET /api/admin/users` — search/paginate accounts across every tenant (`?search=&limit=&offset=`). Super-admin only.
+- `POST /api/admin/users/:id/verify` — manually mark a pending account verified. Super-admin only.
+- `DELETE /api/admin/users/:id` — delete a pending/unverified account (and its own solo-owned organization); `409` if the account is already verified. Super-admin only.
+- `POST /api/admin/users/:id/promote` — grant another verified account super-admin access. Super-admin only.
+- `POST /api/admin/users/:id/demote` — `{ note }`. Revoke a super-admin's access; requires a non-empty `note` explaining why, and a super-admin can never demote themselves. Super-admin only.
+- `GET /api/admin/action-log` — the most recent verify/delete/promote/demote actions (actor, target, note, timestamp). Super-admin only.
 
 ### Reconciled from `codex/review-code-for-gaps-and-improvements`
 
@@ -61,6 +67,7 @@ Also ported: `scope3Category` on emission inputs/records, `source`/`year` on emi
 - `SetupPanel` — walks through creating a reporting entity, facility, and reporting boundary, matches `/api/setup-status`'s `readyForCalculation` logic exactly, renders the calculator once complete. Not a port of `codex`'s `SetupBoundaryPanel.tsx` — that one predates auth/tenancy and targeted a different API shape, this is a fresh implementation against the current endpoints.
 - `TeamPanel` — lists org members, lets owner/admin add an *existing* user by email. No email delivery, no invite tokens, the invited person has to register themselves first. Stated in the UI itself, not hidden.
 - `EmissionCalculator` now sends `persist: true` on every calculation — previously computed and discarded even after the backend supported persistence.
+- `/admin` — standalone, cross-tenant page (not part of any organization's UI) visible only to a super-admin, reachable via a nav link next to logout that only renders when `user.isSuperAdmin`. See "Platform admin panel" below.
 
 ### Registration hardening (redesign-auth-pages branch, merged into main)
 
@@ -75,6 +82,12 @@ Built via this project's Subagent-Driven Development process (see `docs/superpow
 
 **Operational note:** the live Resend account is in sandbox/test mode — it can only deliver to its own account-owner email address until a sending domain is verified at [resend.com/domains](https://resend.com/domains). Until that's done, real registrants (anyone other than the account owner) will get `emailSendFailed: true` on the register response and no email.
 
+### Platform admin panel (`super-admin-panel` branch)
+
+Adds a platform-wide `isSuperAdmin` flag on `users`, distinct from the existing per-organization `owner`/`admin`/`member` roles in `memberships.role` (those are scoped to one tenant; `isSuperAdmin` isn't). A super-admin gets a new `/admin` page — not part of any organization's UI — listing every account across every tenant, searchable and paginated, with actions to manually verify a stuck pending registration, delete one outright (pending/unverified accounts only, never a verified/active tenant), promote another verified account to super-admin, or demote a super-admin back to a normal account (a required note is recorded with every demotion; a super-admin can never demote themselves). Every verify/delete/promote/demote action is written to `admin_action_log`, readable via `GET /api/admin/action-log` and shown in the panel itself.
+
+**Operational note:** there is no self-serve way to create the very first super-admin — it must be seeded manually. Register an account with the exact email `teekaysharma@googlemail.com` through the running app, then run `node scripts/manual-migration-013.mjs` (idempotent, safe to re-run) to seed `isSuperAdmin = true` for that account. The seed is self-healing (it fires whenever no super-admin currently exists), so re-running the script after that account registers — or after the platform is ever reset back to zero super-admins — will seed it; it will not fire again, and will not overwrite anyone's status, once at least one super-admin already exists. Once seeded, that account can promote any other verified account to super-admin from the panel.
+
 ### Known gaps in this branch (not done, scoped honestly)
 
 - No real invite flow (email delivery + signup-by-token). Current invite only attaches an already-registered account to an org.
@@ -83,7 +96,7 @@ Built via this project's Subagent-Driven Development process (see `docs/superpow
 - No password reset / forgot-password flow.
 - No UI test coverage — `npm run verify` exercises the API end-to-end but doesn't drive a browser. The UI changes in this session were type-checked and build-verified (`tsc --noEmit`, `npm run build`) but not click-tested by a human yet.
 - Compliance/framework layer beyond ISO 14064-1 boundary setup (DEFRA integration, GHG Protocol/CDP/GRI/TCFD/BRSR-specific fields) is still out of scope per the project instructions.
-- No admin/control-panel path to manually verify or manage accounts across tenants — `admin` in `memberships.role` is org-scoped only (can invite/manage within one's own org), not a platform-level role. A stuck unverified account (e.g. before a Resend domain is verified) can currently only be fixed with a direct database write.
+- The daily cron sweep (`deleteExpiredUnverifiedRegistrations`, `GET /api/cron/cleanup-unverified-users`) that auto-deletes registrations left unverified 24h+ has the same arbitrary-membership-selection risk the admin panel's manual delete (`deleteUnverifiedUserById`) was fixed to avoid: it doesn't yet distinguish an account's own (owned) organization from a second organization it was separately invited into before it was deleted. Low real-world likelihood today (a cross-org membership currently only arises via `POST /api/team/invite`), but it's an identified follow-up, intentionally out of scope for this fix.
 
 ## Features
 

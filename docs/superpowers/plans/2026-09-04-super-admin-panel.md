@@ -13,7 +13,7 @@
 - Delete is scoped to **pending/unverified accounts only**. A verified account can be viewed but never deleted from this panel — attempting it returns `409 { reason: "already_verified" }`.
 - Every verify/delete/promote/demote action writes a row to `admin_action_log` (actor, action, target user id, target email, optional note, timestamp). `admin_action_log` **is readable** via `GET /api/admin/action-log` and shown in the panel.
 - The **first** super-admin is always seeded by the migration, hardcoded by email (`teekaysharma@googlemail.com`). After that, any super-admin can **promote** another *verified* account to super-admin from the panel, behind a confirmation dialog that states plainly what the grantee gains.
-- Any super-admin can **demote** another super-admin back to a normal account, but only with a **required, non-empty note** explaining why (recorded on the audit log row). **A super-admin can never demote themselves** — the route rejects it with `400` unconditionally. This is the one hard guard rail in the feature: it exists specifically so the panel can never be used to drop the platform to zero super-admins, since the migration's hardcoded seed is gated to fire exactly once and would not recreate a demoted account.
+- Any super-admin can **demote** another super-admin back to a normal account, but only with a **required, non-empty note** explaining why (recorded on the audit log row). **A super-admin can never demote themselves** — the route rejects it with `400` unconditionally. This is the one hard guard rail in the feature: it exists specifically so the panel can never be used to drop the platform to zero super-admins. The migration's seed is self-healing (it re-fires whenever the count of current super-admins is truly zero), but that's not a substitute for this guard: a lone super-admin demoting themselves would still leave the platform with zero super-admins until someone noticed and manually re-ran the migration, rather than staying continuously usable.
 - Promoting an unverified account is rejected (`400`) — an account that can't log in yet shouldn't be grantable platform-wide access. Demoting an account that isn't currently a super-admin is also rejected (`400`).
 - `GET /api/admin/users` supports `?search=&limit=&offset=` (case-insensitive substring match on email or name; default `limit` 25, max 200).
 - `db.batch([...])` must be used for any multi-statement atomic write — `db.transaction()` throws at runtime on this project's `drizzle-orm/neon-http` driver (confirmed against driver source during the registration-hardening feature).
@@ -162,13 +162,14 @@ Create `scripts/manual-migration-013.mjs`:
 //
 // Order, all in one transaction:
 //   1. ADD COLUMN IF NOT EXISTS users.is_super_admin boolean (defaults false)
-//   2. Seed is_super_admin = true for the owner's account, but ONLY if step 1
-//      just created the column this run (same grandfather-gate pattern as
-//      scripts/manual-migration-012.mjs's email_verified backfill, so this
-//      never re-fires and can't accidentally re-promote/demote anyone
-//      later -- once panel-based promote/demote is live, re-running this
-//      seed unconditionally would be actively wrong, and would be the only
-//      way to undo a deliberate demotion of that very account).
+//   2. Seed is_super_admin = true for the owner's account, but ONLY if no
+//      super-admins currently exist (COUNT WHERE is_super_admin = true == 0).
+//      This self-heals: the seed fires as soon as the account exists and
+//      re-runs the script. It's still safe against accidental re-promotion
+//      of a deliberately demoted account because the panel forbids self-demote,
+//      so at least one super-admin always remains after any panel-based demote
+//      action. The count only reaches 0 again via direct DB manipulation
+//      (e.g. reset/testing), which is an appropriate case to self-heal on.
 //      If no user row exists yet for that email, this is skipped with a
 //      clear message rather than failing -- register that account first,
 //      then re-run this script.
@@ -223,20 +224,19 @@ async function main() {
   try {
     await client.query("BEGIN");
 
-    const isSuperAdminWasJustAdded = await addColumnIfMissing(
+    await addColumnIfMissing(
       client,
       "is_super_admin",
       `ALTER TABLE users ADD COLUMN is_super_admin boolean NOT NULL DEFAULT false`,
     );
 
-    // Gated exactly like manual-migration-012.mjs's email_verified
-    // grandfather backfill: only runs the one-time seed if the column was
-    // just created in THIS invocation, so re-running the script can never
-    // silently re-promote or demote the seeded account -- especially
-    // important once panel-based promote/demote is live, since this seed
-    // step must never overwrite whatever the panel has since done
-    // (including a deliberate demotion of this very account).
-    if (isSuperAdminWasJustAdded) {
+    // Gate on zero current super-admins for self-healing seeding. Safe against
+    // accidental re-promotion because the panel forbids self-demote, so at
+    // least one super-admin always remains after any panel-based demote.
+    // The count only reaches 0 via direct DB manipulation (e.g. reset/testing),
+    // which is an appropriate case to self-heal on.
+    const superAdminCount = await client.query(`SELECT COUNT(*)::int AS count FROM users WHERE is_super_admin = true`);
+    if (superAdminCount.rows[0].count === 0) {
       const owner = await client.query(`SELECT id FROM users WHERE email = $1`, [SUPER_ADMIN_EMAIL]);
       if (owner.rowCount > 0) {
         await client.query(`UPDATE users SET is_super_admin = true WHERE id = $1`, [owner.rows[0].id]);
@@ -247,7 +247,7 @@ async function main() {
         );
       }
     } else {
-      skipped.push("seed super-admin (is_super_admin column already existed, no seed re-run)");
+      skipped.push(`seed super-admin (${superAdminCount.rows[0].count} super-admin(s) already exist, no seed needed)`);
     }
 
     await createTableIfMissing(
@@ -294,12 +294,12 @@ main().catch((err) => {
 - [ ] **Step 5: Run the migration**
 
 Run: `node scripts/manual-migration-013.mjs`
-Expected: prints `Applied N step(s)` including `ALTER TABLE users ADD COLUMN is_super_admin` and `CREATE TABLE admin_action_log`. The seed line depends on live DB state — it will either say `seeded is_super_admin = true for teekaysharma@googlemail.com`, or (if that account doesn't currently exist) `seed super-admin (no user row found for teekaysharma@googlemail.com -- register that account, then re-run this script)`. **If you see the latter**, that's expected and not a failure — register an account with that exact email through the running app's `/register` page at some point before Task 3's manual verification, then re-run this script once to seed it (the column-add step will correctly skip on that re-run; only the seed step will fire, since it's independently gated on "row exists" rather than "column exists").
+Expected: prints `Applied N step(s)` including `ALTER TABLE users ADD COLUMN is_super_admin` and `CREATE TABLE admin_action_log`. The seed line depends on live DB state — since the gate is "zero current super-admins" (`SELECT COUNT(*) FROM users WHERE is_super_admin = true` is `0`), not "column was just added," it will say `seeded is_super_admin = true for teekaysharma@googlemail.com` whenever that account already exists and no super-admin exists yet, or (if that account doesn't currently exist) `seed super-admin (no user row found for teekaysharma@googlemail.com -- register that account, then re-run this script)`. **If you see the latter**, that's expected and not a failure — register an account with that exact email through the running app's `/register` page at some point before Task 3's manual verification, then re-run this script to seed it (the column-add step will correctly skip on that re-run; only the seed step fires, since it's independently gated on the super-admin count rather than the column's existence — this also means the seed is self-healing: it fires again automatically any time the count drops back to zero, e.g. after a database reset).
 
 - [ ] **Step 6: Verify idempotency**
 
 Run: `node scripts/manual-migration-013.mjs` again.
-Expected: `Applied 0 step(s)`, all three checks report `Skipped`, including the seed line reporting `seed super-admin (is_super_admin column already existed, no seed re-run)` — never re-running the UPDATE.
+Expected: `Applied 0 step(s)`, both DDL checks report `Skipped`, and the seed line now reports `seed super-admin (1 super-admin(s) already exist, no seed needed)` — the count gate sees the super-admin seeded in Step 5 and correctly declines to re-run the `UPDATE`.
 
 - [ ] **Step 7: Commit**
 
@@ -817,8 +817,13 @@ Immediately after the `/api/auth/me` handler's closing `});` from the previous s
     if (targetId === actorId) {
       // The one hard guard rail in this feature: without it, the last
       // remaining super-admin could demote themselves and lock the
-      // platform out of this panel entirely (the migration's seed only
-      // ever fires once, so there is no automatic way back in).
+      // platform out of this panel entirely. The migration's seed is
+      // self-healing (it re-fires whenever the count is truly zero), but
+      // that's not a substitute for this guard: a lone super-admin
+      // demoting themselves would still leave the platform with zero
+      // super-admins until someone notices and manually intervenes (or
+      // waits for/triggers a migration re-run) rather than the platform
+      // staying continuously usable.
       return res.status(400).json({ message: "You cannot demote yourself." });
     }
     const target = await storage.getUser(targetId);
@@ -2217,7 +2222,7 @@ main().catch((err) => {
 With the dev server already running (`npm run dev` in another terminal):
 
 Run: `node scripts/verify-admin-panel.mjs`
-Expected: `[verify-admin-panel] 28 passed, 0 failed` (14 scenarios, most asserting 1-2 things each), exit code 0.
+Expected: `[verify-admin-panel] 29 passed, 0 failed` (15 scenarios, most asserting 1-2 things each), exit code 0.
 
 - [ ] **Step 5: Full regression check**
 

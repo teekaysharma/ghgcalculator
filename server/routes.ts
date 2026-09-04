@@ -723,8 +723,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (targetId === actorId) {
       // The one hard guard rail in this feature: without it, the last
       // remaining super-admin could demote themselves and lock the
-      // platform out of this panel entirely (the migration's seed only
-      // ever fires once, so there is no automatic way back in).
+      // platform out of this panel entirely. The migration's seed is
+      // self-healing (it fires whenever COUNT(is_super_admin) is truly
+      // zero), but that's not a substitute for this guard: a lone
+      // super-admin self-demoting would still leave the platform with zero
+      // super-admins until someone notices and manually re-runs the
+      // migration, rather than staying continuously usable.
       return res.status(400).json({ message: "You cannot demote yourself." });
     }
     const target = await storage.getUser(targetId);
