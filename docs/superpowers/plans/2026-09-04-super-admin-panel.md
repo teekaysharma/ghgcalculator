@@ -2,18 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a platform-wide `isSuperAdmin` flag and an internal `/admin` page that lists every account across every tenant (searchable, paginated), letting a super-admin verify a pending registration, delete one, or promote another verified account to super-admin — with every action recorded in a viewable audit log.
+**Goal:** Add a platform-wide `isSuperAdmin` flag and an internal `/admin` page that lists every account across every tenant (searchable, paginated), letting a super-admin verify a pending registration, delete one, promote another verified account to super-admin, or demote a super-admin back to a normal account (with a required reason) — with every action recorded in a viewable audit log.
 
-**Architecture:** One new boolean column on `users` plus one new `admin_action_log` audit table, seeded/created by an idempotent migration script. A new `requireSuperAdmin` Express middleware gates five new routes (list/search/paginate, verify, delete, promote, view action log), reusing the existing `verifyUserEmail` storage method and the existing `deleteExpiredUnverifiedRegistrations`-style `db.batch()` pattern for atomic deletes. A new standalone React page (`/admin`, not an `AppShell` section, since it's cross-tenant) consumes those routes with the same `apiRequest`/`useMutation`/`useToast` conventions already used throughout this codebase, plus one deliberate, documented deviation (an object-shaped query key) needed for correct cache invalidation under pagination.
+**Architecture:** One new boolean column on `users` plus one new `admin_action_log` audit table (with an optional `note` column used by demote), seeded/created by an idempotent migration script. A new `requireSuperAdmin` Express middleware gates six new routes (list/search/paginate, verify, delete, promote, demote, view action log), reusing the existing `verifyUserEmail` storage method and the existing `deleteExpiredUnverifiedRegistrations`-style `db.batch()` pattern for atomic deletes. A new standalone React page (`/admin`, not an `AppShell` section, since it's cross-tenant) consumes those routes with the same `apiRequest`/`useMutation`/`useToast` conventions already used throughout this codebase, plus one deliberate, documented deviation (an object-shaped query key) needed for correct cache invalidation under pagination.
 
 **Tech Stack:** Express + Passport (session auth), Drizzle ORM on `drizzle-orm/neon-http` (Postgres/Neon), React + Vite, wouter routing, TanStack Query, shadcn/ui components. No unit-test framework in this repo — verification is done via `tsc`, manual `curl`/browser checks, and this project's own script-based end-to-end tests (`npm run verify`, plus dedicated standalone scripts for destructive flows).
 
 ## Global Constraints
 
 - Delete is scoped to **pending/unverified accounts only**. A verified account can be viewed but never deleted from this panel — attempting it returns `409 { reason: "already_verified" }`.
-- Every verify/delete/promote action writes a row to `admin_action_log` (actor, action, target user id, target email, timestamp). `admin_action_log` **is readable** via `GET /api/admin/action-log` and shown in the panel.
-- The **first** super-admin is always seeded by the migration, hardcoded by email (`teekaysharma@googlemail.com`). After that, any super-admin can **promote** another *verified* account to super-admin from the panel, behind a confirmation dialog that states plainly what the grantee gains. There is no demote — promotion has no inverse in this feature.
-- Promoting an unverified account is rejected (`400`) — an account that can't log in yet shouldn't be grantable platform-wide access.
+- Every verify/delete/promote/demote action writes a row to `admin_action_log` (actor, action, target user id, target email, optional note, timestamp). `admin_action_log` **is readable** via `GET /api/admin/action-log` and shown in the panel.
+- The **first** super-admin is always seeded by the migration, hardcoded by email (`teekaysharma@googlemail.com`). After that, any super-admin can **promote** another *verified* account to super-admin from the panel, behind a confirmation dialog that states plainly what the grantee gains.
+- Any super-admin can **demote** another super-admin back to a normal account, but only with a **required, non-empty note** explaining why (recorded on the audit log row). **A super-admin can never demote themselves** — the route rejects it with `400` unconditionally. This is the one hard guard rail in the feature: it exists specifically so the panel can never be used to drop the platform to zero super-admins, since the migration's hardcoded seed is gated to fire exactly once and would not recreate a demoted account.
+- Promoting an unverified account is rejected (`400`) — an account that can't log in yet shouldn't be grantable platform-wide access. Demoting an account that isn't currently a super-admin is also rejected (`400`).
 - `GET /api/admin/users` supports `?search=&limit=&offset=` (case-insensitive substring match on email or name; default `limit` 25, max 200).
 - `db.batch([...])` must be used for any multi-statement atomic write — `db.transaction()` throws at runtime on this project's `drizzle-orm/neon-http` driver (confirmed against driver source during the registration-hardening feature).
 - All new schema changes go through a hand-written idempotent migration script (`scripts/manual-migration-NNN.mjs`), never `drizzle-kit push` — see `MIGRATIONS.md`.
@@ -31,7 +32,7 @@
 
 **Interfaces:**
 - Consumes: nothing (first task)
-- Produces: `User.isSuperAdmin: boolean` (via `users.$inferSelect`, consumed by every later task); `adminActionLog` table; `AdminActionLog`/`InsertAdminActionLog` types; `adminActionLogActions = ["verify", "delete", "promote"] as const` union — Task 2 imports `adminActionLog` (the table) and `type AdminActionLog` from `@shared/schema`.
+- Produces: `User.isSuperAdmin: boolean` (via `users.$inferSelect`, consumed by every later task); `adminActionLog` table (with a nullable `note` column); `AdminActionLog`/`InsertAdminActionLog` types; `adminActionLogActions = ["verify", "delete", "promote", "demote"] as const` union — Task 2 imports `adminActionLog` (the table) and `type AdminActionLog` from `@shared/schema`.
 
 - [ ] **Step 1: Add `isSuperAdmin` to the `users` table**
 
@@ -76,8 +77,9 @@ export const users = pgTable("users", {
   // excluded from insertUserSchema's pick list -- self-serve registration
   // must never be able to set this. The FIRST super-admin is seeded only
   // via scripts/manual-migration-013.mjs (hardcoded to the project owner's
-  // email); any super-admin can promote another verified account from the
-  // /admin panel after that. See
+  // email); any super-admin can promote another verified account, or
+  // demote another super-admin (never themselves), from the /admin panel
+  // after that. See
   // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md.
   isSuperAdmin: boolean("is_super_admin").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -96,11 +98,11 @@ export type OrganizationModule = typeof organizationModules.$inferSelect;
 and before the `// GHG Emission types` comment that follows it, insert:
 
 ```ts
-// Audit log for platform-admin actions (verify/delete/promote from the
-// /admin panel) -- this acts across other tenants' data and can grant
-// platform-wide privileges, so every action is recorded and readable via
-// GET /api/admin/action-log.
-export const adminActionLogActions = ["verify", "delete", "promote"] as const;
+// Audit log for platform-admin actions (verify/delete/promote/demote from
+// the /admin panel) -- this acts across other tenants' data and can grant
+// or revoke platform-wide privileges, so every action is recorded and
+// readable via GET /api/admin/action-log.
+export const adminActionLogActions = ["verify", "delete", "promote", "demote"] as const;
 export type AdminActionLogAction = (typeof adminActionLogActions)[number];
 
 export const adminActionLog = pgTable("admin_action_log", {
@@ -109,7 +111,7 @@ export const adminActionLog = pgTable("admin_action_log", {
   // organizationModules.enabledBy below) -- the actor here is always an
   // authenticated super-admin session, never a vendor-script identity.
   actorUserId: integer("actor_user_id").notNull().references(() => users.id),
-  action: text("action").notNull(), // "verify" | "delete" | "promote"
+  action: text("action").notNull(), // "verify" | "delete" | "promote" | "demote"
   // Deliberately NOT a foreign key: the delete action's entire point is
   // removing this row, and a hard FK would either block the delete or
   // depend on ON DELETE SET NULL firing correctly inside a db.batch() --
@@ -119,6 +121,10 @@ export const adminActionLog = pgTable("admin_action_log", {
   // of whether targetUserId still resolves to a live row (it won't, after
   // a delete action).
   targetEmail: text("target_email").notNull(),
+  // Free-text justification, required by the demote route (validated
+  // there, not at the DB level -- nullable here since verify/delete/promote
+  // never send one) so a demotion always carries a recorded reason.
+  note: text("note"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -127,6 +133,7 @@ export const insertAdminActionLogSchema = createInsertSchema(adminActionLog).pic
   action: true,
   targetUserId: true,
   targetEmail: true,
+  note: true,
 });
 
 export type InsertAdminActionLog = z.infer<typeof insertAdminActionLogSchema>;
@@ -148,8 +155,9 @@ Create `scripts/manual-migration-013.mjs`:
 // Platform super-admin panel: adds is_super_admin to users and creates the
 // admin_action_log table, then seeds is_super_admin = true for the project
 // owner's own account (hardcoded by email -- this is the only way to
-// create the FIRST super-admin; any super-admin can promote further
-// accounts from the /admin panel after that. See
+// create the FIRST super-admin; any super-admin can promote a verified
+// account, or demote another super-admin (never themselves), from the
+// /admin panel after that. See
 // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md).
 //
 // Order, all in one transaction:
@@ -158,10 +166,12 @@ Create `scripts/manual-migration-013.mjs`:
 //      just created the column this run (same grandfather-gate pattern as
 //      scripts/manual-migration-012.mjs's email_verified backfill, so this
 //      never re-fires and can't accidentally re-promote/demote anyone
-//      later -- once panel-based promotion exists, re-running this seed
-//      unconditionally would be actively wrong). If no user row exists yet
-//      for that email, this is skipped with a clear message rather than
-//      failing -- register that account first, then re-run this script.
+//      later -- once panel-based promote/demote is live, re-running this
+//      seed unconditionally would be actively wrong, and would be the only
+//      way to undo a deliberate demotion of that very account).
+//      If no user row exists yet for that email, this is skipped with a
+//      clear message rather than failing -- register that account first,
+//      then re-run this script.
 //   3. CREATE TABLE IF NOT EXISTS admin_action_log
 //
 // Idempotent like every other migration in this project: checks
@@ -223,8 +233,9 @@ async function main() {
     // grandfather backfill: only runs the one-time seed if the column was
     // just created in THIS invocation, so re-running the script can never
     // silently re-promote or demote the seeded account -- especially
-    // important once panel-based promotion is live, since this seed step
-    // must never overwrite whatever the panel has since done.
+    // important once panel-based promote/demote is live, since this seed
+    // step must never overwrite whatever the panel has since done
+    // (including a deliberate demotion of this very account).
     if (isSuperAdminWasJustAdded) {
       const owner = await client.query(`SELECT id FROM users WHERE email = $1`, [SUPER_ADMIN_EMAIL]);
       if (owner.rowCount > 0) {
@@ -248,6 +259,7 @@ async function main() {
         action text NOT NULL,
         target_user_id integer,
         target_email text NOT NULL,
+        note text,
         created_at timestamp NOT NULL DEFAULT now()
       )`,
     );
@@ -302,8 +314,8 @@ git commit -m "feat: add users.is_super_admin and admin_action_log for the platf
 
 **Files:**
 - Create: `server/middleware/admin.ts`
-- Modify: `server/storage.ts` (new `AdminUserListItem`/`AdminActionLogEntry` interfaces, 5 new `IStorage` methods + `DbStorage` implementations, import additions)
-- Modify: `server/routes.ts` (import `requireSuperAdmin`, 5 new routes, extend `/api/auth/me` and the login success response)
+- Modify: `server/storage.ts` (new `AdminUserListItem`/`AdminActionLogEntry` interfaces, 6 new `IStorage` methods + `DbStorage` implementations, import additions)
+- Modify: `server/routes.ts` (import `requireSuperAdmin`, 6 new routes, extend `/api/auth/me` and the login success response)
 
 **Interfaces:**
 - Consumes: Task 1's `User.isSuperAdmin`, `adminActionLog` table, `type AdminActionLog`.
@@ -312,9 +324,10 @@ git commit -m "feat: add users.is_super_admin and admin_action_log for the platf
   - `storage.listAllUsersForAdmin(params: { search?: string; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>`
   - `storage.deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">`
   - `storage.promoteToSuperAdmin(userId: number): Promise<void>`
-  - `storage.logAdminAction(entry: { actorUserId: number; action: "verify" | "delete" | "promote"; targetUserId: number; targetEmail: string }): Promise<AdminActionLog>`
+  - `storage.demoteFromSuperAdmin(userId: number): Promise<void>`
+  - `storage.logAdminAction(entry: { actorUserId: number; action: "verify" | "delete" | "promote" | "demote"; targetUserId: number; targetEmail: string; note?: string }): Promise<AdminActionLog>`
   - `storage.listAdminActionLog(): Promise<AdminActionLogEntry[]>`
-  - Routes: `GET /api/admin/users?search=&limit=&offset=` → `200 { users: AdminUserListItem[], total: number }`; `POST /api/admin/users/:id/verify` → `200 { user }` / `404`; `DELETE /api/admin/users/:id` → `204` / `404` / `409 { message, reason: "already_verified" }`; `POST /api/admin/users/:id/promote` → `200 { user }` / `404` / `400` (target not verified); `GET /api/admin/action-log` → `200 { entries: AdminActionLogEntry[] }`.
+  - Routes: `GET /api/admin/users?search=&limit=&offset=` → `200 { users: AdminUserListItem[], total: number }`; `POST /api/admin/users/:id/verify` → `200 { user }` / `404`; `DELETE /api/admin/users/:id` → `204` / `404` / `409 { message, reason: "already_verified" }`; `POST /api/admin/users/:id/promote` → `200 { user }` / `404` / `400` (target not verified); `POST /api/admin/users/:id/demote` `{ note }` → `200 { user }` / `400` (missing note, self-demote, or target not currently a super-admin) / `404`; `GET /api/admin/action-log` → `200 { entries: AdminActionLogEntry[] }`.
   - `GET /api/auth/me` and `POST /api/auth/login`'s success response both gain `user.isSuperAdmin: boolean` — Task 3 consumes this exact field name.
 
 - [ ] **Step 1: Create the `requireSuperAdmin` middleware**
@@ -413,8 +426,9 @@ export interface AdminUserListItem {
 export interface AdminActionLogEntry {
   id: number;
   actorEmail: string;
-  action: "verify" | "delete" | "promote";
+  action: "verify" | "delete" | "promote" | "demote";
   targetEmail: string;
+  note: string | null;
   createdAt: Date;
 }
 ```
@@ -430,19 +444,21 @@ Then, inside the `IStorage` interface, immediately after the existing last metho
   listAllUsersForAdmin(params: { search?: string; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>;
   deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">;
   promoteToSuperAdmin(userId: number): Promise<void>;
+  demoteFromSuperAdmin(userId: number): Promise<void>;
   logAdminAction(entry: {
     actorUserId: number;
-    action: "verify" | "delete" | "promote";
+    action: "verify" | "delete" | "promote" | "demote";
     targetUserId: number;
     targetEmail: string;
+    note?: string;
   }): Promise<AdminActionLog>;
   listAdminActionLog(): Promise<AdminActionLogEntry[]>;
 }
 ```
 
-(Only the 6 new lines plus the closing `}` are new — `getSourceStreamDetailForBoundary`'s own line is shown for placement context, don't duplicate it.)
+(Only the 7 new lines plus the closing `}` are new — `getSourceStreamDetailForBoundary`'s own line is shown for placement context, don't duplicate it.)
 
-- [ ] **Step 4: Implement the five methods on `DbStorage`**
+- [ ] **Step 4: Implement the six methods on `DbStorage`**
 
 In `server/storage.ts`, `DbStorage`'s last method is `getSourceStreamDetailForBoundary`, ending right before the class's closing `}` (around line 1490-1491):
 
@@ -455,7 +471,7 @@ In `server/storage.ts`, `DbStorage`'s last method is `getSourceStreamDetailForBo
 export const storage = new DbStorage();
 ```
 
-Insert the five new methods between the end of `getSourceStreamDetailForBoundary`'s body and the class's closing `}`:
+Insert the six new methods between the end of `getSourceStreamDetailForBoundary`'s body and the class's closing `}`:
 
 ```ts
       };
@@ -570,11 +586,16 @@ Insert the five new methods between the end of `getSourceStreamDetailForBoundary
     await db.update(users).set({ isSuperAdmin: true }).where(eq(users.id, userId));
   }
 
+  async demoteFromSuperAdmin(userId: number): Promise<void> {
+    await db.update(users).set({ isSuperAdmin: false }).where(eq(users.id, userId));
+  }
+
   async logAdminAction(entry: {
     actorUserId: number;
-    action: "verify" | "delete" | "promote";
+    action: "verify" | "delete" | "promote" | "demote";
     targetUserId: number;
     targetEmail: string;
+    note?: string;
   }): Promise<AdminActionLog> {
     const [row] = await db.insert(adminActionLog).values(entry).returning();
     return row;
@@ -587,6 +608,7 @@ Insert the five new methods between the end of `getSourceStreamDetailForBoundary
         actorEmail: users.email,
         action: adminActionLog.action,
         targetEmail: adminActionLog.targetEmail,
+        note: adminActionLog.note,
         createdAt: adminActionLog.createdAt,
       })
       .from(adminActionLog)
@@ -599,7 +621,7 @@ Insert the five new methods between the end of `getSourceStreamDetailForBoundary
 export const storage = new DbStorage();
 ```
 
-(Note `verifyUserEmail` is **not** touched — it already exists at `server/storage.ts:389-394` and is reused unmodified by the route in the next step. The `as Promise<AdminActionLogEntry[]>` cast on `listAdminActionLog` is needed because drizzle infers `action`'s type as the column's declared `text` — i.e. plain `string` — rather than the narrower `"verify" | "delete" | "promote"` literal union; every other typed-union column in this codebase, e.g. `memberships.role`, has the same widened-string inference and this project doesn't work around it elsewhere, so match that precedent rather than introducing a runtime validator for one field.)
+(Note `verifyUserEmail` is **not** touched — it already exists at `server/storage.ts:389-394` and is reused unmodified by the route in the next step. The `as Promise<AdminActionLogEntry[]>` cast on `listAdminActionLog` is needed because drizzle infers `action`'s type as the column's declared `text` — i.e. plain `string` — rather than the narrower `"verify" | "delete" | "promote" | "demote"` literal union; every other typed-union column in this codebase, e.g. `memberships.role`, has the same widened-string inference and this project doesn't work around it elsewhere, so match that precedent rather than introducing a runtime validator for one field.)
 
 - [ ] **Step 5: Type-check**
 
@@ -691,7 +713,7 @@ Change to:
   });
 ```
 
-- [ ] **Step 8: Add the five admin routes**
+- [ ] **Step 8: Add the six admin routes**
 
 Immediately after the `/api/auth/me` handler's closing `});` from the previous step, and before the existing `// --- Team ---` comment block, insert:
 
@@ -704,6 +726,8 @@ Immediately after the `/api/auth/me` handler's closing `});` from the previous s
   // emission_factors.uploaded_by/emission_records.created_by reference
   // users.id with no cascade, so deleting a user who's created data would
   // hit a hard FK failure. Removing a live tenant is out of scope here.
+  // Self-demote is rejected unconditionally so the panel can never drop the
+  // platform to zero super-admins.
   // -----------------------------------------------------------------------
   app.get("/api/admin/users", requireAuth, requireSuperAdmin, async (req, res) => {
     const search = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
@@ -780,6 +804,43 @@ Immediately after the `/api/auth/me` handler's closing `});` from the previous s
     return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: true } });
   });
 
+  app.post("/api/admin/users/:id/demote", requireAuth, requireSuperAdmin, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to demote an account." });
+    }
+    const actorId = (req.user as { id: number }).id;
+    if (targetId === actorId) {
+      // The one hard guard rail in this feature: without it, the last
+      // remaining super-admin could demote themselves and lock the
+      // platform out of this panel entirely (the migration's seed only
+      // ever fires once, so there is no automatic way back in).
+      return res.status(400).json({ message: "You cannot demote yourself." });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!target.isSuperAdmin) {
+      return res.status(400).json({ message: "Account is not a super-admin." });
+    }
+    await storage.demoteFromSuperAdmin(target.id);
+    try {
+      await storage.logAdminAction({
+        actorUserId: actorId,
+        action: "demote",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (demote):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: false } });
+  });
+
   app.get("/api/admin/action-log", requireAuth, requireSuperAdmin, async (_req, res) => {
     const entries = await storage.listAdminActionLog();
     return res.json({ entries });
@@ -796,7 +857,7 @@ Expected: clean.
 
 Start the dev server in one terminal: `npm run dev`
 
-In another terminal, register + verify + promote a scratch admin user, then exercise all five routes:
+In another terminal, register + verify + promote a scratch admin user, then exercise all six routes:
 
 ```bash
 curl -s -X POST http://localhost:5000/api/auth/register \
@@ -870,6 +931,25 @@ curl -s -b /tmp/admincookie.txt -X POST http://localhost:5000/api/admin/users/<i
 ```
 Expected: `{"user":{...,"isSuperAdmin":true}}` — this account was just verified above, so promotion should succeed.
 
+```bash
+curl -s -b /tmp/admincookie.txt -X POST http://localhost:5000/api/admin/users/<id>/demote -i
+```
+(no body) Expected: `HTTP 400`, message about a required reason — confirms the missing-note rejection.
+
+```bash
+curl -s -b /tmp/admincookie.txt -X POST http://localhost:5000/api/admin/users/<id>/demote \
+  -H "Content-Type: application/json" \
+  -d '{"note":"Testing the demote flow"}'
+```
+Expected: `{"user":{...,"isSuperAdmin":false}}`.
+
+```bash
+curl -s -b /tmp/admincookie.txt -X POST http://localhost:5000/api/admin/users/<plantest-admin's own id>/demote \
+  -H "Content-Type: application/json" \
+  -d '{"note":"Trying to demote myself"}' -i
+```
+Expected: `HTTP 400`, message says the caller cannot demote themselves — confirms the self-demote guard.
+
 Register a third scratch user (leave unverified) and try to promote it directly:
 
 ```bash
@@ -891,7 +971,7 @@ Expected: `HTTP 409` body `{"message":"Cannot delete a verified account from thi
 ```bash
 curl -s -b /tmp/admincookie.txt http://localhost:5000/api/admin/action-log
 ```
-Expected: `{"entries":[...]}` including a `"verify"` entry and a `"promote"` entry with `targetEmail` matching `plantest-pending@example.invalid` and `actorEmail` matching `plantest-admin@example.invalid`.
+Expected: `{"entries":[...]}` including a `"verify"` entry, a `"promote"` entry, and a `"demote"` entry with `note` equal to `"Testing the demote flow"` — confirms the note round-trips through the read endpoint.
 
 Clean up manually afterward:
 ```bash
@@ -918,7 +998,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 ```bash
 git add server/middleware/admin.ts server/storage.ts server/routes.ts
-git commit -m "feat: add platform admin routes (list/search, verify, delete, promote, action log)"
+git commit -m "feat: add platform admin routes (list/search, verify, delete, promote, demote, action log)"
 ```
 
 ---
@@ -932,7 +1012,7 @@ git commit -m "feat: add platform admin routes (list/search, verify, delete, pro
 - Modify: `client/src/App.tsx` (import + route)
 
 **Interfaces:**
-- Consumes: Task 2's route contracts (`GET /api/admin/users`, `POST /api/admin/users/:id/verify`, `DELETE /api/admin/users/:id`, `POST /api/admin/users/:id/promote`, `GET /api/admin/action-log`) and the extended `/api/auth/me` shape (`user.isSuperAdmin`).
+- Consumes: Task 2's route contracts (`GET /api/admin/users`, `POST /api/admin/users/:id/verify`, `DELETE /api/admin/users/:id`, `POST /api/admin/users/:id/promote`, `POST /api/admin/users/:id/demote`, `GET /api/admin/action-log`) and the extended `/api/auth/me` shape (`user.isSuperAdmin`).
 - Produces: the `/admin` page, reachable via a nav link visible only to `user.isSuperAdmin`.
 
 - [ ] **Step 1: Extend `AuthUser`**
@@ -976,6 +1056,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1007,8 +1089,9 @@ interface AdminUserListItem {
 interface AdminActionLogEntry {
   id: number;
   actorEmail: string;
-  action: "verify" | "delete" | "promote";
+  action: "verify" | "delete" | "promote" | "demote";
   targetEmail: string;
+  note: string | null;
   createdAt: string;
 }
 
@@ -1023,6 +1106,10 @@ export default function Admin() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [offset, setOffset] = useState(0);
+  // Per-row draft text for the demote reason, keyed by user id -- each
+  // row's AlertDialog is a separate mounted instance, so this needs to be
+  // keyed rather than a single shared string.
+  const [demoteNotes, setDemoteNotes] = useState<Record<number, string>>({});
 
   // Auth-only gating is handled by ProtectedRoute (App.tsx). This is the
   // extra, super-admin-only gate: redirect a logged-in but non-admin user
@@ -1109,6 +1196,23 @@ export default function Admin() {
     onError: (err) => toast({ title: "Could not promote account", description: err.message, variant: "destructive" }),
   });
 
+  const demote = useMutation({
+    mutationFn: async ({ id, note }: { id: number; note: string }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/demote`, { note });
+      return res.json();
+    },
+    onSuccess: (_data, { id }) => {
+      invalidateAll();
+      setDemoteNotes((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast({ title: "Super-admin access removed" });
+    },
+    onError: (err) => toast({ title: "Could not demote account", description: err.message, variant: "destructive" }),
+  });
+
   if (isLoading || !user?.isSuperAdmin) return null;
 
   const rows = usersQuery.data?.users ?? [];
@@ -1134,7 +1238,7 @@ export default function Admin() {
           <CardHeader>
             <CardTitle className="text-base">Accounts</CardTitle>
             <CardDescription>
-              Verify or delete a pending registration, or promote a verified account to super-admin.
+              Verify or delete a pending registration, promote a verified account to super-admin, or demote one.
             </CardDescription>
             <Input
               placeholder="Search by email or name..."
@@ -1168,6 +1272,7 @@ export default function Admin() {
                         ? `${org.organizationName} +${u.organizations.length - 1} more`
                         : org.organizationName
                       : "—";
+                    const isSelf = u.id === user.id;
                     return (
                       <TableRow key={u.id}>
                         <TableCell>{u.email}</TableCell>
@@ -1230,8 +1335,9 @@ export default function Admin() {
                                     <AlertDialogTitle>Promote {u.email} to super-admin?</AlertDialogTitle>
                                     <AlertDialogDescription>
                                       This grants full access to every account and organization on the platform,
-                                      including the ability to verify, delete, and promote other accounts. This is a
-                                      significant privilege grant with no built-in way to undo it from this panel.
+                                      including the ability to verify, delete, promote, and demote other accounts.
+                                      This is a significant privilege grant with no built-in way to undo it from this
+                                      panel.
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
@@ -1243,6 +1349,49 @@ export default function Admin() {
                                 </AlertDialogContent>
                               </AlertDialog>
                             </div>
+                          )}
+                          {u.emailVerified && u.isSuperAdmin && !isSelf && (
+                            <div className="flex justify-end">
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-destructive">
+                                    Demote
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Demote {u.email}?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This removes {u.email}'s super-admin access. A reason is required and is
+                                      recorded in the activity log below.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-2 space-y-2">
+                                    <Label htmlFor={`demote-note-${u.id}`}>Reason for demotion</Label>
+                                    <Textarea
+                                      id={`demote-note-${u.id}`}
+                                      value={demoteNotes[u.id] ?? ""}
+                                      onChange={(e) =>
+                                        setDemoteNotes((prev) => ({ ...prev, [u.id]: e.target.value }))
+                                      }
+                                      placeholder="Why is this account being demoted?"
+                                    />
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      disabled={!demoteNotes[u.id]?.trim()}
+                                      onClick={() => demote.mutate({ id: u.id, note: demoteNotes[u.id]!.trim() })}
+                                    >
+                                      Demote
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          )}
+                          {u.emailVerified && u.isSuperAdmin && isSelf && (
+                            <p className="text-xs text-neutral-400 text-right">(you)</p>
                           )}
                         </TableCell>
                       </TableRow>
@@ -1296,6 +1445,7 @@ export default function Admin() {
                     <TableHead>Actor</TableHead>
                     <TableHead>Action</TableHead>
                     <TableHead>Target</TableHead>
+                    <TableHead>Note</TableHead>
                     <TableHead>When</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1305,6 +1455,7 @@ export default function Admin() {
                       <TableCell>{e.actorEmail}</TableCell>
                       <TableCell className="capitalize">{e.action}</TableCell>
                       <TableCell>{e.targetEmail}</TableCell>
+                      <TableCell>{e.note ?? "—"}</TableCell>
                       <TableCell>{new Date(e.createdAt).toLocaleString()}</TableCell>
                     </TableRow>
                   ))}
@@ -1447,20 +1598,21 @@ Expected: clean.
 With the dev server running (`npm run dev`) and Task 1's migration having successfully seeded a real super-admin (see Task 1 Step 5's note — register `teekaysharma@googlemail.com` through `/register` first if that step reported the seed was skipped, then re-run `node scripts/manual-migration-013.mjs` once):
 
 1. Log in as the seeded super-admin at `/login`. Confirm an "Admin" link now appears in the header next to "Log out".
-2. Click it, or navigate to `/admin` directly. Confirm the accounts table loads and includes your own row with a "Super Admin" badge and no action buttons, and the "Recent activity" card renders below it (empty is fine at this point).
+2. Click it, or navigate to `/admin` directly. Confirm the accounts table loads and includes your own row with a "Super Admin" badge and `(you)` in the actions cell instead of a Demote button, and the "Recent activity" card renders below it (empty is fine at this point).
 3. Type a search term matching no existing account into the search box. Confirm the table shows "No accounts found." Clear it and confirm the full list returns.
 4. Register a second, throwaway account from a private/incognito window (or log out and back in as the admin after). Back on `/admin`, confirm the new pending account appears with a "Pending" badge and both "Verify" and "Delete" buttons.
 5. Click "Verify" on it. Confirm its badge flips to "Verified" (not yet "Super Admin"), its action buttons change to a single "Promote to super-admin" button, and a new "verify" row appears in "Recent activity" without a page reload.
-6. Click "Promote to super-admin" on that same row. Confirm the `AlertDialog` shows the privilege-grant warning text, confirm cancelling leaves it unpromoted, then confirm on a second attempt. Confirm its badge flips to "Super Admin", its action button disappears, and a new "promote" row appears in "Recent activity".
-7. Register a third throwaway account, click "Delete" on its row, confirm the `AlertDialog` appears, confirm cancelling leaves the row in place, then confirm on a second attempt. Confirm the row disappears from the list and a "delete" row appears in "Recent activity".
-8. If you have more than 25 accounts in the database (unlikely on a fresh dev DB — skip this check if the account list fits on one page), confirm "Previous"/"Next" move between pages and the "Showing X–Y of Z" label updates correctly.
-9. Log out, log in as a non-admin account. Confirm no "Admin" link appears, and confirm navigating to `/admin` directly redirects back to `/`.
+6. Click "Promote to super-admin" on that same row. Confirm the `AlertDialog` shows the privilege-grant warning text, confirm cancelling leaves it unpromoted, then confirm on a second attempt. Confirm its badge flips to "Super Admin", its action button changes to "Demote", and a new "promote" row appears in "Recent activity".
+7. Click "Demote" on that row. Confirm the confirm button stays disabled until you type something into the reason textarea, confirm cancelling leaves it a super-admin, then type a reason and confirm. Confirm its badge flips back to "Verified", its action button reverts to "Promote to super-admin", and a new "demote" row appears in "Recent activity" showing the reason you typed in the Note column.
+8. Register a third throwaway account, click "Delete" on its row, confirm the `AlertDialog` appears, confirm cancelling leaves the row in place, then confirm on a second attempt. Confirm the row disappears from the list and a "delete" row appears in "Recent activity".
+9. If you have more than 25 accounts in the database (unlikely on a fresh dev DB — skip this check if the account list fits on one page), confirm "Previous"/"Next" move between pages and the "Showing X–Y of Z" label updates correctly.
+10. Log out, log in as a non-admin account. Confirm no "Admin" link appears, and confirm navigating to `/admin` directly redirects back to `/`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add client/src/hooks/use-auth.tsx client/src/pages/Admin.tsx client/src/pages/Home.tsx client/src/App.tsx
-git commit -m "feat: add /admin page (search, pagination, verify/delete/promote, activity log)"
+git commit -m "feat: add /admin page (search, pagination, verify/delete/promote/demote, activity log)"
 ```
 
 ---
@@ -1577,8 +1729,9 @@ Create `scripts/verify-admin-panel.mjs`:
 //
 // Dedicated test for the platform super-admin panel (GET /api/admin/users,
 // POST /api/admin/users/:id/verify, DELETE /api/admin/users/:id,
-// POST /api/admin/users/:id/promote, GET /api/admin/action-log) -- kept
-// separate from scripts/verify-branch.mjs on purpose (see
+// POST /api/admin/users/:id/promote, POST /api/admin/users/:id/demote,
+// GET /api/admin/action-log) -- kept separate from
+// scripts/verify-branch.mjs on purpose (see
 // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md): it
 // deletes data, so it isn't something to run on every npm run verify pass.
 //
@@ -1684,6 +1837,7 @@ async function main() {
     const adminEmail = await registerAndVerify(pool, `${RUN_TAG}-admin`);
     createdEmails.push(adminEmail);
     await pool.query("UPDATE users SET is_super_admin = true WHERE email = $1", [adminEmail]);
+    const adminId = await getUserId(pool, adminEmail);
     const adminCookie = await login(adminEmail);
 
     const plainEmail = await registerAndVerify(pool, `${RUN_TAG}-plain`);
@@ -1716,6 +1870,15 @@ async function main() {
       });
       if (res.status === 403) ok("POST /api/admin/users/:id/promote (non-admin)", "403");
       else fail("POST /api/admin/users/:id/promote (non-admin)", `expected 403, got ${res.status}`);
+    }
+    {
+      const res = await fetch(`${BASE_URL}/api/admin/users/1/demote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: plainCookie },
+        body: JSON.stringify({ note: "irrelevant" }),
+      });
+      if (res.status === 403) ok("POST /api/admin/users/:id/demote (non-admin)", "403");
+      else fail("POST /api/admin/users/:id/demote (non-admin)", `expected 403, got ${res.status}`);
     }
     {
       const res = await fetch(`${BASE_URL}/api/admin/action-log`, { headers: { Cookie: plainCookie } });
@@ -1779,8 +1942,8 @@ async function main() {
 
         const logRow = await pool.query(
           `SELECT action, target_user_id, target_email FROM admin_action_log
-           WHERE actor_user_id = (SELECT id FROM users WHERE email = $1) AND action = 'verify' AND target_email = $2`,
-          [adminEmail, pendingEmail1],
+           WHERE actor_user_id = $1 AND action = 'verify' AND target_email = $2`,
+          [adminId, pendingEmail1],
         );
         if (logRow.rowCount >= 1) ok("admin_action_log (verify)", "row written with correct actor/target");
         else fail("admin_action_log (verify)", "no matching row found");
@@ -1801,24 +1964,25 @@ async function main() {
       }
 
       const logRow = await pool.query(
-        `SELECT action FROM admin_action_log
-         WHERE actor_user_id = (SELECT id FROM users WHERE email = $1) AND action = 'promote' AND target_email = $2`,
-        [adminEmail, pendingEmail1],
+        `SELECT action FROM admin_action_log WHERE actor_user_id = $1 AND action = 'promote' AND target_email = $2`,
+        [adminId, pendingEmail1],
       );
       if (logRow.rowCount >= 1) ok("admin_action_log (promote)", "row written with correct actor/target");
       else fail("admin_action_log (promote)", "no matching row found");
     }
 
     // --- scenario 6: promoting an UNVERIFIED user is rejected ---
+    let unverifiedId;
+    const unverifiedEmail = `${RUN_TAG}-unverified@example.invalid`;
     {
-      const unverifiedEmail = await registerOnly(`${RUN_TAG}-unverified`);
+      await registerOnly(`${RUN_TAG}-unverified`);
       createdEmails.push(unverifiedEmail);
-      const targetId = await getUserId(pool, unverifiedEmail);
-      const res = await fetch(`${BASE_URL}/api/admin/users/${targetId}/promote`, {
+      unverifiedId = await getUserId(pool, unverifiedEmail);
+      const res = await fetch(`${BASE_URL}/api/admin/users/${unverifiedId}/promote`, {
         method: "POST",
         headers: { Cookie: adminCookie },
       });
-      const dbRow = await pool.query("SELECT is_super_admin FROM users WHERE id = $1", [targetId]);
+      const dbRow = await pool.query("SELECT is_super_admin FROM users WHERE id = $1", [unverifiedId]);
       if (res.status === 400 && dbRow.rows[0]?.is_super_admin === false) {
         ok("POST /api/admin/users/:id/promote (unverified)", "400, is_super_admin unchanged");
       } else {
@@ -1829,7 +1993,75 @@ async function main() {
       }
     }
 
-    // --- scenario 7: delete removes a pending user, log row survives ---
+    // --- scenario 7: demote without a note is rejected ---
+    if (pendingId1) {
+      const res = await fetch(`${BASE_URL}/api/admin/users/${pendingId1}/demote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({}),
+      });
+      const dbRow = await pool.query("SELECT is_super_admin FROM users WHERE id = $1", [pendingId1]);
+      if (res.status === 400 && dbRow.rows[0]?.is_super_admin === true) {
+        ok("POST /api/admin/users/:id/demote (no note)", "400, is_super_admin unchanged");
+      } else {
+        fail("POST /api/admin/users/:id/demote (no note)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+      }
+    }
+
+    // --- scenario 8: self-demote is rejected ---
+    {
+      const res = await fetch(`${BASE_URL}/api/admin/users/${adminId}/demote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "trying to demote myself" }),
+      });
+      const dbRow = await pool.query("SELECT is_super_admin FROM users WHERE id = $1", [adminId]);
+      if (res.status === 400 && dbRow.rows[0]?.is_super_admin === true) {
+        ok("POST /api/admin/users/:id/demote (self)", "400, actor still a super-admin");
+      } else {
+        fail("POST /api/admin/users/:id/demote (self)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+      }
+    }
+
+    // --- scenario 9: demoting a non-super-admin is rejected ---
+    {
+      const targetId = await getUserId(pool, plainEmail);
+      const res = await fetch(`${BASE_URL}/api/admin/users/${targetId}/demote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "not actually an admin" }),
+      });
+      if (res.status === 400) ok("POST /api/admin/users/:id/demote (not an admin)", "400");
+      else fail("POST /api/admin/users/:id/demote (not an admin)", `expected 400, got ${res.status}`);
+    }
+
+    // --- scenario 10: a valid demote succeeds, flips state, and logs the note ---
+    const demoteNoteText = "Verification testing: revoking scratch super-admin access";
+    if (pendingId1) {
+      const res = await fetch(`${BASE_URL}/api/admin/users/${pendingId1}/demote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: demoteNoteText }),
+      });
+      const dbRow = await pool.query("SELECT is_super_admin FROM users WHERE id = $1", [pendingId1]);
+      if (res.status === 200 && dbRow.rows[0]?.is_super_admin === false) {
+        ok("POST /api/admin/users/:id/demote (valid)", "200, is_super_admin=false");
+      } else {
+        fail("POST /api/admin/users/:id/demote (valid)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+      }
+
+      const logRow = await pool.query(
+        `SELECT note FROM admin_action_log WHERE actor_user_id = $1 AND action = 'demote' AND target_email = $2`,
+        [adminId, pendingEmail1],
+      );
+      if (logRow.rowCount >= 1 && logRow.rows[0].note === demoteNoteText) {
+        ok("admin_action_log (demote)", "row written with matching note");
+      } else {
+        fail("admin_action_log (demote)", `expected note ${JSON.stringify(demoteNoteText)}, got ${JSON.stringify(logRow.rows[0])}`);
+      }
+    }
+
+    // --- scenario 11: delete removes a pending user, log row survives ---
     const pendingEmail2 = `${RUN_TAG}-pending2@example.invalid`;
     {
       const registerRes = await fetch(`${BASE_URL}/api/auth/register`, {
@@ -1854,8 +2086,8 @@ async function main() {
 
         const logRow = await pool.query(
           `SELECT action, target_user_id, target_email FROM admin_action_log
-           WHERE actor_user_id = (SELECT id FROM users WHERE email = $1) AND action = 'delete' AND target_email = $2`,
-          [adminEmail, pendingEmail2],
+           WHERE actor_user_id = $1 AND action = 'delete' AND target_email = $2`,
+          [adminId, pendingEmail2],
         );
         if (logRow.rowCount >= 1) {
           ok("admin_action_log (delete)", "row survives target deletion (target_user_id not an FK)");
@@ -1865,7 +2097,7 @@ async function main() {
       }
     }
 
-    // --- scenario 8: deleting a VERIFIED user is rejected, nothing changes ---
+    // --- scenario 12: deleting a VERIFIED user is rejected, nothing changes ---
     {
       const targetId = await getUserId(pool, plainEmail); // plainEmail was verified during setup
       const res = await fetch(`${BASE_URL}/api/admin/users/${targetId}`, {
@@ -1884,7 +2116,7 @@ async function main() {
       }
     }
 
-    // --- scenario 9: 404s on a nonexistent id ---
+    // --- scenario 13: 404s on a nonexistent id ---
     {
       const res = await fetch(`${BASE_URL}/api/admin/users/999999999/verify`, {
         method: "POST",
@@ -1909,18 +2141,28 @@ async function main() {
       if (res.status === 404) ok("POST /api/admin/users/:id/promote (unknown id)", "404");
       else fail("POST /api/admin/users/:id/promote (unknown id)", `expected 404, got ${res.status}`);
     }
+    {
+      const res = await fetch(`${BASE_URL}/api/admin/users/999999999/demote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "n/a" }),
+      });
+      if (res.status === 404) ok("POST /api/admin/users/:id/demote (unknown id)", "404");
+      else fail("POST /api/admin/users/:id/demote (unknown id)", `expected 404, got ${res.status}`);
+    }
 
-    // --- scenario 10: action-log endpoint returns what was just written ---
+    // --- scenario 14: action-log endpoint returns what was just written ---
     {
       const res = await fetch(`${BASE_URL}/api/admin/action-log`, { headers: { Cookie: adminCookie } });
       const body = await res.json().catch(() => ({}));
       const hasVerify = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "verify");
       const hasPromote = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "promote");
+      const hasDemote = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "demote" && e.note === demoteNoteText);
       const hasDelete = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail2 && e.action === "delete");
-      if (res.status === 200 && hasVerify && hasPromote && hasDelete) {
-        ok("GET /api/admin/action-log", "200, contains this run's verify/promote/delete entries");
+      if (res.status === 200 && hasVerify && hasPromote && hasDemote && hasDelete) {
+        ok("GET /api/admin/action-log", "200, contains this run's verify/promote/demote/delete entries, demote note matches");
       } else {
-        fail("GET /api/admin/action-log", `status ${res.status}, entries ${JSON.stringify(body.entries?.slice(0, 3))}`);
+        fail("GET /api/admin/action-log", `status ${res.status}, entries ${JSON.stringify(body.entries?.slice(0, 5))}`);
       }
     }
   } finally {
@@ -1929,16 +2171,19 @@ async function main() {
     // emission_factors.uploaded_by) -- the admin-actor's own log rows must
     // be deleted before that actor's users row, or this cleanup would hit
     // the exact FK failure the feature's delete-scope decision was
-    // designed around. Target-side log rows from scenarios 4, 5, and 8
-    // also need direct cleanup (their users weren't deleted by the
-    // endpoints under test). Scenario 7's target user is already gone --
+    // designed around. Target-side log rows from scenarios 4, 5, 10, and
+    // 12 also need direct cleanup (their users weren't deleted by the
+    // endpoints under test). Scenario 11's target user is already gone --
     // only its now-orphaned log row remains, caught by the same LIKE query
-    // below. pendingEmail1 was promoted to super-admin during the run, so
-    // it also needs its own admin_action_log rows cleared before it can be
-    // deleted (it's an actor now, not just a target).
+    // below. pendingEmail1 was promoted to super-admin during the run
+    // (then demoted back), so it also needs its own admin_action_log rows
+    // cleared before it can be deleted (it was briefly an actor-eligible
+    // account, not just a target).
     try {
-      if (pendingId1) createdEmails.push(pendingEmail1);
-      const remaining = await pool.query("SELECT id, email FROM users WHERE email = ANY($1)", [createdEmails]);
+      const emailsToClean = [...createdEmails];
+      const pendingId1Email = `${RUN_TAG}-pending1@example.invalid`;
+      if (!emailsToClean.includes(pendingId1Email)) emailsToClean.push(pendingId1Email);
+      const remaining = await pool.query("SELECT id, email FROM users WHERE email = ANY($1)", [emailsToClean]);
       const remainingIds = remaining.rows.map((r) => r.id);
       if (remainingIds.length > 0) {
         await pool.query("DELETE FROM admin_action_log WHERE actor_user_id = ANY($1)", [remainingIds]);
@@ -1972,7 +2217,7 @@ main().catch((err) => {
 With the dev server already running (`npm run dev` in another terminal):
 
 Run: `node scripts/verify-admin-panel.mjs`
-Expected: `[verify-admin-panel] 20 passed, 0 failed` (10 scenarios, most asserting 1-2 things each), exit code 0.
+Expected: `[verify-admin-panel] 28 passed, 0 failed` (14 scenarios, most asserting 1-2 things each), exit code 0.
 
 - [ ] **Step 5: Full regression check**
 
@@ -1983,15 +2228,15 @@ Expected: both clean, `npm run verify` still reporting 0 failed.
 
 ```bash
 git add scripts/verify-admin-panel.mjs scripts/verify-branch.mjs
-git commit -m "test: add standalone admin-panel coverage (incl. promote), extend schema precondition check"
+git commit -m "test: add standalone admin-panel coverage (incl. promote/demote), extend schema precondition check"
 ```
 
 ---
 
 ## Self-Review
 
-**Spec coverage:** every section of the revised `docs/superpowers/specs/2026-09-04-super-admin-panel-design.md` maps to a task — Data model → Task 1, Server → Task 2, Client → Task 3, Testing → Task 4. All four "Decisions" (pending-only delete, readable audit log, in-panel promotion with a confirmation warning, search/pagination) are reflected in the Global Constraints and enforced in code (route-level 409 check, `db.batch` audit insert for delete + standalone `logAdminAction` for verify/promote, the promote route's `emailVerified` precondition, the `AlertDialog` warning copy naming exactly what the grantee gains, `ilike`-based search + `limit`/`offset` pagination with a `total` count). All three revised "Out of scope" items (deleting a verified tenant, demote, self-serve creation of the *first* super-admin) are correctly absent from every task.
+**Spec coverage:** every section of the revised `docs/superpowers/specs/2026-09-04-super-admin-panel-design.md` maps to a task — Data model → Task 1, Server → Task 2, Client → Task 3, Testing → Task 4. All five "Decisions" (pending-only delete, readable audit log with a note field, in-panel promotion with a confirmation warning, in-panel demotion requiring a note, search/pagination) are reflected in the Global Constraints and enforced in code (route-level 409 check, `db.batch` audit insert for delete + standalone `logAdminAction` for verify/promote/demote, the promote route's `emailVerified` precondition, the demote route's note/self/is-super-admin preconditions in that order, the `AlertDialog` warning copy naming exactly what a grantee gains and what a demotion requires, `ilike`-based search + `limit`/`offset` pagination with a `total` count). All "Out of scope" items (deleting a verified tenant, self-serve creation of the *first* super-admin, self-demote) are correctly absent or explicitly blocked in every task.
 
 **Placeholder scan:** no TBD/TODO, no "add appropriate error handling," no "write tests for the above" — every step above has real, complete code or a real runnable command with an expected result.
 
-**Type consistency:** `AdminUserListItem` (server `server/storage.ts` Task 2, client `Admin.tsx` Task 3) match field-for-field except `createdAt`'s type (`Date` server-side vs `string` client-side, correct — it crosses a JSON boundary). `AdminActionLogEntry` likewise matches field-for-field between Task 2's storage interface and Task 3's client interface, including the `action: "verify" | "delete" | "promote"` union staying consistent across Task 1's `adminActionLogActions`, Task 2's `logAdminAction`/`listAdminActionLog`, and Task 3's rendering. `listAllUsersForAdmin`'s new `{ search?, limit, offset }` parameter and `{ users, total }` return shape are defined once in Task 2 Step 3 and used identically in Step 4's implementation, Step 8's route, and Task 3's `queryFn`. `deleteUnverifiedUserById`'s return union (`"deleted" | "not_found" | "already_verified"`) and `promoteToSuperAdmin`'s signature are each defined once and consumed with matching signatures at their one call site. `AuthUser.isSuperAdmin` (Task 3 Step 1) is populated by the exact `/api/auth/me`/login response field name added in Task 2 Step 7 — both are `isSuperAdmin`, no naming drift.
+**Type consistency:** `AdminUserListItem` (server `server/storage.ts` Task 2, client `Admin.tsx` Task 3) match field-for-field except `createdAt`'s type (`Date` server-side vs `string` client-side, correct — it crosses a JSON boundary). `AdminActionLogEntry` likewise matches field-for-field between Task 2's storage interface and Task 3's client interface, including `note: string | null` and the `action: "verify" | "delete" | "promote" | "demote"` union staying consistent across Task 1's `adminActionLogActions`, Task 2's `logAdminAction`/`listAdminActionLog`, and Task 3's rendering. `listAllUsersForAdmin`'s `{ search?, limit, offset }` parameter and `{ users, total }` return shape are defined once in Task 2 Step 3 and used identically in Step 4's implementation, Step 8's route, and Task 3's `queryFn`. `deleteUnverifiedUserById`'s return union, `promoteToSuperAdmin`'s signature, and `demoteFromSuperAdmin`'s signature are each defined once and consumed with matching signatures at their one call site. The demote route's three-step precondition order (note present → not self → target exists → target is a super-admin) matches exactly between Task 2's route code and Task 4's scenario 7/8/9 tests, which each isolate one precondition at a time. `AuthUser.isSuperAdmin` (Task 3 Step 1) is populated by the exact `/api/auth/me`/login response field name added in Task 2 Step 7 — both are `isSuperAdmin`, no naming drift.
