@@ -39,6 +39,16 @@ passport.use(
           },
         );
       }
+      if (!user.isActive) {
+        return done(
+          null,
+          false,
+          { message: "This account has been deactivated. Contact your organization admin or support.", reason: "deactivated" } as {
+            message: string;
+            reason: string;
+          },
+        );
+      }
       return done(null, user);
     } catch (err) {
       return done(err);

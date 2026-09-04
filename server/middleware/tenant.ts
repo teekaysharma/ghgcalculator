@@ -32,7 +32,7 @@ export async function requireOrg(req: Request, res: Response, next: NextFunction
     }
 
     const requestedOrgId = req.header("X-Organization-Id");
-    const memberships = await storage.getMembershipsForUser(user.id);
+    const memberships = await storage.getActiveMembershipsForUser(user.id);
 
     if (memberships.length === 0) {
       return res.status(403).json({ message: "No organization membership found for this account" });

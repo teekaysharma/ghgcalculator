@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
-import { sendVerificationEmail } from "./email";
+import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
 import { requireAuth, requireOrg } from "./middleware/tenant";
 import { requireSuperAdmin } from "./middleware/admin";
 import {
@@ -559,6 +559,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Failed to send verification email (resend):", emailError);
     }
     return res.status(200).json(genericResponse);
+  });
+
+  const forgotPasswordLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Too many requests, try again later." },
+  });
+
+  app.post("/api/auth/forgot-password", forgotPasswordLimiter, async (req, res) => {
+    const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input" });
+    }
+    const genericResponse = { message: "If that account exists, we've sent a password reset link." };
+    const user = await storage.getUserByEmail(parsed.data.email);
+    // Only issue a token for a verified account -- an unverified
+    // registration should use resend-verification-email instead, and this
+    // generic response never reveals which case applied.
+    if (!user || !user.emailVerified) {
+      return res.status(200).json(genericResponse);
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await storage.setPasswordResetToken(user.id, token, expiresAt);
+    try {
+      await sendPasswordResetEmail({
+        to: user.email,
+        token,
+        requestOrigin: `${req.protocol}://${req.get("host")}`,
+      });
+    } catch (emailError) {
+      console.error("Failed to send password reset email:", emailError);
+    }
+    return res.status(200).json(genericResponse);
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const parsed = z
+      .object({ token: z.string().min(1), newPassword: z.string().min(8) })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input" });
+    }
+    const user = await storage.getUserByPasswordResetToken(parsed.data.token);
+    if (!user || !user.passwordResetTokenExpiresAt || user.passwordResetTokenExpiresAt < new Date()) {
+      return res.status(400).json({ message: "This password reset link is invalid or has expired." });
+    }
+    const passwordHash = await hashPassword(parsed.data.newPassword);
+    await storage.resetPassword(user.id, passwordHash);
+    return res.status(200).json({ message: "Password updated. You can now log in." });
   });
 
   app.get("/api/cron/cleanup-unverified-users", async (req, res) => {

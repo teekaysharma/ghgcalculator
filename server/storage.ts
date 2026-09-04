@@ -238,16 +238,21 @@ export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByVerificationToken(token: string): Promise<User | undefined>;
+  getUserByPasswordResetToken(token: string): Promise<User | undefined>;
   verifyUserEmail(userId: number): Promise<void>;
   setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void>;
+  resetPassword(userId: number, passwordHash: string): Promise<void>;
   deleteExpiredUnverifiedRegistrations(): Promise<number>;
 
   // Memberships (the tenant-scoping join)
   createMembership(membership: InsertMembership): Promise<Membership>;
   getMembershipsForUser(userId: number): Promise<Membership[]>;
+  getActiveMembershipsForUser(userId: number): Promise<Membership[]>;
   getMembership(userId: number, organizationId: number): Promise<Membership | undefined>;
   listMembershipsForOrganization(organizationId: number): Promise<(Membership & { userEmail: string; userName: string | null })[]>;
   getEnabledModuleKeys(organizationId: number): Promise<string[]>;
+  isUsersSoleOrganization(userId: number, organizationId: number): Promise<boolean>;
 
   // Emission factors (tenant-scoped)
   createEmissionFactors(organizationId: number, factors: Omit<InsertEmissionFactorRow, "organizationId">[]): Promise<EmissionFactorRow[]>;
@@ -428,6 +433,30 @@ export class DbStorage implements IStorage {
     return row;
   }
 
+  async getUserByPasswordResetToken(token: string): Promise<User | undefined> {
+    const [row] = await db.select().from(users).where(eq(users.passwordResetToken, token));
+    return row;
+  }
+
+  async setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void> {
+    await db
+      .update(users)
+      .set({ passwordResetToken: token, passwordResetTokenExpiresAt: expiresAt })
+      .where(eq(users.id, userId));
+  }
+
+  async resetPassword(userId: number, passwordHash: string): Promise<void> {
+    await db
+      .update(users)
+      .set({
+        passwordHash,
+        passwordResetToken: null,
+        passwordResetTokenExpiresAt: null,
+        emailVerified: true,
+      })
+      .where(eq(users.id, userId));
+  }
+
   async getUserByVerificationToken(token: string): Promise<User | undefined> {
     const [row] = await db.select().from(users).where(eq(users.emailVerificationToken, token));
     return row;
@@ -495,6 +524,18 @@ export class DbStorage implements IStorage {
     return db.select().from(memberships).where(eq(memberships.userId, userId));
   }
 
+  // Used by requireOrg going forward -- an inactive membership must be
+  // invisible to tenant-access resolution. getMembershipsForUser above
+  // (all memberships, active or not) is unchanged and still used by
+  // /api/auth/me and the sole-organization boundary check below, which both
+  // need to see a deactivated membership, not just active ones.
+  async getActiveMembershipsForUser(userId: number): Promise<Membership[]> {
+    return db
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.userId, userId), eq(memberships.isActive, true)));
+  }
+
   async getMembership(userId: number, organizationId: number): Promise<Membership | undefined> {
     const [row] = await db
       .select()
@@ -513,6 +554,19 @@ export class DbStorage implements IStorage {
       .filter(([, def]) => def.alwaysEnabled)
       .map(([key]) => key);
     return Array.from(new Set([...alwaysEnabledKeys, ...grantedKeys]));
+  }
+
+  // Boundary rule for org-admin account-wide actions (deactivate/reactivate
+  // an account, change its email, admin-trigger a password reset): an
+  // org-admin may only act if the target's memberships -- ALL of them,
+  // active or not, since even a deactivated membership represents a
+  // relationship with that org the acting org-admin has no authority over
+  // -- resolve to exactly this one organization. Membership-level actions
+  // (deactivate/activate one membership) don't need this check; they can
+  // never affect another tenant by construction.
+  async isUsersSoleOrganization(userId: number, organizationId: number): Promise<boolean> {
+    const all = await db.select().from(memberships).where(eq(memberships.userId, userId));
+    return all.length === 1 && all[0].organizationId === organizationId;
   }
 
   async listMembershipsForOrganization(
