@@ -603,7 +603,7 @@ export class DbStorage implements IStorage {
 
   async listMembershipsForOrganization(
     organizationId: number,
-  ): Promise<(Membership & { userEmail: string; userName: string | null })[]> {
+  ): Promise<(Membership & { userEmail: string; userName: string | null; userIsActive: boolean })[]> {
     const rows = await db
       .select({
         id: memberships.id,
@@ -614,6 +614,7 @@ export class DbStorage implements IStorage {
         createdAt: memberships.createdAt,
         userEmail: users.email,
         userName: users.name,
+        userIsActive: users.isActive,
       })
       .from(memberships)
       .innerJoin(users, eq(users.id, memberships.userId))

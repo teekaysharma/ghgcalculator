@@ -29,6 +29,7 @@ interface TeamMember {
   name: string | null;
   role: "owner" | "admin" | "member";
   isActive: boolean;
+  accountIsActive: boolean;
   createdAt: string;
 }
 
@@ -208,11 +209,24 @@ export default function TeamPanel() {
                       <Badge variant="secondary" className="capitalize">{m.role}</Badge>
                     </TableCell>
                     <TableCell>
-                      {m.isActive ? (
-                        <Badge variant="secondary">Active</Badge>
-                      ) : (
-                        <Badge variant="destructive">Deactivated</Badge>
-                      )}
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1 text-xs">
+                          <span className="text-neutral-500">Membership:</span>
+                          {m.isActive ? (
+                            <Badge variant="secondary">Active</Badge>
+                          ) : (
+                            <Badge variant="destructive">Deactivated</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 text-xs">
+                          <span className="text-neutral-500">Account:</span>
+                          {m.accountIsActive ? (
+                            <Badge variant="secondary">Active</Badge>
+                          ) : (
+                            <Badge variant="destructive">Deactivated</Badge>
+                          )}
+                        </div>
+                      </div>
                     </TableCell>
                     {canManage && (
                       <TableCell>
@@ -264,7 +278,7 @@ export default function TeamPanel() {
                               Reactivate membership
                             </Button>
                           )}
-                          {m.isActive ? (
+                          {m.accountIsActive ? (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button variant="ghost" size="sm" className="text-destructive">

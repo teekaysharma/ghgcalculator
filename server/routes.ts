@@ -1005,6 +1005,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name: m.userName,
         role: m.role,
         isActive: m.isActive,
+        accountIsActive: m.userIsActive,
         createdAt: m.createdAt,
       })),
     });
