@@ -24,9 +24,11 @@ import {
 } from "@/components/ui/alert-dialog";
 
 interface AdminOrgSummary {
+  membershipId: number;
   organizationId: number;
   organizationName: string;
   role: string;
+  isActive: boolean;
 }
 
 interface AdminUserListItem {
@@ -35,6 +37,7 @@ interface AdminUserListItem {
   name: string | null;
   emailVerified: boolean;
   isSuperAdmin: boolean;
+  isActive: boolean;
   createdAt: string;
   organizations: AdminOrgSummary[];
 }
@@ -42,8 +45,19 @@ interface AdminUserListItem {
 interface AdminActionLogEntry {
   id: number;
   actorEmail: string;
-  action: "verify" | "delete" | "promote" | "demote";
+  action:
+    | "verify"
+    | "delete"
+    | "promote"
+    | "demote"
+    | "deactivate_membership"
+    | "activate_membership"
+    | "deactivate_user"
+    | "activate_user"
+    | "change_email"
+    | "reset_password";
   targetEmail: string;
+  organizationName: string | null;
   note: string | null;
   createdAt: string;
 }
@@ -59,10 +73,15 @@ export default function Admin() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [offset, setOffset] = useState(0);
-  // Per-row draft text for the demote reason, keyed by user id -- each
-  // row's AlertDialog is a separate mounted instance, so this needs to be
-  // keyed rather than a single shared string.
+  // Per-row draft text/state for dialogs that need one, keyed by the row's
+  // own id (membership id for membership actions, user id for account
+  // actions) -- each row's AlertDialog is a separate mounted instance, so
+  // this needs to be keyed rather than a single shared value.
   const [demoteNotes, setDemoteNotes] = useState<Record<number, string>>({});
+  const [membershipNotes, setMembershipNotes] = useState<Record<number, string>>({});
+  const [deactivateNotes, setDeactivateNotes] = useState<Record<number, string>>({});
+  const [resetPasswordNotes, setResetPasswordNotes] = useState<Record<number, string>>({});
+  const [changeEmailDrafts, setChangeEmailDrafts] = useState<Record<number, { email: string; note: string }>>({});
 
   // Auth-only gating is handled by ProtectedRoute (App.tsx). This is the
   // extra, super-admin-only gate: redirect a logged-in but non-admin user
@@ -166,6 +185,98 @@ export default function Admin() {
     onError: (err) => toast({ title: "Could not demote account", description: err.message, variant: "destructive" }),
   });
 
+  const deactivateMembership = useMutation({
+    mutationFn: async ({ membershipId, note }: { membershipId: number; note: string }) => {
+      const res = await apiRequest("POST", `/api/admin/memberships/${membershipId}/deactivate`, { note });
+      return res.json();
+    },
+    onSuccess: (_data, { membershipId }) => {
+      invalidateAll();
+      setMembershipNotes((prev) => {
+        const next = { ...prev };
+        delete next[membershipId];
+        return next;
+      });
+      toast({ title: "Membership deactivated" });
+    },
+    onError: (err) => toast({ title: "Could not deactivate membership", description: err.message, variant: "destructive" }),
+  });
+
+  const activateMembership = useMutation({
+    mutationFn: async (membershipId: number) => {
+      const res = await apiRequest("POST", `/api/admin/memberships/${membershipId}/activate`);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: "Membership reactivated" });
+    },
+    onError: (err) => toast({ title: "Could not reactivate membership", description: err.message, variant: "destructive" }),
+  });
+
+  const deactivateAccount = useMutation({
+    mutationFn: async ({ id, note }: { id: number; note: string }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/deactivate`, { note });
+      return res.json();
+    },
+    onSuccess: (_data, { id }) => {
+      invalidateAll();
+      setDeactivateNotes((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast({ title: "Account deactivated" });
+    },
+    onError: (err) => toast({ title: "Could not deactivate account", description: err.message, variant: "destructive" }),
+  });
+
+  const reactivateAccount = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/reactivate`);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: "Account reactivated" });
+    },
+    onError: (err) => toast({ title: "Could not reactivate account", description: err.message, variant: "destructive" }),
+  });
+
+  const changeEmail = useMutation({
+    mutationFn: async ({ id, newEmail, note }: { id: number; newEmail: string; note: string }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/change-email`, { newEmail, note });
+      return res.json();
+    },
+    onSuccess: (_data, { id }) => {
+      invalidateAll();
+      setChangeEmailDrafts((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast({ title: "Email changed — a reset link was sent to the new address" });
+    },
+    onError: (err) => toast({ title: "Could not change email", description: err.message, variant: "destructive" }),
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: async ({ id, note }: { id: number; note: string }) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/reset-password`, { note });
+      return res.json();
+    },
+    onSuccess: (_data, { id }) => {
+      invalidateAll();
+      setResetPasswordNotes((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast({ title: "Password reset email sent" });
+    },
+    onError: (err) => toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
+  });
+
   if (isLoading || !user?.isSuperAdmin) return null;
 
   const rows = usersQuery.data?.users ?? [];
@@ -231,12 +342,6 @@ export default function Admin() {
                 </TableHeader>
                 <TableBody>
                   {rows.map((u) => {
-                    const org = u.organizations[0];
-                    const orgLabel = org
-                      ? u.organizations.length > 1
-                        ? `${org.organizationName} +${u.organizations.length - 1} more`
-                        : org.organizationName
-                      : "—";
                     const isSelf = u.id === user.id;
                     return (
                       <TableRow key={u.id}>
@@ -245,13 +350,81 @@ export default function Admin() {
                         <TableCell>
                           {!u.emailVerified ? (
                             <Badge variant="outline">Pending</Badge>
+                          ) : !u.isActive ? (
+                            <Badge variant="destructive">Deactivated</Badge>
                           ) : u.isSuperAdmin ? (
                             <Badge variant="default">Super Admin</Badge>
                           ) : (
                             <Badge variant="secondary">Verified</Badge>
                           )}
                         </TableCell>
-                        <TableCell>{orgLabel}</TableCell>
+                        <TableCell>
+                          {u.organizations.length === 0 && "—"}
+                          <div className="space-y-1">
+                            {u.organizations.map((org) => (
+                              <div key={org.membershipId} className="flex items-center gap-2 text-sm">
+                                <span>{org.organizationName}</span>
+                                <Badge variant={org.isActive ? "secondary" : "outline"} className="capitalize">
+                                  {org.role}
+                                </Badge>
+                                {org.isActive ? (
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
+                                        Deactivate
+                                      </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>
+                                          Deactivate {u.email}'s access to {org.organizationName}?
+                                        </AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                          This revokes their access to this organization only, not any other org they
+                                          belong to. A reason is required.
+                                        </AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <div className="py-2 space-y-2">
+                                        <Label htmlFor={`membership-note-${org.membershipId}`}>Reason</Label>
+                                        <Textarea
+                                          id={`membership-note-${org.membershipId}`}
+                                          value={membershipNotes[org.membershipId] ?? ""}
+                                          onChange={(e) =>
+                                            setMembershipNotes((prev) => ({ ...prev, [org.membershipId]: e.target.value }))
+                                          }
+                                        />
+                                      </div>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction
+                                          disabled={!membershipNotes[org.membershipId]?.trim()}
+                                          onClick={() =>
+                                            deactivateMembership.mutate({
+                                              membershipId: org.membershipId,
+                                              note: membershipNotes[org.membershipId]!.trim(),
+                                            })
+                                          }
+                                        >
+                                          Deactivate
+                                        </AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                ) : (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => activateMembership.mutate(org.membershipId)}
+                                    disabled={activateMembership.isPending}
+                                  >
+                                    Reactivate
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </TableCell>
                         <TableCell>{new Date(u.createdAt).toLocaleDateString()}</TableCell>
                         <TableCell>
                           {!u.emailVerified && (
@@ -358,6 +531,157 @@ export default function Admin() {
                           {u.emailVerified && u.isSuperAdmin && isSelf && (
                             <p className="text-xs text-neutral-400 text-right">(you)</p>
                           )}
+                          {u.emailVerified && !isSelf && (
+                            <div className="flex flex-wrap gap-2 justify-end mt-1">
+                              {u.isActive ? (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="text-destructive">
+                                      Deactivate account
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Deactivate {u.email}'s account?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        This blocks login entirely, regardless of which organizations they belong to.
+                                        A reason is required and is recorded in the activity log.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <div className="py-2 space-y-2">
+                                      <Label htmlFor={`deactivate-note-${u.id}`}>Reason</Label>
+                                      <Textarea
+                                        id={`deactivate-note-${u.id}`}
+                                        value={deactivateNotes[u.id] ?? ""}
+                                        onChange={(e) =>
+                                          setDeactivateNotes((prev) => ({ ...prev, [u.id]: e.target.value }))
+                                        }
+                                      />
+                                    </div>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        disabled={!deactivateNotes[u.id]?.trim()}
+                                        onClick={() =>
+                                          deactivateAccount.mutate({ id: u.id, note: deactivateNotes[u.id]!.trim() })
+                                        }
+                                      >
+                                        Deactivate
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => reactivateAccount.mutate(u.id)}
+                                  disabled={reactivateAccount.isPending}
+                                >
+                                  Reactivate account
+                                </Button>
+                              )}
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm">
+                                    Change email
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Change {u.email}'s email?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      A password-set link is emailed to the new address — nobody types or shares a
+                                      password. The account is re-verified when they use it. A reason is required.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-2 space-y-3">
+                                    <div className="space-y-2">
+                                      <Label htmlFor={`new-email-${u.id}`}>New email</Label>
+                                      <Input
+                                        id={`new-email-${u.id}`}
+                                        type="email"
+                                        value={changeEmailDrafts[u.id]?.email ?? ""}
+                                        onChange={(e) =>
+                                          setChangeEmailDrafts((prev) => ({
+                                            ...prev,
+                                            [u.id]: { email: e.target.value, note: prev[u.id]?.note ?? "" },
+                                          }))
+                                        }
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label htmlFor={`change-email-note-${u.id}`}>Reason</Label>
+                                      <Textarea
+                                        id={`change-email-note-${u.id}`}
+                                        value={changeEmailDrafts[u.id]?.note ?? ""}
+                                        onChange={(e) =>
+                                          setChangeEmailDrafts((prev) => ({
+                                            ...prev,
+                                            [u.id]: { email: prev[u.id]?.email ?? "", note: e.target.value },
+                                          }))
+                                        }
+                                      />
+                                    </div>
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      disabled={
+                                        !changeEmailDrafts[u.id]?.email?.trim() || !changeEmailDrafts[u.id]?.note?.trim()
+                                      }
+                                      onClick={() =>
+                                        changeEmail.mutate({
+                                          id: u.id,
+                                          newEmail: changeEmailDrafts[u.id]!.email.trim(),
+                                          note: changeEmailDrafts[u.id]!.note.trim(),
+                                        })
+                                      }
+                                    >
+                                      Change email
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm">
+                                    Reset password
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Send {u.email} a password reset link?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Nobody types or sees their new password — they set it themselves via the emailed
+                                      link. A reason is required.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-2 space-y-2">
+                                    <Label htmlFor={`reset-password-note-${u.id}`}>Reason</Label>
+                                    <Textarea
+                                      id={`reset-password-note-${u.id}`}
+                                      value={resetPasswordNotes[u.id] ?? ""}
+                                      onChange={(e) =>
+                                        setResetPasswordNotes((prev) => ({ ...prev, [u.id]: e.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      disabled={!resetPasswordNotes[u.id]?.trim()}
+                                      onClick={() =>
+                                        resetPassword.mutate({ id: u.id, note: resetPasswordNotes[u.id]!.trim() })
+                                      }
+                                    >
+                                      Send reset link
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -422,6 +746,7 @@ export default function Admin() {
                     <TableHead>Actor</TableHead>
                     <TableHead>Action</TableHead>
                     <TableHead>Target</TableHead>
+                    <TableHead>Organization</TableHead>
                     <TableHead>Note</TableHead>
                     <TableHead>When</TableHead>
                   </TableRow>
@@ -430,8 +755,9 @@ export default function Admin() {
                   {entries.map((e) => (
                     <TableRow key={e.id}>
                       <TableCell>{e.actorEmail}</TableCell>
-                      <TableCell className="capitalize">{e.action}</TableCell>
+                      <TableCell className="capitalize">{e.action.replace(/_/g, " ")}</TableCell>
                       <TableCell>{e.targetEmail}</TableCell>
+                      <TableCell>{e.organizationName ?? "—"}</TableCell>
                       <TableCell>{e.note ?? "—"}</TableCell>
                       <TableCell>{new Date(e.createdAt).toLocaleString()}</TableCell>
                     </TableRow>
