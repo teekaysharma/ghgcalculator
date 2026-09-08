@@ -3,10 +3,16 @@
 // Dedicated test for the platform super-admin panel (GET /api/admin/users,
 // POST /api/admin/users/:id/verify, DELETE /api/admin/users/:id,
 // POST /api/admin/users/:id/promote, POST /api/admin/users/:id/demote,
-// GET /api/admin/action-log) -- kept separate from
-// scripts/verify-branch.mjs on purpose (see
-// docs/superpowers/specs/2026-09-04-super-admin-panel-design.md): it
-// deletes data, so it isn't something to run on every npm run verify pass.
+// GET /api/admin/action-log) AND, as of the 2026-09-04
+// membership-lifecycle-management plan, the membership/account lifecycle
+// routes layered on top of it: POST /api/admin/memberships/:id/deactivate|
+// activate, POST /api/admin/users/:id/deactivate|reactivate|change-email|
+// reset-password, POST /api/auth/forgot-password, POST /api/auth/reset-password,
+// the org-admin self-service equivalents under /api/team/..., and
+// GET /api/team/action-log -- kept separate from scripts/verify-branch.mjs
+// on purpose (see docs/superpowers/specs/2026-09-04-super-admin-panel-design.md
+// and docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md):
+// it deletes data, so it isn't something to run on every npm run verify pass.
 //
 // Requires the dev server already running (npm run dev in another
 // terminal) -- this script does not start or stop it.
@@ -23,11 +29,18 @@
 
 import "dotenv/config";
 import { Pool } from "pg";
+import bcrypt from "bcryptjs";
 
 const PORT = process.env.PORT || "5000";
 const BASE_URL = `http://localhost:${PORT}`;
 const RUN_TAG = `admintest-${Date.now()}`;
 const TEST_PASSWORD = "AdminTest12345";
+// Used only by the membership-lifecycle scenarios below, after a
+// deactivate/change-email/reset-password flow has replaced TEST_PASSWORD.
+const NEW_PASSWORD = "AdminTestReset67890";
+// Matches server/auth.ts's SALT_ROUNDS -- seedOwner (below) hashes its own
+// fixture passwords the same way a real register does.
+const SALT_ROUNDS = 12;
 
 let passed = 0;
 let failed = 0;
@@ -95,6 +108,40 @@ async function getUserId(pool, email) {
   return res.rows[0]?.id;
 }
 
+// POST /api/auth/register is capped at 5 requests/hour per IP
+// (registerLimiter in server/routes.ts), shared across every register call
+// this dev server sees regardless of which script or test made it. This
+// file's original 15 scenarios already spend that entire budget on their
+// own five registrations (see the comment on scenario 15 below) -- so the
+// membership-lifecycle scenarios added after them need another way to get
+// scratch accounts. seedOwner creates one directly via SQL instead of
+// through the rate-limited endpoint: same bcrypt hashing (SALT_ROUNDS,
+// matching server/auth.ts's hashPassword), same
+// users+organizations+memberships(role: owner) shape a real register
+// produces, just without the HTTP round trip or the token-based
+// verify-email step. Every actual scenario step below (login, deactivate,
+// invite, etc.) still exercises the real HTTP routes -- only this initial
+// fixture creation is seeded.
+async function seedOwner(pool, tag, { verified = true } = {}) {
+  const email = `${tag}@example.invalid`;
+  const passwordHash = await bcrypt.hash(TEST_PASSWORD, SALT_ROUNDS);
+  const userRes = await pool.query(
+    "INSERT INTO users (email, password_hash, email_verified) VALUES ($1, $2, $3) RETURNING id",
+    [email, passwordHash, verified],
+  );
+  const userId = userRes.rows[0].id;
+  const orgRes = await pool.query(
+    "INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id",
+    [tag, tag],
+  );
+  const organizationId = orgRes.rows[0].id;
+  await pool.query(
+    "INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner')",
+    [userId, organizationId],
+  );
+  return { email, userId, organizationId };
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     fail("setup", "DATABASE_URL not set");
@@ -103,6 +150,12 @@ async function main() {
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const createdEmails = [];
+  // Declared here (rather than inside the try block below, where the rest
+  // of this file's scenario-scoped `let`s live) because the cleanup step in
+  // `finally` needs to read s8OrgAOwner/s9Boundary's ids -- a `let` inside
+  // `try { ... }` is not visible from a sibling `finally { ... }` block.
+  let s8OrgAOwner;
+  let s9Boundary;
 
   try {
     // --- set up: one admin-actor (promoted to super-admin), one plain
@@ -505,6 +558,540 @@ async function main() {
         );
       }
     }
+
+    // =========================================================================
+    // Membership/account lifecycle (2026-09-04 membership-lifecycle-management
+    // plan, Task 8). Scenarios 16-26 below. New scratch accounts are seeded
+    // via seedOwner (direct SQL) rather than registerAndVerify/registerOnly,
+    // for the rate-limit reason documented on that helper above -- but every
+    // scenario STEP itself still exercises the real HTTP routes.
+    // =========================================================================
+
+    // --- scenario 16: membership deactivate blocks requireOrg access (which
+    // re-resolves fresh on every request, never trusting anything cached on
+    // the session), reactivate restores it ---
+    let s1, s1MembershipId;
+    {
+      s1 = await seedOwner(pool, `${RUN_TAG}-s1`);
+      createdEmails.push(s1.email);
+      const s1Cookie = await login(s1.email);
+      const membershipRow = await pool.query("SELECT id FROM memberships WHERE user_id = $1", [s1.userId]);
+      s1MembershipId = membershipRow.rows[0]?.id;
+
+      const before = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
+      if (before.status === 200) ok("GET /api/setup-status (active membership)", "200");
+      else fail("GET /api/setup-status (active membership)", `expected 200, got ${before.status}`);
+
+      const deactivateRes = await fetch(`${BASE_URL}/api/admin/memberships/${s1MembershipId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "Verification testing: membership deactivate" }),
+      });
+      if (deactivateRes.status === 200) ok("POST /api/admin/memberships/:id/deactivate", "200");
+      else fail("POST /api/admin/memberships/:id/deactivate", `expected 200, got ${deactivateRes.status}`);
+
+      // Same already-issued session cookie, no fresh login -- proves
+      // requireOrg re-resolves membership state per request rather than
+      // trusting anything set at login time.
+      const afterDeactivate = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
+      const afterDeactivateBody = await afterDeactivate.json().catch(() => ({}));
+      if (afterDeactivate.status === 403 && /No organization membership found/.test(afterDeactivateBody.message || "")) {
+        ok("GET /api/setup-status (deactivated membership, same cookie)", "403, No organization membership found");
+      } else {
+        fail(
+          "GET /api/setup-status (deactivated membership, same cookie)",
+          `expected 403 + message, got ${afterDeactivate.status}, body ${JSON.stringify(afterDeactivateBody)}`,
+        );
+      }
+
+      const activateRes = await fetch(`${BASE_URL}/api/admin/memberships/${s1MembershipId}/activate`, {
+        method: "POST",
+        headers: { Cookie: adminCookie },
+      });
+      if (activateRes.status === 200) ok("POST /api/admin/memberships/:id/activate", "200");
+      else fail("POST /api/admin/memberships/:id/activate", `expected 200, got ${activateRes.status}`);
+
+      const afterActivate = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
+      if (afterActivate.status === 200) ok("GET /api/setup-status (reactivated membership, same cookie)", "200");
+      else fail("GET /api/setup-status (reactivated membership, same cookie)", `expected 200, got ${afterActivate.status}`);
+    }
+
+    // --- scenario 17: account deactivate blocks login (401, reason
+    // deactivated), reactivate restores it ---
+    let s2;
+    {
+      s2 = await seedOwner(pool, `${RUN_TAG}-s2`);
+      createdEmails.push(s2.email);
+
+      const deactivateRes = await fetch(`${BASE_URL}/api/admin/users/${s2.userId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "Verification testing: account deactivate" }),
+      });
+      const deactivateBody = await deactivateRes.json().catch(() => ({}));
+      if (deactivateRes.status === 200 && deactivateBody.user?.isActive === false) {
+        ok("POST /api/admin/users/:id/deactivate", "200, isActive false");
+      } else {
+        fail("POST /api/admin/users/:id/deactivate", `status ${deactivateRes.status}, body ${JSON.stringify(deactivateBody)}`);
+      }
+
+      const loginBlocked = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: s2.email, password: TEST_PASSWORD }),
+      });
+      const loginBlockedBody = await loginBlocked.json().catch(() => ({}));
+      if (loginBlocked.status === 401 && loginBlockedBody.reason === "deactivated") {
+        ok("POST /api/auth/login (deactivated account)", "401, reason: deactivated");
+      } else {
+        fail(
+          "POST /api/auth/login (deactivated account)",
+          `expected 401 + reason deactivated, got ${loginBlocked.status}, body ${JSON.stringify(loginBlockedBody)}`,
+        );
+      }
+
+      const reactivateRes = await fetch(`${BASE_URL}/api/admin/users/${s2.userId}/reactivate`, {
+        method: "POST",
+        headers: { Cookie: adminCookie },
+      });
+      const reactivateBody = await reactivateRes.json().catch(() => ({}));
+      if (reactivateRes.status === 200 && reactivateBody.user?.isActive === true) {
+        ok("POST /api/admin/users/:id/reactivate", "200, isActive true");
+      } else {
+        fail("POST /api/admin/users/:id/reactivate", `status ${reactivateRes.status}, body ${JSON.stringify(reactivateBody)}`);
+      }
+
+      const loginRestored = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: s2.email, password: TEST_PASSWORD }),
+      });
+      if (loginRestored.status === 200) ok("POST /api/auth/login (reactivated account)", "200");
+      else fail("POST /api/auth/login (reactivated account)", `expected 200, got ${loginRestored.status}`);
+    }
+
+    // --- scenario 18: deactivating an UNVERIFIED account is rejected ---
+    let s3;
+    {
+      s3 = await seedOwner(pool, `${RUN_TAG}-s3`, { verified: false });
+      createdEmails.push(s3.email);
+      const res = await fetch(`${BASE_URL}/api/admin/users/${s3.userId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "should be rejected" }),
+      });
+      if (res.status === 400) ok("POST /api/admin/users/:id/deactivate (unverified)", "400");
+      else fail("POST /api/admin/users/:id/deactivate (unverified)", `expected 400, got ${res.status}`);
+    }
+
+    // --- scenario 19: change-email end to end -- admin sets a new email, the
+    // new address claims it via the same reset-password token mechanism
+    // forgot-password uses, and the old password stops working while the new
+    // one works. The "old password no longer authenticates" half is checked
+    // by comparing directly against the stored hash (bcrypt.compare) rather
+    // than a live login call, to stay within POST /api/auth/login's own
+    // 10-per-15-minutes rate limit alongside every other login in this file. ---
+    {
+      const s4 = await seedOwner(pool, `${RUN_TAG}-s4`);
+      const s4NewEmail = `${RUN_TAG}-s4-new@example.invalid`;
+      createdEmails.push(s4NewEmail);
+
+      const changeRes = await fetch(`${BASE_URL}/api/admin/users/${s4.userId}/change-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ newEmail: s4NewEmail, note: "Verification testing: change-email" }),
+      });
+      const changeBody = await changeRes.json().catch(() => ({}));
+      if (changeRes.status === 200 && changeBody.user?.email === s4NewEmail) {
+        ok("POST /api/admin/users/:id/change-email", `200, email now ${s4NewEmail}`);
+      } else {
+        fail("POST /api/admin/users/:id/change-email", `status ${changeRes.status}, body ${JSON.stringify(changeBody)}`);
+      }
+
+      const tokenRow = await pool.query("SELECT password_reset_token FROM users WHERE email = $1", [s4NewEmail]);
+      const token = tokenRow.rows[0]?.password_reset_token;
+      if (!token) fail("change-email token", "no password_reset_token found for the new email");
+
+      const resetRes = await fetch(`${BASE_URL}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, newPassword: NEW_PASSWORD }),
+      });
+      if (resetRes.status === 200) ok("POST /api/auth/reset-password (after change-email)", "200");
+      else fail("POST /api/auth/reset-password (after change-email)", `expected 200, got ${resetRes.status}`);
+
+      const dbRow = await pool.query("SELECT email_verified, password_hash FROM users WHERE id = $1", [s4.userId]);
+      const emailVerified = dbRow.rows[0]?.email_verified;
+      const newHash = dbRow.rows[0]?.password_hash;
+      const oldStillMatches = newHash ? await bcrypt.compare(TEST_PASSWORD, newHash) : true;
+      const newMatches = newHash ? await bcrypt.compare(NEW_PASSWORD, newHash) : false;
+      if (emailVerified === true && !oldStillMatches && newMatches) {
+        ok("change-email + reset-password DB state", "email_verified=true, old password hash no longer matches, new one does");
+      } else {
+        fail(
+          "change-email + reset-password DB state",
+          `email_verified ${emailVerified}, old still matches ${oldStillMatches}, new matches ${newMatches}`,
+        );
+      }
+
+      const loginNew = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: s4NewEmail, password: NEW_PASSWORD }),
+      });
+      if (loginNew.status === 200) ok("POST /api/auth/login (new email + new password)", "200");
+      else fail("POST /api/auth/login (new email + new password)", `expected 200, got ${loginNew.status}`);
+    }
+
+    // --- scenario 20: admin-triggered reset-password end to end -- same
+    // token mechanism as change-email (scenario 19), but the email itself
+    // never changes ---
+    {
+      const s5 = await seedOwner(pool, `${RUN_TAG}-s5`);
+      createdEmails.push(s5.email);
+
+      const resetTriggerRes = await fetch(`${BASE_URL}/api/admin/users/${s5.userId}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "Verification testing: admin reset-password" }),
+      });
+      if (resetTriggerRes.status === 200) ok("POST /api/admin/users/:id/reset-password", "200");
+      else fail("POST /api/admin/users/:id/reset-password", `expected 200, got ${resetTriggerRes.status}`);
+
+      const tokenRow = await pool.query("SELECT password_reset_token FROM users WHERE email = $1", [s5.email]);
+      const token = tokenRow.rows[0]?.password_reset_token;
+      if (!token) fail("admin reset-password token", "no password_reset_token found");
+
+      const resetRes = await fetch(`${BASE_URL}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, newPassword: NEW_PASSWORD }),
+      });
+      if (resetRes.status === 200) ok("POST /api/auth/reset-password (after admin trigger)", "200");
+      else fail("POST /api/auth/reset-password (after admin trigger)", `expected 200, got ${resetRes.status}`);
+
+      const dbRow = await pool.query("SELECT password_hash FROM users WHERE id = $1", [s5.userId]);
+      const newHash = dbRow.rows[0]?.password_hash;
+      const oldStillMatches = newHash ? await bcrypt.compare(TEST_PASSWORD, newHash) : true;
+      if (!oldStillMatches) ok("admin reset-password DB state", "old password hash no longer matches");
+      else fail("admin reset-password DB state", "old password still matches after reset");
+
+      const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: s5.email, password: NEW_PASSWORD }),
+      });
+      if (loginRes.status === 200) ok("POST /api/auth/login (after admin reset-password)", "200");
+      else fail("POST /api/auth/login (after admin reset-password)", `expected 200, got ${loginRes.status}`);
+    }
+
+    // --- scenario 21: self-service forgot-password end to end ---
+    {
+      const s6 = await seedOwner(pool, `${RUN_TAG}-s6`);
+      createdEmails.push(s6.email);
+
+      const forgotRes = await fetch(`${BASE_URL}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: s6.email }),
+      });
+      if (forgotRes.status === 200) ok("POST /api/auth/forgot-password (verified account)", "200");
+      else fail("POST /api/auth/forgot-password (verified account)", `expected 200, got ${forgotRes.status}`);
+
+      const tokenRow = await pool.query("SELECT password_reset_token FROM users WHERE email = $1", [s6.email]);
+      const token = tokenRow.rows[0]?.password_reset_token;
+      if (!token) fail("forgot-password token", "no password_reset_token found");
+
+      const resetRes = await fetch(`${BASE_URL}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, newPassword: NEW_PASSWORD }),
+      });
+      if (resetRes.status === 200) ok("POST /api/auth/reset-password (self-service)", "200");
+      else fail("POST /api/auth/reset-password (self-service)", `expected 200, got ${resetRes.status}`);
+
+      const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: s6.email, password: NEW_PASSWORD }),
+      });
+      if (loginRes.status === 200) ok("POST /api/auth/login (after self-service reset)", "200");
+      else fail("POST /api/auth/login (after self-service reset)", `expected 200, got ${loginRes.status}`);
+    }
+
+    // --- scenario 22: forgot-password's response is byte-identical whether
+    // the account doesn't exist, is unverified, or is verified -- and only
+    // the verified case actually writes a token. Reuses s3 (unverified, from
+    // scenario 18) and s2 (verified + reactivated, from scenario 17) rather
+    // than registering fresh accounts, to stay within forgot-password's own
+    // 5-per-hour rate limit alongside scenario 21's call above (nonexistent +
+    // unverified + verified + scenario 21's own call = 4 of the 5). ---
+    {
+      const nonexistentEmail = `${RUN_TAG}-nonexistent@example.invalid`;
+      const responses = {};
+      for (const [label, email] of [
+        ["nonexistent", nonexistentEmail],
+        ["unverified", s3.email],
+        ["verified", s2.email],
+      ]) {
+        const res = await fetch(`${BASE_URL}/api/auth/forgot-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const body = await res.json().catch(() => ({}));
+        responses[label] = { status: res.status, body };
+      }
+      const allSameShape =
+        responses.nonexistent.status === 200 &&
+        responses.unverified.status === 200 &&
+        responses.verified.status === 200 &&
+        responses.nonexistent.body.message === responses.unverified.body.message &&
+        responses.unverified.body.message === responses.verified.body.message;
+      if (allSameShape) {
+        ok("POST /api/auth/forgot-password (identical response shape)", `200, "${responses.verified.body.message}" for all three`);
+      } else {
+        fail("POST /api/auth/forgot-password (identical response shape)", JSON.stringify(responses));
+      }
+
+      const unverifiedToken = await pool.query("SELECT password_reset_token FROM users WHERE email = $1", [s3.email]);
+      const verifiedToken = await pool.query("SELECT password_reset_token FROM users WHERE email = $1", [s2.email]);
+      if (unverifiedToken.rows[0]?.password_reset_token === null && verifiedToken.rows[0]?.password_reset_token) {
+        ok("forgot-password token issuance", "unverified account got no token, verified account did");
+      } else {
+        fail(
+          "forgot-password token issuance",
+          `unverified token ${JSON.stringify(unverifiedToken.rows[0])}, verified token present: ${!!verifiedToken.rows[0]?.password_reset_token}`,
+        );
+      }
+    }
+
+    // --- scenario 23: org-admin membership deactivate/activate is scoped to
+    // their own org. plainEmail is invited into a fresh second org (org A)
+    // here and reused as scenario 25's non-owner/admin session too, rather
+    // than registering yet another fresh account. ---
+    // s8OrgAOwner itself is declared above main()'s try block (needed by
+    // the finally-block cleanup); s8OrgAOwnerCookie/plainMembershipInOrgAId
+    // are only needed within this try block's later scenarios.
+    let s8OrgAOwnerCookie, plainMembershipInOrgAId;
+    {
+      s8OrgAOwner = await seedOwner(pool, `${RUN_TAG}-s8orga`);
+      createdEmails.push(s8OrgAOwner.email);
+      s8OrgAOwnerCookie = await login(s8OrgAOwner.email);
+
+      const inviteRes = await fetch(`${BASE_URL}/api/team/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+        body: JSON.stringify({ email: plainEmail }),
+      });
+      if (inviteRes.status === 201) ok("POST /api/team/invite (plainEmail into org A)", "201");
+      else fail("POST /api/team/invite (plainEmail into org A)", `expected 201, got ${inviteRes.status}`);
+
+      const plainIdForInvite = await getUserId(pool, plainEmail);
+      const membershipRow = await pool.query(
+        "SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2",
+        [plainIdForInvite, s8OrgAOwner.organizationId],
+      );
+      plainMembershipInOrgAId = membershipRow.rows[0]?.id;
+
+      const deactivateRes = await fetch(`${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+        body: JSON.stringify({ note: "Verification testing: org-admin membership deactivate" }),
+      });
+      const deactivateBody = await deactivateRes.json().catch(() => ({}));
+      if (deactivateRes.status === 200 && deactivateBody.membership?.isActive === false) {
+        ok("POST /api/team/memberships/:id/deactivate (own org)", "200, isActive false");
+      } else {
+        fail("POST /api/team/memberships/:id/deactivate (own org)", `status ${deactivateRes.status}, body ${JSON.stringify(deactivateBody)}`);
+      }
+
+      const activateRes = await fetch(`${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/activate`, {
+        method: "POST",
+        headers: { Cookie: s8OrgAOwnerCookie },
+      });
+      const activateBody = await activateRes.json().catch(() => ({}));
+      if (activateRes.status === 200 && activateBody.membership?.isActive === true) {
+        ok("POST /api/team/memberships/:id/activate (own org)", "200, isActive true");
+      } else {
+        fail("POST /api/team/memberships/:id/activate (own org)", `status ${activateRes.status}, body ${JSON.stringify(activateBody)}`);
+      }
+
+      // A membership in a DIFFERENT org (s1's, from scenario 16) must be out
+      // of scope for s8OrgAOwner: 404 (not found), not 403 -- the org-admin
+      // route scopes its DB update by organization id, so a cross-org id
+      // simply never matches a row.
+      const crossOrgRes = await fetch(`${BASE_URL}/api/team/memberships/${s1MembershipId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+        body: JSON.stringify({ note: "should be out of scope" }),
+      });
+      if (crossOrgRes.status === 404) ok("POST /api/team/memberships/:id/deactivate (different org)", "404");
+      else fail("POST /api/team/memberships/:id/deactivate (different org)", `expected 404, got ${crossOrgRes.status}`);
+    }
+
+    // --- scenario 24: org-admin account-wide boundary rule. An org-admin may
+    // only deactivate/reactivate/change-email/reset-password a member's
+    // ACCOUNT (as opposed to just one membership) when that account's
+    // memberships resolve to exactly this one org
+    // (storage.isUsersSoleOrganization). s9Boundary is invited into org A on
+    // top of its own separate org, giving it two memberships, to exercise
+    // this. ---
+    // s9Boundary is declared above main()'s try block (needed by the
+    // finally-block cleanup).
+    {
+      s9Boundary = await seedOwner(pool, `${RUN_TAG}-s9boundary`);
+      createdEmails.push(s9Boundary.email);
+
+      const inviteRes = await fetch(`${BASE_URL}/api/team/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+        body: JSON.stringify({ email: s9Boundary.email }),
+      });
+      if (inviteRes.status === 201) ok("POST /api/team/invite (s9Boundary into org A)", "201");
+      else fail("POST /api/team/invite (s9Boundary into org A)", `expected 201, got ${inviteRes.status}`);
+
+      const membershipRow = await pool.query(
+        "SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2",
+        [s9Boundary.userId, s8OrgAOwner.organizationId],
+      );
+      const s9MembershipInOrgAId = membershipRow.rows[0]?.id;
+
+      const attemptAllFour = async (label) => {
+        const deactivate = await fetch(`${BASE_URL}/api/team/members/${s9Boundary.userId}/deactivate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+          body: JSON.stringify({ note: "boundary rule probe" }),
+        });
+        const reactivate = await fetch(`${BASE_URL}/api/team/members/${s9Boundary.userId}/reactivate`, {
+          method: "POST",
+          headers: { Cookie: s8OrgAOwnerCookie },
+        });
+        const changeEmail = await fetch(`${BASE_URL}/api/team/members/${s9Boundary.userId}/change-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+          body: JSON.stringify({ newEmail: `${RUN_TAG}-s9boundary-blocked@example.invalid`, note: "boundary rule probe" }),
+        });
+        const resetPassword = await fetch(`${BASE_URL}/api/team/members/${s9Boundary.userId}/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+          body: JSON.stringify({ note: "boundary rule probe" }),
+        });
+        const statuses = {
+          deactivate: deactivate.status,
+          reactivate: reactivate.status,
+          changeEmail: changeEmail.status,
+          resetPassword: resetPassword.status,
+        };
+        const all403 = Object.values(statuses).every((s) => s === 403);
+        if (all403) ok(`account-wide actions blocked (${label})`, "403 for deactivate/reactivate/change-email/reset-password");
+        else fail(`account-wide actions blocked (${label})`, JSON.stringify(statuses));
+      };
+
+      await attemptAllFour("two orgs");
+
+      const deactivateMembershipRes = await fetch(`${BASE_URL}/api/team/memberships/${s9MembershipInOrgAId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+        body: JSON.stringify({ note: "Verification testing: deactivate one of two memberships" }),
+      });
+      if (deactivateMembershipRes.status === 200) {
+        ok("POST /api/team/memberships/:id/deactivate (s9Boundary's org-A membership)", "200");
+      } else {
+        fail(
+          "POST /api/team/memberships/:id/deactivate (s9Boundary's org-A membership)",
+          `expected 200, got ${deactivateMembershipRes.status}`,
+        );
+      }
+
+      // This does NOT flip to success, and that is correct: storage.
+      // isUsersSoleOrganization (server/storage.ts) deliberately counts ALL
+      // of a user's membership rows, active or not -- "even a deactivated
+      // membership represents a relationship with that org the acting
+      // org-admin has no authority over" per its own doc comment there.
+      // There is no delete-membership route (only deactivate), so a user who
+      // has ever touched a second org can never be brought back under a
+      // single org-admin's authority this way -- only a super-admin can act
+      // on them from here on. Verified live against the running server
+      // before writing this assertion: task-8-brief.md's scenario 9
+      // describes this transition as "assert they now succeed", but that
+      // does not match the actual (and, on inspection, more conservative and
+      // clearly deliberate) shipped behavior, which stays fail-closed rather
+      // than reopening. This assertion locks in the real, more secure
+      // invariant instead -- see task-8-report.md for the full writeup.
+      await attemptAllFour("two orgs, one membership deactivated (still blocked by design)");
+    }
+
+    // --- scenario 25: a "member"-role org member (not owner/admin) is
+    // rejected from every /api/team/... lifecycle route. Reuses plainCookie
+    // -- plainEmail is a member (not owner) of org A since scenario 23's
+    // invite -- with an explicit X-Organization-Id header, since plainEmail
+    // also owns its own separate org and requireOrg otherwise defaults to
+    // the first membership it finds. ---
+    {
+      const headers = {
+        "Content-Type": "application/json",
+        Cookie: plainCookie,
+        "X-Organization-Id": String(s8OrgAOwner.organizationId),
+      };
+      const deactivateMembership = await fetch(`${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/deactivate`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ note: "should be rejected" }),
+      });
+      const deactivateAccount = await fetch(`${BASE_URL}/api/team/members/${s8OrgAOwner.userId}/deactivate`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ note: "should be rejected" }),
+      });
+      const viewActionLog = await fetch(`${BASE_URL}/api/team/action-log`, { headers });
+      const statuses = {
+        deactivateMembership: deactivateMembership.status,
+        deactivateAccount: deactivateAccount.status,
+        viewActionLog: viewActionLog.status,
+      };
+      const all403 = Object.values(statuses).every((s) => s === 403);
+      if (all403) {
+        ok("member-role session rejected from /api/team/... lifecycle routes", "403 across membership/account/action-log routes");
+      } else {
+        fail("member-role session rejected from /api/team/... lifecycle routes", JSON.stringify(statuses));
+      }
+    }
+
+    // --- scenario 26: GET /api/team/action-log is org-scoped; GET
+    // /api/admin/action-log sees everything ---
+    {
+      const orgActionLogRes = await fetch(`${BASE_URL}/api/team/action-log`, { headers: { Cookie: s8OrgAOwnerCookie } });
+      const orgActionLogBody = await orgActionLogRes.json().catch(() => ({}));
+      const orgEntries = orgActionLogBody.entries || [];
+      const hasOwnOrgEntry = orgEntries.some((e) => e.targetEmail === plainEmail && e.action === "deactivate_membership");
+      // s1's membership deactivate (scenario 16) was a super-admin action
+      // scoped to s1's own org -- a different tenant than org A -- so it must
+      // be absent from org A's own action-log view.
+      const hasCrossTenantEntry = orgEntries.some((e) => e.targetEmail === s1.email);
+      if (orgActionLogRes.status === 200 && hasOwnOrgEntry && !hasCrossTenantEntry) {
+        ok("GET /api/team/action-log (org-scoped)", "200, contains own-org entries, cross-tenant entry absent");
+      } else {
+        fail(
+          "GET /api/team/action-log (org-scoped)",
+          `status ${orgActionLogRes.status}, hasOwnOrgEntry ${hasOwnOrgEntry}, hasCrossTenantEntry ${hasCrossTenantEntry}`,
+        );
+      }
+
+      const adminActionLogRes = await fetch(`${BASE_URL}/api/admin/action-log`, { headers: { Cookie: adminCookie } });
+      const adminActionLogBody = await adminActionLogRes.json().catch(() => ({}));
+      const adminEntries = adminActionLogBody.entries || [];
+      const seesOrgA = adminEntries.some((e) => e.targetEmail === plainEmail && e.action === "deactivate_membership");
+      const seesOtherOrg = adminEntries.some((e) => e.targetEmail === s1.email);
+      if (adminActionLogRes.status === 200 && seesOrgA && seesOtherOrg) {
+        ok("GET /api/admin/action-log (sees everything)", "200, contains entries from multiple different orgs");
+      } else {
+        fail(
+          "GET /api/admin/action-log (sees everything)",
+          `status ${adminActionLogRes.status}, seesOrgA ${seesOrgA}, seesOtherOrg ${seesOtherOrg}`,
+        );
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as
@@ -529,6 +1116,42 @@ async function main() {
         await pool.query("DELETE FROM admin_action_log WHERE actor_user_id = ANY($1)", [remainingIds]);
       }
       await pool.query("DELETE FROM admin_action_log WHERE target_email LIKE $1", [`${RUN_TAG}%`]);
+
+      // Task 8 additions: plainEmail and s9Boundary each picked up a SECOND
+      // membership (in org A, alongside their own original org) via
+      // scenarios 23/24's /api/team/invite calls. The per-user loop below
+      // assumes exactly one membership row per user (true for every other
+      // scratch account in this file, and for these two before this task) --
+      // for plainEmail in particular that would otherwise risk deleting org
+      // A (which s8OrgAOwner still owns) instead of plainEmail's own
+      // original org, depending on which row the unordered SELECT in that
+      // loop happens to return first, and leaving whichever org it didn't
+      // pick permanently dangling. Stripping these org-A membership rows
+      // first restores the one-membership-per-user assumption before that
+      // loop runs; org A itself is still cleaned up normally afterward, via
+      // s8OrgAOwner's own (by then sole) membership row.
+      if (s8OrgAOwner) {
+        // plainEmail itself (the try block's local const) isn't visible from
+        // this finally block, same reason s8OrgAOwner/s9Boundary had to be
+        // hoisted above try -- reconstruct it the same deterministic way
+        // pendingId1Email is reconstructed just above (registerAndVerify
+        // always builds `${tag}@example.invalid`).
+        const plainEmailForCleanup = `${RUN_TAG}-plain@example.invalid`;
+        const plainIdForCleanup = await getUserId(pool, plainEmailForCleanup);
+        if (plainIdForCleanup) {
+          await pool.query("DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2", [
+            plainIdForCleanup,
+            s8OrgAOwner.organizationId,
+          ]);
+        }
+        if (s9Boundary) {
+          await pool.query("DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2", [
+            s9Boundary.userId,
+            s8OrgAOwner.organizationId,
+          ]);
+        }
+      }
+
       for (const row of remaining.rows) {
         const m = await pool.query("SELECT organization_id FROM memberships WHERE user_id = $1", [row.id]);
         const orgId = m.rows[0]?.organization_id;

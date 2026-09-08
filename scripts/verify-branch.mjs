@@ -159,8 +159,10 @@ async function step3_dbPush() {
          OR (table_name = 'emission_records' AND column_name = 'scope3_category')
          OR (table_name = 'users' AND column_name IN (
               'email_verified', 'email_verification_token', 'email_verification_token_expires_at',
-              'is_super_admin'
+              'is_super_admin', 'is_active', 'password_reset_token', 'password_reset_token_expires_at'
             ))
+         OR (table_name = 'memberships' AND column_name = 'is_active')
+         OR (table_name = 'admin_action_log' AND column_name IN ('organization_id', 'organization_name'))
     `);
     const found = new Set(res.rows.map((r) => `${r.table_name}.${r.column_name}`));
     const required = [
@@ -170,6 +172,12 @@ async function step3_dbPush() {
       "users.email_verification_token",
       "users.email_verification_token_expires_at",
       "users.is_super_admin",
+      "users.is_active",
+      "users.password_reset_token",
+      "users.password_reset_token_expires_at",
+      "memberships.is_active",
+      "admin_action_log.organization_id",
+      "admin_action_log.organization_name",
     ];
     const missing = required.filter((r) => !found.has(r));
     if (missing.length > 0) {
@@ -194,7 +202,8 @@ async function step3_dbPush() {
 
   ok(
     "schema check",
-    "emission_factors.year, emission_records.scope3_category, users email-verification/is_super_admin columns, and admin_action_log table present",
+    "emission_factors.year, emission_records.scope3_category, users email-verification/is_super_admin/is_active/password-reset columns, " +
+      "memberships.is_active, admin_action_log table + organization_id/organization_name columns present",
   );
 }
 
