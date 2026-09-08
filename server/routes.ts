@@ -916,7 +916,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!Number.isInteger(targetId) || targetId <= 0) {
       return res.status(400).json({ message: "Invalid user id" });
     }
-    const parsed = z.object({ newEmail: z.string().email(), note: z.string().min(1) }).safeParse(req.body);
+    const parsed = z.object({ newEmail: z.string().email(), note: z.string().trim().min(1) }).safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "A new email and a reason are both required." });
     }
