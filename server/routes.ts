@@ -1187,7 +1187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!Number.isInteger(targetId) || targetId <= 0) {
       return res.status(400).json({ message: "Invalid user id" });
     }
-    const parsed = z.object({ newEmail: z.string().email(), note: z.string().min(1) }).safeParse(req.body);
+    const parsed = z.object({ newEmail: z.string().email(), note: z.string().trim().min(1) }).safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "A new email and a reason are both required." });
     }
@@ -1280,6 +1280,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/team/action-log", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can view the action log" });
+    }
     const entries = await storage.listAdminActionLogForOrganization(req.organizationId!);
     return res.json({ entries });
   });
