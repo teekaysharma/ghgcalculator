@@ -431,6 +431,7 @@ export interface IStorage {
     note?: string;
   }): Promise<AdminActionLog>;
   listAdminActionLog(): Promise<AdminActionLogEntry[]>;
+  listAdminActionLogForOrganization(organizationId: number): Promise<AdminActionLogEntry[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -1853,6 +1854,24 @@ export class DbStorage implements IStorage {
       })
       .from(adminActionLog)
       .innerJoin(users, eq(users.id, adminActionLog.actorUserId))
+      .orderBy(desc(adminActionLog.createdAt))
+      .limit(200) as Promise<AdminActionLogEntry[]>;
+  }
+
+  async listAdminActionLogForOrganization(organizationId: number): Promise<AdminActionLogEntry[]> {
+    return db
+      .select({
+        id: adminActionLog.id,
+        actorEmail: users.email,
+        action: adminActionLog.action,
+        targetEmail: adminActionLog.targetEmail,
+        organizationName: adminActionLog.organizationName,
+        note: adminActionLog.note,
+        createdAt: adminActionLog.createdAt,
+      })
+      .from(adminActionLog)
+      .innerJoin(users, eq(users.id, adminActionLog.actorUserId))
+      .where(eq(adminActionLog.organizationId, organizationId))
       .orderBy(desc(adminActionLog.createdAt))
       .limit(200) as Promise<AdminActionLogEntry[]>;
   }

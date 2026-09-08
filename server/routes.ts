@@ -998,7 +998,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/team", requireAuth, requireOrg, async (req, res) => {
     const members = await storage.listMembershipsForOrganization(req.organizationId!);
     return res.json({
-      members: members.map((m) => ({ id: m.id, userId: m.userId, email: m.userEmail, name: m.userName, role: m.role, createdAt: m.createdAt })),
+      members: members.map((m) => ({
+        id: m.id,
+        userId: m.userId,
+        email: m.userEmail,
+        name: m.userName,
+        role: m.role,
+        isActive: m.isActive,
+        createdAt: m.createdAt,
+      })),
     });
   });
 
@@ -1028,6 +1036,252 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid invite payload" });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // Team lifecycle -- org owner/admin self-service, scoped to their own
+  // tenant. Membership-level actions (deactivate/activate) can never affect
+  // another org by construction (scopedToOrgId on the storage call). For
+  // account-wide actions (deactivate/reactivate the account, change its
+  // email, trigger a password reset), an org-admin's authority is limited
+  // to targets whose ONLY membership -- active or not -- is this org; the
+  // moment a user belongs to a second org, only a super-admin can act. See
+  // docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md.
+  // -----------------------------------------------------------------------
+  app.post("/api/team/memberships/:id/deactivate", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can deactivate a membership" });
+    }
+    const membershipId = Number(req.params.id);
+    if (!Number.isInteger(membershipId) || membershipId <= 0) {
+      return res.status(400).json({ message: "Invalid membership id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to deactivate a membership." });
+    }
+    const updated = await storage.deactivateMembership(membershipId, req.organizationId!);
+    if (!updated) return res.status(404).json({ message: "Membership not found" });
+    const target = await storage.getUser(updated.userId);
+    const org = await storage.getOrganization(updated.organizationId);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "deactivate_membership",
+        targetUserId: updated.userId,
+        targetEmail: target?.email ?? "",
+        organizationId: updated.organizationId,
+        organizationName: org?.name,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (deactivate_membership, org-admin):", err);
+    }
+    return res.status(200).json({ membership: { id: updated.id, isActive: updated.isActive } });
+  });
+
+  app.post("/api/team/memberships/:id/activate", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can activate a membership" });
+    }
+    const membershipId = Number(req.params.id);
+    if (!Number.isInteger(membershipId) || membershipId <= 0) {
+      return res.status(400).json({ message: "Invalid membership id" });
+    }
+    const updated = await storage.activateMembership(membershipId, req.organizationId!);
+    if (!updated) return res.status(404).json({ message: "Membership not found" });
+    const target = await storage.getUser(updated.userId);
+    const org = await storage.getOrganization(updated.organizationId);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "activate_membership",
+        targetUserId: updated.userId,
+        targetEmail: target?.email ?? "",
+        organizationId: updated.organizationId,
+        organizationName: org?.name,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (activate_membership, org-admin):", err);
+    }
+    return res.status(200).json({ membership: { id: updated.id, isActive: updated.isActive } });
+  });
+
+  app.post("/api/team/members/:id/deactivate", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can deactivate a member's account" });
+    }
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to deactivate an account." });
+    }
+    if (!(await storage.isUsersSoleOrganization(targetId, req.organizationId!))) {
+      return res.status(403).json({
+        message: "This account belongs to more than one organization. Only a super-admin can deactivate it.",
+      });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    if (!target.emailVerified) {
+      return res.status(400).json({ message: "This account isn't verified yet." });
+    }
+    await storage.deactivateAccount(target.id);
+    const org = await storage.getOrganization(req.organizationId!);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "deactivate_user",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        organizationId: req.organizationId!,
+        organizationName: org?.name,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (deactivate_user, org-admin):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, isActive: false } });
+  });
+
+  app.post("/api/team/members/:id/reactivate", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can reactivate a member's account" });
+    }
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    if (!(await storage.isUsersSoleOrganization(targetId, req.organizationId!))) {
+      return res.status(403).json({
+        message: "This account belongs to more than one organization. Only a super-admin can reactivate it.",
+      });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    await storage.reactivateAccount(target.id);
+    const org = await storage.getOrganization(req.organizationId!);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "activate_user",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        organizationId: req.organizationId!,
+        organizationName: org?.name,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (activate_user, org-admin):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: target.email, isActive: true } });
+  });
+
+  app.post("/api/team/members/:id/change-email", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can change a member's email" });
+    }
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const parsed = z.object({ newEmail: z.string().email(), note: z.string().min(1) }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "A new email and a reason are both required." });
+    }
+    if (!(await storage.isUsersSoleOrganization(targetId, req.organizationId!))) {
+      return res.status(403).json({
+        message: "This account belongs to more than one organization. Only a super-admin can change its email.",
+      });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    const existing = await storage.getUserByEmail(parsed.data.newEmail);
+    if (existing && existing.id !== target.id) {
+      return res.status(409).json({ message: "An account with this email already exists" });
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await storage.setNewEmailPendingVerification(target.id, parsed.data.newEmail, token, expiresAt);
+    try {
+      await sendPasswordResetEmail({
+        to: parsed.data.newEmail,
+        token,
+        requestOrigin: `${req.protocol}://${req.get("host")}`,
+      });
+    } catch (emailError) {
+      console.error("Failed to send password reset email (change-email, org-admin):", emailError);
+    }
+    const org = await storage.getOrganization(req.organizationId!);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "change_email",
+        targetUserId: target.id,
+        targetEmail: parsed.data.newEmail,
+        organizationId: req.organizationId!,
+        organizationName: org?.name,
+        note: parsed.data.note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (change_email, org-admin):", err);
+    }
+    return res.status(200).json({ user: { id: target.id, email: parsed.data.newEmail } });
+  });
+
+  app.post("/api/team/members/:id/reset-password", requireAuth, requireOrg, async (req, res) => {
+    if (req.membership!.role !== "owner" && req.membership!.role !== "admin") {
+      return res.status(403).json({ message: "Only an owner or admin can reset a member's password" });
+    }
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+    if (!note) {
+      return res.status(400).json({ message: "A reason is required to reset a password." });
+    }
+    if (!(await storage.isUsersSoleOrganization(targetId, req.organizationId!))) {
+      return res.status(403).json({
+        message: "This account belongs to more than one organization. Only a super-admin can reset its password.",
+      });
+    }
+    const target = await storage.getUser(targetId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await storage.setPasswordResetToken(target.id, token, expiresAt);
+    try {
+      await sendPasswordResetEmail({
+        to: target.email,
+        token,
+        requestOrigin: `${req.protocol}://${req.get("host")}`,
+      });
+    } catch (emailError) {
+      console.error("Failed to send password reset email (admin reset-password, org-admin):", emailError);
+    }
+    const org = await storage.getOrganization(req.organizationId!);
+    try {
+      await storage.logAdminAction({
+        actorUserId: (req.user as { id: number }).id,
+        action: "reset_password",
+        targetUserId: target.id,
+        targetEmail: target.email,
+        organizationId: req.organizationId!,
+        organizationName: org?.name,
+        note,
+      });
+    } catch (err) {
+      console.error("Failed to write admin action log (reset_password, org-admin):", err);
+    }
+    return res.status(200).json({ message: "Password reset email sent." });
+  });
+
+  app.get("/api/team/action-log", requireAuth, requireOrg, async (req, res) => {
+    const entries = await storage.listAdminActionLogForOrganization(req.organizationId!);
+    return res.json({ entries });
   });
 
   // -----------------------------------------------------------------------
