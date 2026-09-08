@@ -142,6 +142,78 @@ async function seedOwner(pool, tag, { verified = true } = {}) {
   return { email, userId, organizationId };
 }
 
+// seedOwner's sibling for the rank-ceiling scenarios (27-28): seeds an
+// account whose ONLY membership is in an organization that already exists,
+// rather than standing up an org of its own. That distinction is the whole
+// point for those scenarios -- storage.isUsersSoleOrganization must resolve
+// to the acting org-admin's org (so the boundary check passes and the new
+// rank check is what actually rejects), which a seedOwner account never
+// does. Because there's no org of its own to delete, the cleanup block at
+// the end of this file strips this membership row explicitly rather than
+// letting the per-user loop infer an org to remove.
+async function seedMemberInOrg(pool, tag, organizationId, role = "member") {
+  const email = `${tag}@example.invalid`;
+  const passwordHash = await bcrypt.hash(TEST_PASSWORD, SALT_ROUNDS);
+  const userRes = await pool.query(
+    "INSERT INTO users (email, password_hash, email_verified) VALUES ($1, $2, true) RETURNING id",
+    [email, passwordHash],
+  );
+  const userId = userRes.rows[0].id;
+  await pool.query(
+    "INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, $3)",
+    [userId, organizationId, role],
+  );
+  return { email, userId, organizationId };
+}
+
+// Fires all four org-admin account-wide routes at one target and returns each
+// one's status plus the message it rejected with. Shaped like scenario 24's
+// own local attemptAllFour (which predates this and stays as-is), but hoisted
+// to module scope because the rank-ceiling scenarios below need it twice, and
+// it returns the messages too so those scenarios can prove WHICH guard
+// rejected -- a 403 from the sole-organization boundary rule and a 403 from
+// the rank ceiling are different findings and must not be confused.
+async function attemptAllAccountActions({ cookie, organizationId, targetUserId, newEmail }) {
+  const headers = {
+    "Content-Type": "application/json",
+    Cookie: cookie,
+    ...(organizationId ? { "X-Organization-Id": String(organizationId) } : {}),
+  };
+  const responses = [
+    [
+      "deactivate",
+      await fetch(`${BASE_URL}/api/team/members/${targetUserId}/deactivate`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ note: "rank ceiling probe" }),
+      }),
+    ],
+    ["reactivate", await fetch(`${BASE_URL}/api/team/members/${targetUserId}/reactivate`, { method: "POST", headers })],
+    [
+      "changeEmail",
+      await fetch(`${BASE_URL}/api/team/members/${targetUserId}/change-email`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ newEmail, note: "rank ceiling probe" }),
+      }),
+    ],
+    [
+      "resetPassword",
+      await fetch(`${BASE_URL}/api/team/members/${targetUserId}/reset-password`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ note: "rank ceiling probe" }),
+      }),
+    ],
+  ];
+  const results = {};
+  for (const [label, res] of responses) {
+    const body = await res.json().catch(() => ({}));
+    results[label] = { status: res.status, message: body.message || "" };
+  }
+  return results;
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     fail("setup", "DATABASE_URL not set");
@@ -156,6 +228,10 @@ async function main() {
   // `try { ... }` is not visible from a sibling `finally { ... }` block.
   let s8OrgAOwner;
   let s9Boundary;
+  // Scenario 27's fixture: seeded via seedMemberInOrg, so its only membership
+  // is org A's -- it has no org of its own for the cleanup loop to infer, and
+  // that membership row has to be stripped explicitly in `finally` below.
+  let c1SuperAdminInOrgA;
 
   try {
     // --- set up: one admin-actor (promoted to super-admin), one plain
@@ -1092,6 +1168,146 @@ async function main() {
         );
       }
     }
+
+    // =========================================================================
+    // Final-review fix wave (2026-09-09). Scenarios 27+ below cover the cross-
+    // feature findings the per-task reviews couldn't see. Every fixture here is
+    // seeded via seedOwner/seedMemberInOrg and every session reuses a cookie
+    // obtained earlier in this run -- POST /api/auth/register (5/hour) and
+    // POST /api/auth/login (10/15min) are both already at their per-run budget
+    // by this point, so these scenarios add zero calls to either.
+    // =========================================================================
+
+    // --- scenario 27 (C1): an org owner/admin cannot take account-wide action
+    // on a PLATFORM SUPER-ADMIN who happens to sit in their org. The exploit
+    // this closes: a super-admin has exactly one membership like everybody
+    // else, so isUsersSoleOrganization passes for them, and change-email would
+    // have mailed the password-set link to an address the org-admin controls --
+    // handing them a login with cross-tenant access to every org on the
+    // platform. The actor here is org A's OWNER (the highest org role there
+    // is), which isolates the is-super-admin check specifically: the
+    // owner-vs-owner branch of the guard is skipped for an owner actor. ---
+    {
+      c1SuperAdminInOrgA = await seedMemberInOrg(pool, `${RUN_TAG}-c1super`, s8OrgAOwner.organizationId);
+      createdEmails.push(c1SuperAdminInOrgA.email);
+      await pool.query("UPDATE users SET is_super_admin = true WHERE id = $1", [c1SuperAdminInOrgA.userId]);
+
+      // Sanity-check the fixture itself: if this account were NOT sole-org in
+      // org A, the boundary rule would 403 first and this scenario would pass
+      // for the wrong reason.
+      const membershipCount = await pool.query("SELECT COUNT(*)::int AS c FROM memberships WHERE user_id = $1", [
+        c1SuperAdminInOrgA.userId,
+      ]);
+      if (membershipCount.rows[0].c === 1) {
+        ok("scenario 27 fixture (super-admin sole-org in org A)", "1 membership, so the boundary rule passes");
+      } else {
+        fail("scenario 27 fixture (super-admin sole-org in org A)", `expected 1 membership, got ${membershipCount.rows[0].c}`);
+      }
+
+      const results = await attemptAllAccountActions({
+        cookie: s8OrgAOwnerCookie,
+        organizationId: s8OrgAOwner.organizationId,
+        targetUserId: c1SuperAdminInOrgA.userId,
+        newEmail: `${RUN_TAG}-c1super-hijacked@example.invalid`,
+      });
+      const all403 = Object.values(results).every((r) => r.status === 403);
+      const allRankMessage = Object.values(results).every((r) => /super-admin can act on a super-admin/i.test(r.message));
+      if (all403 && allRankMessage) {
+        ok("org-admin account-wide actions on a super-admin (C1)", "403 on all four, rejected by the super-admin rank check");
+      } else {
+        fail("org-admin account-wide actions on a super-admin (C1)", JSON.stringify(results));
+      }
+
+      const after = await pool.query("SELECT email, is_active, password_reset_token FROM users WHERE id = $1", [
+        c1SuperAdminInOrgA.userId,
+      ]);
+      const untouched =
+        after.rows[0]?.email === c1SuperAdminInOrgA.email &&
+        after.rows[0]?.is_active === true &&
+        after.rows[0]?.password_reset_token === null;
+      if (untouched) {
+        ok("super-admin target row untouched (C1)", "email, is_active and password_reset_token all unchanged");
+      } else {
+        fail("super-admin target row untouched (C1)", JSON.stringify(after.rows[0]));
+      }
+    }
+
+    // --- scenario 28 (C1): an org `admin` cannot take account-wide action on
+    // their own org's `owner`. Those routes' role gate treats admin and owner
+    // as peers, so before this fix an admin invited via /api/team/invite could
+    // deactivate, change the email of, or reset the password of the owner of
+    // the org they were invited into. plainEmail's org-A membership is promoted
+    // from member to admin via SQL here rather than through a route -- there is
+    // no change-role endpoint, and scenario 25 above still needs it to have
+    // been a plain `member` when it ran. ---
+    {
+      const plainIdForRank = await getUserId(pool, plainEmail);
+      await pool.query("UPDATE memberships SET role = 'admin' WHERE user_id = $1 AND organization_id = $2", [
+        plainIdForRank,
+        s8OrgAOwner.organizationId,
+      ]);
+      const roleRow = await pool.query("SELECT role FROM memberships WHERE user_id = $1 AND organization_id = $2", [
+        plainIdForRank,
+        s8OrgAOwner.organizationId,
+      ]);
+      if (roleRow.rows[0]?.role === "admin") {
+        ok("scenario 28 fixture (plainEmail promoted to org-A admin)", "role=admin");
+      } else {
+        fail("scenario 28 fixture (plainEmail promoted to org-A admin)", `role is ${roleRow.rows[0]?.role}`);
+      }
+
+      const results = await attemptAllAccountActions({
+        cookie: plainCookie,
+        organizationId: s8OrgAOwner.organizationId,
+        targetUserId: s8OrgAOwner.userId,
+        newEmail: `${RUN_TAG}-s8orga-hijacked@example.invalid`,
+      });
+      const all403 = Object.values(results).every((r) => r.status === 403);
+      const allRankMessage = Object.values(results).every((r) => /Only an owner can act on another owner/i.test(r.message));
+      if (all403 && allRankMessage) {
+        ok("org-admin account-wide actions on their org's owner (C1)", "403 on all four, rejected by the owner rank check");
+      } else {
+        fail("org-admin account-wide actions on their org's owner (C1)", JSON.stringify(results));
+      }
+
+      const after = await pool.query("SELECT email, is_active, password_reset_token FROM users WHERE id = $1", [
+        s8OrgAOwner.userId,
+      ]);
+      const untouched =
+        after.rows[0]?.email === s8OrgAOwner.email &&
+        after.rows[0]?.is_active === true &&
+        after.rows[0]?.password_reset_token === null;
+      if (untouched) {
+        ok("owner target row untouched (C1)", "email, is_active and password_reset_token all unchanged");
+      } else {
+        fail("owner target row untouched (C1)", JSON.stringify(after.rows[0]));
+      }
+
+      // The same actor, against an ordinary `member` of the same org, must
+      // still succeed -- proving the guard blocks by RANK and hasn't just
+      // disabled these routes for admins wholesale. s9Boundary can't serve as
+      // that member (two memberships), so this uses a freshly seeded one.
+      const c1Member = await seedMemberInOrg(pool, `${RUN_TAG}-c1member`, s8OrgAOwner.organizationId);
+      createdEmails.push(c1Member.email);
+      const allowed = await fetch(`${BASE_URL}/api/team/members/${c1Member.userId}/reset-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: plainCookie,
+          "X-Organization-Id": String(s8OrgAOwner.organizationId),
+        },
+        body: JSON.stringify({ note: "Verification testing: admin acting on a member is still allowed" }),
+      });
+      const tokenRow = await pool.query("SELECT password_reset_token FROM users WHERE id = $1", [c1Member.userId]);
+      if (allowed.status === 200 && tokenRow.rows[0]?.password_reset_token) {
+        ok("org-admin account-wide action on a plain member still allowed (C1)", "200, reset token issued");
+      } else {
+        fail(
+          "org-admin account-wide action on a plain member still allowed (C1)",
+          `status ${allowed.status}, token present ${!!tokenRow.rows[0]?.password_reset_token}`,
+        );
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as
@@ -1150,6 +1366,19 @@ async function main() {
             s8OrgAOwner.organizationId,
           ]);
         }
+
+        // Scenarios 27-28's seedMemberInOrg fixtures hold their ONLY
+        // membership in org A and own no org of their own. Left in place,
+        // the per-user loop below would read org A as "their" org and delete
+        // it out from under s8OrgAOwner (which still owns it) depending on
+        // loop order. Stripping these rows first leaves org A to be cleaned
+        // up normally via s8OrgAOwner's own membership, exactly like the
+        // plainEmail/s9Boundary rows above.
+        await pool.query(
+          `DELETE FROM memberships WHERE organization_id = $1
+             AND user_id IN (SELECT id FROM users WHERE email LIKE $2)`,
+          [s8OrgAOwner.organizationId, `${RUN_TAG}-c1%`],
+        );
       }
 
       for (const row of remaining.rows) {

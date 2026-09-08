@@ -433,6 +433,51 @@ async function finalizedEntityLockMessage(
   return `This change would alter a finalized report (reporting year ${years}) — use Recalculate to reopen it first.`;
 }
 
+/**
+ * Rank ceiling for the org-admin account-wide routes
+ * (POST /api/team/members/:id/deactivate|reactivate|change-email|reset-password).
+ * Returns the 403 message to reject with, or null when the actor may proceed.
+ *
+ * storage.isUsersSoleOrganization, which those routes already check, only
+ * proves the target belongs to no OTHER tenant. It says nothing about whether
+ * the target OUTRANKS the caller inside this one, and without that second
+ * check two escalations are reachable:
+ *
+ *  1. A platform super-admin has exactly one membership like everybody else
+ *     (registration creates it). An org `admin` added to that same org via
+ *     POST /api/team/invite therefore passes the sole-organization test
+ *     against them, and could change-email the super-admin, receive the
+ *     password-set link at an address they control, and take over an account
+ *     with cross-tenant access to every organization on the platform.
+ *  2. Within one tenant, the role gate on those routes
+ *     (`role !== "owner" && role !== "admin"`) treats an org `admin` and the
+ *     org `owner` as peers, so an `admin` could deactivate, change the email
+ *     of, or reset the password of their own org's `owner`.
+ *
+ * Deliberately NOT applied to the /api/admin/users/:id/... routes: those are
+ * gated by requireSuperAdmin, where one super-admin acting on another is
+ * expected, already-logged, peer-to-peer behavior.
+ *
+ * The membership lookup only runs when the actor is not an owner -- an owner
+ * already outranks every role in their own org, so there is nothing to check.
+ */
+async function accountActionRankError(
+  target: { id: number; isSuperAdmin: boolean },
+  actorRole: string,
+  organizationId: number,
+): Promise<string | null> {
+  if (target.isSuperAdmin) {
+    return "Only a super-admin can act on a super-admin account.";
+  }
+  if (actorRole !== "owner") {
+    const targetMembership = await storage.getMembership(target.id, organizationId);
+    if (targetMembership?.role === "owner") {
+      return "Only an owner can act on another owner's account.";
+    }
+  }
+  return null;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // -----------------------------------------------------------------------
   // Auth
@@ -1127,6 +1172,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const target = await storage.getUser(targetId);
     if (!target) return res.status(404).json({ message: "User not found" });
+    const rankError = await accountActionRankError(target, req.membership!.role, req.organizationId!);
+    if (rankError) return res.status(403).json({ message: rankError });
     if (!target.emailVerified) {
       return res.status(400).json({ message: "This account isn't verified yet." });
     }
@@ -1163,6 +1210,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const target = await storage.getUser(targetId);
     if (!target) return res.status(404).json({ message: "User not found" });
+    const rankError = await accountActionRankError(target, req.membership!.role, req.organizationId!);
+    if (rankError) return res.status(403).json({ message: rankError });
     await storage.reactivateAccount(target.id);
     const org = await storage.getOrganization(req.organizationId!);
     try {
@@ -1199,6 +1248,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const target = await storage.getUser(targetId);
     if (!target) return res.status(404).json({ message: "User not found" });
+    const rankError = await accountActionRankError(target, req.membership!.role, req.organizationId!);
+    if (rankError) return res.status(403).json({ message: rankError });
     const existing = await storage.getUserByEmail(parsed.data.newEmail);
     if (existing && existing.id !== target.id) {
       return res.status(409).json({ message: "An account with this email already exists" });
@@ -1251,6 +1302,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const target = await storage.getUser(targetId);
     if (!target) return res.status(404).json({ message: "User not found" });
+    const rankError = await accountActionRankError(target, req.membership!.role, req.organizationId!);
+    if (rankError) return res.status(403).json({ message: rankError });
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await storage.setPasswordResetToken(target.id, token, expiresAt);
