@@ -216,6 +216,15 @@ export interface AdminUserListItem {
   organizations: { membershipId: number; organizationId: number; organizationName: string; role: string; isActive: boolean }[];
 }
 
+export interface AdminOrganizationListItem {
+  id: number;
+  name: string;
+  slug: string;
+  createdAt: Date;
+  memberCount: number;
+  ownerEmails: string[];
+}
+
 export interface AdminActionLogEntry {
   id: number;
   actorEmail: string;
@@ -408,7 +417,8 @@ export interface IStorage {
   // organizationId -- a super-admin isn't scoped to one tenant. The
   // membership/account methods below double as the org-admin implementation
   // too (Task 6) via the optional scopedToOrgId parameter.
-  listAllUsersForAdmin(params: { search?: string; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>;
+  listAllUsersForAdmin(params: { search?: string; organizationId?: number; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>;
+  listAllOrganizationsForAdmin(): Promise<AdminOrganizationListItem[]>;
   deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">;
   promoteToSuperAdmin(userId: number): Promise<void>;
   demoteFromSuperAdmin(userId: number): Promise<void>;
@@ -1704,22 +1714,39 @@ export class DbStorage implements IStorage {
 
   async listAllUsersForAdmin(params: {
     search?: string;
+    organizationId?: number;
     limit: number;
     offset: number;
   }): Promise<{ users: AdminUserListItem[]; total: number }> {
-    const { search, limit, offset } = params;
-    const searchFilter = search ? or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`)) : undefined;
+    const { search, organizationId, limit, offset } = params;
+    const searchCondition = search ? or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`)) : undefined;
+    // Organization filter is a membership EXISTS check, not a join -- a join
+    // would duplicate a user row per membership, same reasoning as every
+    // other admin-list query in this file.
+    const orgCondition =
+      organizationId !== undefined
+        ? exists(
+            db
+              .select()
+              .from(memberships)
+              .where(and(eq(memberships.userId, users.id), eq(memberships.organizationId, organizationId))),
+          )
+        : undefined;
+    const whereFilter =
+      searchCondition && orgCondition
+        ? and(searchCondition, orgCondition)
+        : (searchCondition ?? orgCondition);
 
     const totalRes = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(users)
-      .where(searchFilter);
+      .where(whereFilter);
     const total = totalRes[0]?.count ?? 0;
 
     const pageUsers = await db
       .select()
       .from(users)
-      .where(searchFilter)
+      .where(whereFilter)
       .orderBy(desc(users.createdAt))
       .limit(limit)
       .offset(offset);
@@ -1771,6 +1798,44 @@ export class DbStorage implements IStorage {
       })),
       total,
     };
+  }
+
+  async listAllOrganizationsForAdmin(): Promise<AdminOrganizationListItem[]> {
+    const orgs = await db.select().from(organizations).orderBy(desc(organizations.createdAt));
+    const orgIds = orgs.map((o) => o.id);
+
+    const allMemberships =
+      orgIds.length > 0
+        ? await db
+            .select({
+              organizationId: memberships.organizationId,
+              role: memberships.role,
+              email: users.email,
+            })
+            .from(memberships)
+            .innerJoin(users, eq(users.id, memberships.userId))
+            .where(inArray(memberships.organizationId, orgIds))
+        : [];
+
+    const countByOrg = new Map<number, number>();
+    const ownerEmailsByOrg = new Map<number, string[]>();
+    for (const m of allMemberships) {
+      countByOrg.set(m.organizationId, (countByOrg.get(m.organizationId) ?? 0) + 1);
+      if (m.role === "owner") {
+        const list = ownerEmailsByOrg.get(m.organizationId) ?? [];
+        list.push(m.email);
+        ownerEmailsByOrg.set(m.organizationId, list);
+      }
+    }
+
+    return orgs.map((o) => ({
+      id: o.id,
+      name: o.name,
+      slug: o.slug,
+      createdAt: o.createdAt,
+      memberCount: countByOrg.get(o.id) ?? 0,
+      ownerEmails: ownerEmailsByOrg.get(o.id) ?? [],
+    }));
   }
 
   async deleteUnverifiedUserById(

@@ -49,6 +49,15 @@ interface AdminUserListItem {
   organizations: AdminOrgSummary[];
 }
 
+interface AdminOrganizationListItem {
+  id: number;
+  name: string;
+  slug: string;
+  createdAt: string;
+  memberCount: number;
+  ownerEmails: string[];
+}
+
 interface AdminActionLogEntry {
   id: number;
   actorEmail: string;
@@ -90,6 +99,7 @@ export default function Admin() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [offset, setOffset] = useState(0);
+  const [orgFilter, setOrgFilter] = useState<{ id: number; name: string } | null>(null);
   // Per-row draft text/state for dialogs that need one, keyed by the row's
   // own id (membership id for membership actions, user id for account
   // actions) -- each row's AlertDialog is a separate mounted instance, so
@@ -127,16 +137,22 @@ export default function Admin() {
   // matching -- a single string key baking the querystring in would not
   // match on invalidation.
   const usersQuery = useQuery<{ users: AdminUserListItem[]; total: number }>({
-    queryKey: ["/api/admin/users", { search: debouncedSearch, offset }],
+    queryKey: ["/api/admin/users", { search: debouncedSearch, organizationId: orgFilter?.id, offset }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (debouncedSearch) params.set("search", debouncedSearch);
+      if (orgFilter) params.set("organizationId", String(orgFilter.id));
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(offset));
       const res = await fetch(`/api/admin/users?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
+    enabled: !!user?.isSuperAdmin,
+  });
+
+  const orgsQuery = useQuery<{ organizations: AdminOrganizationListItem[] }>({
+    queryKey: ["/api/admin/organizations"],
     enabled: !!user?.isSuperAdmin,
   });
 
@@ -148,7 +164,14 @@ export default function Admin() {
   function invalidateAll() {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/action-log"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/organizations"] });
   }
+
+  // Reset to page 1 whenever the org filter changes, same reasoning as the
+  // existing search-debounce effect below.
+  useEffect(() => {
+    setOffset(0);
+  }, [orgFilter]);
 
   const verify = useMutation({
     mutationFn: async (id: number) => {
@@ -332,11 +355,72 @@ export default function Admin() {
           </Button>
         </header>
 
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">Organizations</CardTitle>
+            <CardDescription>
+              Every tenant on the platform. Click a name to see and administer just that org's members below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {orgsQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
+            {orgsQuery.isError && (
+              <p className="text-sm text-destructive">Couldn't load organizations. {(orgsQuery.error as Error)?.message}</p>
+            )}
+            {!orgsQuery.isLoading && !orgsQuery.isError && (orgsQuery.data?.organizations.length ?? 0) === 0 && (
+              <p className="text-sm text-neutral-500">No organizations yet.</p>
+            )}
+            {!orgsQuery.isLoading && (orgsQuery.data?.organizations.length ?? 0) > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Owner(s)</TableHead>
+                    <TableHead>Members</TableHead>
+                    <TableHead>Created</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orgsQuery.data!.organizations.map((o) => (
+                    <TableRow key={o.id}>
+                      <TableCell>
+                        <button
+                          type="button"
+                          className="text-primary-600 hover:underline font-medium text-left"
+                          onClick={() => setOrgFilter({ id: o.id, name: o.name })}
+                        >
+                          {o.name}
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-sm text-neutral-600">
+                        {o.ownerEmails.length > 0 ? o.ownerEmails.join(", ") : "—"}
+                      </TableCell>
+                      <TableCell>{o.memberCount}</TableCell>
+                      <TableCell className="text-sm text-neutral-500">
+                        {new Date(o.createdAt).toLocaleDateString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Accounts</CardTitle>
             <CardDescription>
-              Verify or delete a pending registration, promote a verified account to super-admin, or demote one.
+              {orgFilter ? (
+                <>
+                  Showing members of <strong>{orgFilter.name}</strong>.{" "}
+                  <button type="button" className="text-primary-600 hover:underline" onClick={() => setOrgFilter(null)}>
+                    Clear filter
+                  </button>
+                </>
+              ) : (
+                "Verify or delete a pending registration, promote a verified account to super-admin, or demote one."
+              )}
             </CardDescription>
             <Input
               placeholder="Search by email or name..."

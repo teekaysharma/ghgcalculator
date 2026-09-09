@@ -756,14 +756,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Self-demote is rejected unconditionally so the panel can never drop the
   // platform to zero super-admins.
   // -----------------------------------------------------------------------
+  // A super-admin is not required to belong to any organization -- unlike
+  // every other user, whose one org is always created for them at
+  // registration. This lets a super-admin optionally spin up a working org
+  // of their own (to enter real data, test as a tenant, etc.) without going
+  // through /register again, while leaving that choice genuinely optional:
+  // the admin panel above is fully usable with zero organizations.
+  app.post("/api/admin/organizations", requireAuth, requireSuperAdmin, async (req, res) => {
+    const parsed = z.object({ name: z.string().trim().min(1) }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    }
+    const { name } = parsed.data;
+    const actorId = (req.user as { id: number }).id;
+
+    // Mirrors /api/auth/register's own slug/org/membership creation exactly
+    // (server/routes.ts's register handler), so a super-admin-created org
+    // behaves identically to a normally-registered one.
+    let slug = slugify(name);
+    const existingOrg = await storage.getOrganizationBySlug(slug);
+    if (existingOrg) {
+      slug = `${slug}-${actorId}`;
+    }
+    const organization = await storage.createOrganization({ name, slug });
+    await storage.createMembership({ userId: actorId, organizationId: organization.id, role: "owner" });
+
+    return res.status(201).json({ organization });
+  });
+
   app.get("/api/admin/users", requireAuth, requireSuperAdmin, async (req, res) => {
     const search = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
+    const rawOrgId = Number(req.query.organizationId);
+    const organizationId = Number.isInteger(rawOrgId) && rawOrgId > 0 ? rawOrgId : undefined;
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 25;
     const rawOffset = Number(req.query.offset);
     const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-    const result = await storage.listAllUsersForAdmin({ search: search || undefined, limit, offset });
+    const result = await storage.listAllUsersForAdmin({ search: search || undefined, organizationId, limit, offset });
     return res.json(result);
+  });
+
+  // Cross-tenant organization directory -- lets the panel list every tenant
+  // on the platform (name, owner(s), member count) and, per the org-admin
+  // panel's "click an org to administer it" flow, filter the account table
+  // above to just that org's members via GET /api/admin/users?organizationId=.
+  // Deliberately does NOT expose or grant access to a tenant's own GHG data
+  // (facilities, emission records, reports) -- only the identity/access
+  // administration this panel already does, now browsable by org instead of
+  // only as a flat cross-tenant user list. Direct access to another tenant's
+  // working data is a separate, materially bigger decision (it would bypass
+  // requireOrg's membership check that every other route in this app relies
+  // on) and is not part of this change.
+  app.get("/api/admin/organizations", requireAuth, requireSuperAdmin, async (req, res) => {
+    const result = await storage.listAllOrganizationsForAdmin();
+    return res.json({ organizations: result });
   });
 
   app.post("/api/admin/users/:id/verify", requireAuth, requireSuperAdmin, async (req, res) => {

@@ -111,7 +111,17 @@ export const registerSchema = z.object({
     .regex(/[a-z]/, "Password must include a lowercase letter")
     .regex(/[A-Z]/, "Password must include an uppercase letter")
     .regex(/[0-9]/, "Password must include a number"),
-  name: z.string().min(1).optional(),
+  // The client always sends this field, even when the user leaves it blank
+  // (a controlled input's default value is "", not undefined) -- so
+  // .optional() alone still rejected an empty string with "must contain at
+  // least 1 character". Trim first and fold "" (or whitespace-only) into
+  // undefined so a genuinely blank field passes, while a name that's just
+  // spaces still doesn't get stored as one.
+  name: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
   organizationName: z.string().min(1, "Organization name is required"),
 });
 
