@@ -32,9 +32,11 @@ Works on Windows, macOS, and Linux (uses `taskkill /T` to fully stop the server 
 - `POST /api/auth/register` — `{ email, password, name?, organizationName }`. Creates a user, an organization, and an owner membership in one call. Password must be 8+ chars with upper/lower/number. Does not start a session — see "Registration hardening" below.
 - `POST /api/auth/verify-email` — `{ token }`. Marks the account verified; required before login succeeds.
 - `POST /api/auth/resend-verification-email` — `{ email }`. Always returns a generic 200 (no account-enumeration signal), rate-limited to 5/hour.
-- `POST /api/auth/login` — `{ email, password }`. Rejects with `401 { reason: "unverified" }` if the account hasn't verified its email yet.
+- `POST /api/auth/login` — `{ email, password }`. Rejects with `401 { reason: "unverified" }` if the account hasn't verified its email yet, or `401 { reason: "deactivated" }` if the account has been deactivated.
 - `POST /api/auth/logout`
-- `GET /api/auth/me` — current user + memberships
+- `GET /api/auth/me` — current user + the organizations they have **active** access to (a deactivated membership is filtered out here exactly as `requireOrg` filters it, so the client can never label a page with an org it isn't actually being served).
+- `POST /api/auth/forgot-password` — `{ email }`. Always returns a generic 200 (no account-enumeration signal), rate-limited to 5/hour; only issues a token for a verified account.
+- `POST /api/auth/reset-password` — `{ token, newPassword }`. Sets the new password and marks the account verified, which is also how a changed email address gets claimed. See "Membership and account lifecycle" below.
 - `GET /api/cron/cleanup-unverified-users` — deletes registrations left unverified 24h+. Requires `Authorization: Bearer <CRON_SECRET>`; triggered daily by Vercel Cron (`vercel.json`), Production only.
 - `GET /api/emission-factors`, `POST /api/emission-factors`, `DELETE /api/emission-factors/:id` — tenant-scoped, requires auth
 - `GET /api/emission-records` — tenant-scoped, requires auth
@@ -46,10 +48,16 @@ Works on Windows, macOS, and Linux (uses `taskkill /T` to fully stop the server 
 - Existing `/api/calculate`, `/api/download-csv`, `/api/yearly-comparison`, `/api/product-intensity` are unchanged in behavior but now require auth. `/api/calculate` additionally accepts `persist: true` in the request body to save results to `emission_records`; the existing calculator UI does not send this flag yet, so current behavior (compute and return, nothing saved) is preserved unless a caller opts in. **`/api/calculate` now also requires setup completeness**: at least one reporting entity, facility, and reporting boundary must exist for the tenant, or it returns 400. See "Reconciled from codex" below.
 - `GET /api/admin/users` — search/paginate accounts across every tenant (`?search=&limit=&offset=`). Super-admin only.
 - `POST /api/admin/users/:id/verify` — manually mark a pending account verified. Super-admin only.
-- `DELETE /api/admin/users/:id` — delete a pending/unverified account (and its own solo-owned organization); `409` if the account is already verified. Super-admin only.
+- `DELETE /api/admin/users/:id` — delete a pending/unverified account (and its own solo-owned organization); `409` if the account has ever been verified (`users.has_been_verified`, not its current `email_verified` — see "Membership and account lifecycle" below). Super-admin only.
 - `POST /api/admin/users/:id/promote` — grant another verified account super-admin access. Super-admin only.
 - `POST /api/admin/users/:id/demote` — `{ note }`. Revoke a super-admin's access; requires a non-empty `note` explaining why, and a super-admin can never demote themselves. Super-admin only.
-- `GET /api/admin/action-log` — the most recent verify/delete/promote/demote actions (actor, target, note, timestamp). Super-admin only.
+- `GET /api/admin/action-log` — the most recent admin actions (actor, target, organization, note, timestamp). Super-admin only.
+- `POST /api/admin/memberships/:id/deactivate` — `{ note }` — / `POST /api/admin/memberships/:id/activate` — revoke or restore one user's access to one organization, without touching their login. Super-admin only.
+- `POST /api/admin/users/:id/deactivate` — `{ note }` — / `POST /api/admin/users/:id/reactivate` — block or restore the login itself, across every organization. Deactivate rejects a self-target (`403`) and an unverified account (`400`, delete it instead). Super-admin only.
+- `POST /api/admin/users/:id/change-email` — `{ newEmail, note }`. Reassigns the address and emails a set-a-password link to it; nobody ever types or shares a password. Super-admin only.
+- `POST /api/admin/users/:id/reset-password` — `{ note }`. Emails a password-reset link to the account's current address. Super-admin only.
+- `GET /api/team` — now also reports each member's account-level `accountIsActive` alongside their membership `isActive`.
+- `POST /api/team/memberships/:id/deactivate|activate`, `POST /api/team/members/:id/deactivate|reactivate|change-email|reset-password`, `GET /api/team/action-log` — the org-admin self-service tier of the above, scoped to the caller's own organization. See "Membership and account lifecycle" below for the boundary rules.
 
 ### Reconciled from `codex/review-code-for-gaps-and-improvements`
 
@@ -88,15 +96,35 @@ Adds a platform-wide `isSuperAdmin` flag on `users`, distinct from the existing 
 
 **Operational note:** there is no self-serve way to create the very first super-admin — it must be seeded manually. Register an account with the exact email `teekaysharma@googlemail.com` through the running app, then run `node scripts/manual-migration-013.mjs` (idempotent, safe to re-run) to seed `isSuperAdmin = true` for that account. The seed is self-healing (it fires whenever no super-admin currently exists), so re-running the script after that account registers — or after the platform is ever reset back to zero super-admins — will seed it; it will not fire again, and will not overwrite anyone's status, once at least one super-admin already exists. Once seeded, that account can promote any other verified account to super-admin from the panel.
 
+### Membership and account lifecycle (`super-admin-panel` branch)
+
+The second feature on this branch, layered on the admin panel above: two tiers of control over who can get in and where, plus the password-reset mechanism both tiers depend on. Design spec: `docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md`.
+
+**Membership vs account — two different switches.** A *membership* (`memberships.is_active`) is one user's access to one organization; an *account* (`users.is_active`) is the login itself. Deactivating a membership revokes access to that organization only, leaves any others intact, and is re-resolved on every single request (`requireOrg` reads active memberships fresh, never anything cached on the session). Deactivating an account blocks login platform-wide and also drops any session that is already open, on its very next request (`deserializeUser` refuses to hydrate an inactive account). Neither is a delete: both have an explicit reactivate, and no tenant data is touched either way.
+
+**Super-admin tier** (`/admin`, gated by `requireSuperAdmin`, cross-tenant): deactivate/reactivate a membership, deactivate/reactivate an account, change an account's email, or trigger a password reset for it — the `/api/admin/...` routes listed above. Every destructive action requires a non-empty note and is written to `admin_action_log` with the actor, target, organization and note, shown in the panel's own activity table. A super-admin cannot deactivate (or demote) their own account, so the platform can't be locked out of its own panel.
+
+**Org-admin self-service tier** (`/api/team/...`, owner or admin of the caller's own organization). Membership actions here are scoped by organization id in the query itself, so a membership belonging to another tenant simply never matches (`404`, not `403`). Account-wide actions — deactivate, reactivate, change-email, reset-password — are additionally bounded by two rules:
+
+- **The sole-organization rule.** An org-admin may only take account-wide action on a target whose memberships — active *or* inactive — resolve to exactly this one organization. The moment someone belongs to a second organization, only a super-admin can act on their account, because an org-admin has no authority over the other tenant that would also be affected. Deactivating the second membership does not reopen this: a relationship with another org, even a dormant one, is permanently out of an org-admin's reach.
+- **The rank ceiling.** Never a platform super-admin (`users.is_super_admin`), and an org `admin` may never act on their own organization's `owner`. Without this, an admin invited into an org could change the owner's — or a resident super-admin's — email address, receive the set-a-password link, and take the account over.
+
+Self-targeting is rejected on both tiers, and `TeamPanel` renders no action controls at all against your own row.
+
+**Password reset, and how change-email uses it.** `/forgot-password` and `/reset-password` are the two new user-facing pages. A reset issues a single-use 24h token (`users.password_reset_token`); `POST /api/auth/reset-password` consumes it, sets the new password, and marks the account verified. Admin-triggered resets use the same mechanism, so an admin never types, sees, or transmits a password. change-email leans on it too: the address is reassigned, `email_verified` goes false, and the same set-a-password link is mailed to the new address — claiming it proves control of the new inbox and re-verifies the account in one step. All four notification routes report `emailSendFailed: true` rather than claiming success when the mail can't be delivered (see the Resend sandbox note above), and change-email sends its own copy, not the forgot-password body, because by then the account has already been altered.
+
+**`users.has_been_verified`.** Because change-email deliberately sets `email_verified = false`, that column alone can't distinguish "never verified, disposable registration" from "verified years ago, mid re-verification". `has_been_verified` is the sticky answer to the first question: set the first time an account is ever verified and never cleared, untouched by change-email. Both hard-delete paths — `DELETE /api/admin/users/:id` and the daily unverified-registration cron sweep — gate on it, so a live tenant can't be dropped into the state either one reads as "safe to delete". Applied by `scripts/manual-migration-015.mjs`, which backfills every currently-verified account. The admin panel shows the two states as separate badges and offers no delete button for the second.
+
 ### Known gaps in this branch (not done, scoped honestly)
 
 - No real invite flow (email delivery + signup-by-token). Current invite only attaches an already-registered account to an org.
 - No rate limiting on `/api/team/invite` or other authenticated write endpoints (login/register/resend-verification are covered).
 - The `X-Organization-Id` header path in `requireOrg` (for a user in more than one org) has no UI — not needed while it's one-org-per-user in practice, only relevant once someone's in multiple orgs.
-- No password reset / forgot-password flow.
 - No UI test coverage — `npm run verify` exercises the API end-to-end but doesn't drive a browser. The UI changes in this session were type-checked and build-verified (`tsc --noEmit`, `npm run build`) but not click-tested by a human yet.
+- No self-service way for a user to change their own email address, or to see that an admin changed it. Both tiers of change-email are admin-initiated only.
+- No route for changing a member's *role* within an organization (owner/admin/member is set at invite time), and no route for deleting a membership outright — only deactivating it.
+- Account deactivation withholds access from an existing session and passport clears that session's user on the next request, but the session rows themselves aren't purged from `connect-pg-simple`'s table; they age out naturally.
 - Compliance/framework layer beyond ISO 14064-1 boundary setup (DEFRA integration, GHG Protocol/CDP/GRI/TCFD/BRSR-specific fields) is still out of scope per the project instructions.
-- The daily cron sweep (`deleteExpiredUnverifiedRegistrations`, `GET /api/cron/cleanup-unverified-users`) that auto-deletes registrations left unverified 24h+ has the same arbitrary-membership-selection risk the admin panel's manual delete (`deleteUnverifiedUserById`) was fixed to avoid: it doesn't yet distinguish an account's own (owned) organization from a second organization it was separately invited into before it was deleted. Low real-world likelihood today (a cross-org membership currently only arises via `POST /api/team/invite`), but it's an identified follow-up, intentionally out of scope for this fix.
 
 ## Features
 
