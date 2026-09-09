@@ -9,7 +9,10 @@
 // activate, POST /api/admin/users/:id/deactivate|reactivate|change-email|
 // reset-password, POST /api/auth/forgot-password, POST /api/auth/reset-password,
 // the org-admin self-service equivalents under /api/team/..., and
-// GET /api/team/action-log -- kept separate from scripts/verify-branch.mjs
+// GET /api/team/action-log. The 2026-09-09 final-review fix wave added
+// coverage of GET /api/cron/cleanup-unverified-users on top (the daily
+// unverified-registration sweep, which one of the fixed findings made
+// reachable against live tenant data) -- kept separate from scripts/verify-branch.mjs
 // on purpose (see docs/superpowers/specs/2026-09-04-super-admin-panel-design.md
 // and docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md):
 // it deletes data, so it isn't something to run on every npm run verify pass.
@@ -122,11 +125,20 @@ async function getUserId(pool, email) {
 // verify-email step. Every actual scenario step below (login, deactivate,
 // invite, etc.) still exercises the real HTTP routes -- only this initial
 // fixture creation is seeded.
+//
+// has_been_verified is seeded to match `verified`, not left at its column
+// default: the invariant the app maintains is that has_been_verified is true
+// wherever email_verified has EVER been true (storage.verifyUserEmail and
+// storage.resetPassword both set the pair together), and only
+// setNewEmailPendingVerification ever splits them. A verified fixture left at
+// has_been_verified = false would be a state the app cannot produce, and would
+// make itself wrongly eligible for both hard-delete paths -- exactly the
+// distinction the C2 scenarios below exist to test.
 async function seedOwner(pool, tag, { verified = true } = {}) {
   const email = `${tag}@example.invalid`;
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, SALT_ROUNDS);
   const userRes = await pool.query(
-    "INSERT INTO users (email, password_hash, email_verified) VALUES ($1, $2, $3) RETURNING id",
+    "INSERT INTO users (email, password_hash, email_verified, has_been_verified) VALUES ($1, $2, $3, $3) RETURNING id",
     [email, passwordHash, verified],
   );
   const userId = userRes.rows[0].id;
@@ -151,12 +163,12 @@ async function seedOwner(pool, tag, { verified = true } = {}) {
 // does. Because there's no org of its own to delete, the cleanup block at
 // the end of this file strips this membership row explicitly rather than
 // letting the per-user loop infer an org to remove.
-async function seedMemberInOrg(pool, tag, organizationId, role = "member") {
+async function seedMemberInOrg(pool, tag, organizationId, role = "member", { verified = true } = {}) {
   const email = `${tag}@example.invalid`;
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, SALT_ROUNDS);
   const userRes = await pool.query(
-    "INSERT INTO users (email, password_hash, email_verified) VALUES ($1, $2, true) RETURNING id",
-    [email, passwordHash],
+    "INSERT INTO users (email, password_hash, email_verified, has_been_verified) VALUES ($1, $2, $3, $3) RETURNING id",
+    [email, passwordHash, verified],
   );
   const userId = userRes.rows[0].id;
   await pool.query(
@@ -214,9 +226,52 @@ async function attemptAllAccountActions({ cookie, organizationId, targetUserId, 
   return results;
 }
 
+// Runs the real daily sweep (storage.deleteExpiredUnverifiedRegistrations, via
+// GET /api/cron/cleanup-unverified-users) without turning it into collateral
+// damage. That sweep is global by design -- it matches every never-verified
+// account on the platform whose verification token has expired -- and the
+// shared dev database carries hand-registered scratch accounts from earlier
+// sessions that would qualify. So every unverified row that is NOT this run's
+// own fixture has its token expiry parked far in the future for the duration of
+// the call and restored to its exact previous value afterward (including NULL),
+// leaving that data exactly as it was found. Rows whose expiry is already NULL
+// can never match the sweep's `expires_at < now()` predicate and are left
+// alone entirely.
+async function runCleanupSweepScopedToThisRun(pool, runTag) {
+  const protectedRows = await pool.query(
+    `SELECT id, email_verification_token_expires_at AS exp FROM users
+      WHERE has_been_verified = false
+        AND email_verification_token_expires_at IS NOT NULL
+        AND email NOT LIKE $1`,
+    [`${runTag}%`],
+  );
+  if (protectedRows.rowCount > 0) {
+    await pool.query(
+      `UPDATE users SET email_verification_token_expires_at = now() + interval '100 years'
+        WHERE id = ANY($1)`,
+      [protectedRows.rows.map((r) => r.id)],
+    );
+  }
+  try {
+    const res = await fetch(`${BASE_URL}/api/cron/cleanup-unverified-users`, {
+      headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    const body = await res.json().catch(() => ({}));
+    return { status: res.status, body, protectedCount: protectedRows.rowCount };
+  } finally {
+    for (const row of protectedRows.rows) {
+      await pool.query("UPDATE users SET email_verification_token_expires_at = $1 WHERE id = $2", [row.exp, row.id]);
+    }
+  }
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     fail("setup", "DATABASE_URL not set");
+    process.exit(1);
+  }
+  if (!process.env.CRON_SECRET) {
+    fail("setup", "CRON_SECRET not set in .env -- needed by the C2 sweep scenarios");
     process.exit(1);
   }
 
@@ -1308,6 +1363,169 @@ async function main() {
         );
       }
     }
+
+    // --- scenario 29 (C2): a live account whose email an admin changed must be
+    // off-limits to BOTH hard-delete paths. change-email legitimately sets
+    // email_verified = false so the new address can be re-verified, which used
+    // to make a years-old data-bearing tenant indistinguishable from a
+    // disposable spam registration: two clicks from a cascade delete via
+    // DELETE /api/admin/users/:id, or zero clicks via the daily sweep once the
+    // affected user clicked "resend verification email" and armed the 24-hour
+    // countdown themselves. Both paths now gate on users.has_been_verified,
+    // which change-email leaves alone. ---
+    let c2Live, c2LiveNewEmail;
+    {
+      c2Live = await seedOwner(pool, `${RUN_TAG}-c2live`);
+      createdEmails.push(c2Live.email);
+      c2LiveNewEmail = `${RUN_TAG}-c2live-new@example.invalid`;
+      createdEmails.push(c2LiveNewEmail);
+
+      const changeRes = await fetch(`${BASE_URL}/api/admin/users/${c2Live.userId}/change-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ newEmail: c2LiveNewEmail, note: "Verification testing: C2 change-email" }),
+      });
+      const stateRow = await pool.query(
+        "SELECT email, email_verified, has_been_verified FROM users WHERE id = $1",
+        [c2Live.userId],
+      );
+      const state = stateRow.rows[0] || {};
+      if (
+        changeRes.status === 200 &&
+        state.email === c2LiveNewEmail &&
+        state.email_verified === false &&
+        state.has_been_verified === true
+      ) {
+        ok("change-email leaves has_been_verified intact (C2)", "email_verified=false, has_been_verified=true");
+      } else {
+        fail("change-email leaves has_been_verified intact (C2)", `status ${changeRes.status}, row ${JSON.stringify(state)}`);
+      }
+
+      // (a) the admin panel's delete must refuse it, and refuse it without
+      // touching anything -- the user row AND the organization behind it.
+      const deleteRes = await fetch(`${BASE_URL}/api/admin/users/${c2Live.userId}`, {
+        method: "DELETE",
+        headers: { Cookie: adminCookie },
+      });
+      const deleteBody = await deleteRes.json().catch(() => ({}));
+      const userStill = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2Live.userId]);
+      const orgStill = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2Live.organizationId]);
+      if (
+        deleteRes.status === 409 &&
+        deleteBody.reason === "already_verified" &&
+        userStill.rowCount === 1 &&
+        orgStill.rowCount === 1
+      ) {
+        ok("DELETE /api/admin/users/:id (change-emailed live account) (C2)", "409, user row and organization both untouched");
+      } else {
+        fail(
+          "DELETE /api/admin/users/:id (change-emailed live account) (C2)",
+          `status ${deleteRes.status}, body ${JSON.stringify(deleteBody)}, user present ${userStill.rowCount === 1}, org present ${orgStill.rowCount === 1}`,
+        );
+      }
+
+      // The Admin page decides which badge and which buttons to render off
+      // this pair of fields, so the list endpoint has to actually carry both.
+      const listRes = await fetch(`${BASE_URL}/api/admin/users?search=${encodeURIComponent(c2LiveNewEmail)}`, {
+        headers: { Cookie: adminCookie },
+      });
+      const listBody = await listRes.json().catch(() => ({}));
+      const listed = listBody.users?.find((u) => u.email === c2LiveNewEmail);
+      if (listRes.status === 200 && listed && listed.emailVerified === false && listed.hasBeenVerified === true) {
+        ok("GET /api/admin/users exposes hasBeenVerified (C2)", "emailVerified=false, hasBeenVerified=true on the changed row");
+      } else {
+        fail("GET /api/admin/users exposes hasBeenVerified (C2)", `status ${listRes.status}, row ${JSON.stringify(listed)}`);
+      }
+    }
+
+    // --- scenario 30 (C2): one real sweep, three fixtures. (b) the
+    // change-emailed account from scenario 29 survives it even with an expired
+    // token; (c) two genuinely never-verified registrations are still swept, so
+    // the fix isn't over-restrictive -- one owning its solo org (whose org must
+    // go with it) and one holding its only membership in someone else's live
+    // org (whose org must NOT go with it, the scoping this finding added to
+    // deleteExpiredUnverifiedRegistrations). ---
+    {
+      // Arm the sweep against the change-emailed account exactly the way a real
+      // affected user does: they're told to verify their email, click the
+      // public "resend verification email" endpoint, and that sets a fresh
+      // 24-hour expiry which then lapses. Set it straight to the past here.
+      await pool.query(
+        "UPDATE users SET email_verification_token = $1, email_verification_token_expires_at = now() - interval '1 hour' WHERE id = $2",
+        [`c2-armed-${Date.now()}`, c2Live.userId],
+      );
+
+      const c2FreshOwner = await seedOwner(pool, `${RUN_TAG}-c2freshowner`, { verified: false });
+      createdEmails.push(c2FreshOwner.email);
+      const c2FreshGuest = await seedMemberInOrg(pool, `${RUN_TAG}-c2freshguest`, s8OrgAOwner.organizationId, "member", {
+        verified: false,
+      });
+      createdEmails.push(c2FreshGuest.email);
+      await pool.query(
+        `UPDATE users SET email_verification_token = 'c2-fresh', email_verification_token_expires_at = now() - interval '1 hour'
+          WHERE id = ANY($1)`,
+        [[c2FreshOwner.userId, c2FreshGuest.userId]],
+      );
+
+      const sweep = await runCleanupSweepScopedToThisRun(pool, RUN_TAG);
+      if (sweep.status === 200 && typeof sweep.body.deletedCount === "number") {
+        ok("GET /api/cron/cleanup-unverified-users (C2)", `200, deletedCount ${sweep.body.deletedCount}, ${sweep.protectedCount} unrelated row(s) parked and restored`);
+      } else {
+        fail("GET /api/cron/cleanup-unverified-users (C2)", `status ${sweep.status}, body ${JSON.stringify(sweep.body)}`);
+      }
+
+      const liveUserStill = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2Live.userId]);
+      const liveOrgStill = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2Live.organizationId]);
+      if (liveUserStill.rowCount === 1 && liveOrgStill.rowCount === 1) {
+        ok("sweep skips a change-emailed live account (C2)", "user row and its organization both survived an expired token");
+      } else {
+        fail(
+          "sweep skips a change-emailed live account (C2)",
+          `user present ${liveUserStill.rowCount === 1}, org present ${liveOrgStill.rowCount === 1}`,
+        );
+      }
+
+      const freshOwnerGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2FreshOwner.userId]);
+      const freshOwnerOrgGone = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2FreshOwner.organizationId]);
+      if (freshOwnerGone.rowCount === 0 && freshOwnerOrgGone.rowCount === 0) {
+        ok("sweep still deletes a never-verified registration (C2)", "user row and its solo-owned organization both removed");
+      } else {
+        fail(
+          "sweep still deletes a never-verified registration (C2)",
+          `user present ${freshOwnerGone.rowCount === 1}, org present ${freshOwnerOrgGone.rowCount === 1}`,
+        );
+      }
+
+      const freshGuestGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2FreshGuest.userId]);
+      const orgAStill = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [s8OrgAOwner.organizationId]);
+      if (freshGuestGone.rowCount === 0 && orgAStill.rowCount === 1) {
+        ok("sweep's org deletion is owner-and-solo scoped (C2)", "swept guest removed, the live org it was invited into untouched");
+      } else {
+        fail(
+          "sweep's org deletion is owner-and-solo scoped (C2)",
+          `guest present ${freshGuestGone.rowCount === 1}, org A present ${orgAStill.rowCount === 1}`,
+        );
+      }
+
+      // (c), route half: the same never-verified state must still be deletable
+      // through DELETE /api/admin/users/:id, not just by the sweep.
+      const c2FreshRoute = await seedOwner(pool, `${RUN_TAG}-c2freshroute`, { verified: false });
+      createdEmails.push(c2FreshRoute.email);
+      const routeDelete = await fetch(`${BASE_URL}/api/admin/users/${c2FreshRoute.userId}`, {
+        method: "DELETE",
+        headers: { Cookie: adminCookie },
+      });
+      const routeUserGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2FreshRoute.userId]);
+      const routeOrgGone = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2FreshRoute.organizationId]);
+      if (routeDelete.status === 204 && routeUserGone.rowCount === 0 && routeOrgGone.rowCount === 0) {
+        ok("DELETE /api/admin/users/:id (never-verified registration) (C2)", "204, user row and solo-owned org both removed");
+      } else {
+        fail(
+          "DELETE /api/admin/users/:id (never-verified registration) (C2)",
+          `status ${routeDelete.status}, user present ${routeUserGone.rowCount === 1}, org present ${routeOrgGone.rowCount === 1}`,
+        );
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as
@@ -1367,17 +1585,21 @@ async function main() {
           ]);
         }
 
-        // Scenarios 27-28's seedMemberInOrg fixtures hold their ONLY
-        // membership in org A and own no org of their own. Left in place,
-        // the per-user loop below would read org A as "their" org and delete
-        // it out from under s8OrgAOwner (which still owns it) depending on
-        // loop order. Stripping these rows first leaves org A to be cleaned
+        // Scenarios 27-28's and scenario 30's seedMemberInOrg fixtures hold
+        // their ONLY membership in org A and own no org of their own. Left in
+        // place, the per-user loop below would read org A as "their" org and
+        // delete it out from under s8OrgAOwner (which still owns it) depending
+        // on loop order. Stripping these rows first leaves org A to be cleaned
         // up normally via s8OrgAOwner's own membership, exactly like the
-        // plainEmail/s9Boundary rows above.
+        // plainEmail/s9Boundary rows above. The `-c%` prefix covers both the
+        // C1 (c1super/c1member) and C2 (c2freshguest) fixtures -- the latter
+        // should already have been swept away by scenario 30, but if that
+        // assertion ever fails, its surviving membership row must not take org
+        // A down with it during cleanup.
         await pool.query(
           `DELETE FROM memberships WHERE organization_id = $1
              AND user_id IN (SELECT id FROM users WHERE email LIKE $2)`,
-          [s8OrgAOwner.organizationId, `${RUN_TAG}-c1%`],
+          [s8OrgAOwner.organizationId, `${RUN_TAG}-c%`],
         );
       }
 

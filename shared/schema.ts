@@ -44,6 +44,22 @@ export const users = pgTable("users", {
   // only applies to registrations created after that migration runs. See
   // docs/superpowers/specs/2026-09-03-registration-hardening-design.md.
   emailVerified: boolean("email_verified").notNull().default(false),
+  // Sticky "this account has been verified at least once, ever" flag
+  // (2026-09-09). emailVerified alone was doing two incompatible jobs: it
+  // meant both "never verified, so this is a disposable registration that is
+  // safe to hard-delete" AND "was verified, but is mid re-verification after
+  // an admin changed its email" -- and setNewEmailPendingVerification
+  // legitimately flips it to false, dropping live, data-bearing tenant
+  // accounts into the state that DELETE /api/admin/users/:id and the
+  // deleteExpiredUnverifiedRegistrations cron sweep both read as
+  // "disposable". Both of those delete paths now gate on THIS column
+  // instead. Set true by verifyUserEmail (which serves both the
+  // self-service and admin-verify paths) and by resetPassword (the
+  // token-based email-change claim, which also marks the account verified);
+  // never reset to false afterward, and deliberately untouched by
+  // setNewEmailPendingVerification. Existing verified rows are backfilled
+  // by scripts/manual-migration-015.mjs.
+  hasBeenVerified: boolean("has_been_verified").notNull().default(false),
   emailVerificationToken: text("email_verification_token"),
   emailVerificationTokenExpiresAt: timestamp("email_verification_token_expires_at"),
   // Platform-wide admin flag (2026-09-04), distinct from the per-organization

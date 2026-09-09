@@ -772,13 +772,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const target = await storage.getUser(targetId);
     if (!target) return res.status(404).json({ message: "User not found" });
-    if (target.emailVerified) {
-      return res.status(409).json({ message: "Cannot delete a verified account from this panel.", reason: "already_verified" });
+    // hasBeenVerified, not emailVerified. An account whose email an admin
+    // changed sits at emailVerified = false with a live organization behind
+    // it, so gating on emailVerified made a real tenant look identical to a
+    // disposable fresh registration here. storage.deleteUnverifiedUserById
+    // gates on the same sticky flag (and re-asserts it inside its own delete
+    // WHERE clause), so this early check is not the only line of defence --
+    // it exists so the panel gets the 409 without a wasted delete attempt,
+    // and it has to read the same field the storage method does or it stops
+    // describing the case it was written to guard.
+    //
+    // reason stays "already_verified" deliberately: nothing on the client
+    // branches on this route's reason string (the only client read of that
+    // literal is VerifyEmail.tsx, against POST /api/auth/verify-email's own
+    // unrelated 409), and scripts/verify-admin-panel.mjs asserts it, so
+    // renaming it would be churn with no reader. The human-readable message
+    // is what carries the now-broader meaning.
+    if (target.hasBeenVerified) {
+      return res.status(409).json({ message: "Cannot delete an account that has been verified from this panel.", reason: "already_verified" });
     }
     const result = await storage.deleteUnverifiedUserById(targetId, (req.user as { id: number }).id);
     if (result === "not_found") return res.status(404).json({ message: "User not found" });
     if (result === "already_verified") {
-      return res.status(409).json({ message: "Cannot delete a verified account from this panel.", reason: "already_verified" });
+      return res.status(409).json({ message: "Cannot delete an account that has been verified from this panel.", reason: "already_verified" });
     }
     return res.status(204).end();
   });

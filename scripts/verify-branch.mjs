@@ -158,8 +158,9 @@ async function step3_dbPush() {
       WHERE (table_name = 'emission_factors' AND column_name = 'year')
          OR (table_name = 'emission_records' AND column_name = 'scope3_category')
          OR (table_name = 'users' AND column_name IN (
-              'email_verified', 'email_verification_token', 'email_verification_token_expires_at',
-              'is_super_admin', 'is_active', 'password_reset_token', 'password_reset_token_expires_at'
+              'email_verified', 'has_been_verified', 'email_verification_token',
+              'email_verification_token_expires_at', 'is_super_admin', 'is_active',
+              'password_reset_token', 'password_reset_token_expires_at'
             ))
          OR (table_name = 'memberships' AND column_name = 'is_active')
          OR (table_name = 'admin_action_log' AND column_name IN ('organization_id', 'organization_name'))
@@ -169,6 +170,10 @@ async function step3_dbPush() {
       "emission_factors.year",
       "emission_records.scope3_category",
       "users.email_verified",
+      // Added by scripts/manual-migration-015.mjs. Both hard-delete paths
+      // gate on this instead of email_verified now, so a missing column here
+      // would silently make a change-emailed live account deletable again.
+      "users.has_been_verified",
       "users.email_verification_token",
       "users.email_verification_token_expires_at",
       "users.is_super_admin",
@@ -202,7 +207,7 @@ async function step3_dbPush() {
 
   ok(
     "schema check",
-    "emission_factors.year, emission_records.scope3_category, users email-verification/is_super_admin/is_active/password-reset columns, " +
+    "emission_factors.year, emission_records.scope3_category, users email-verification/has_been_verified/is_super_admin/is_active/password-reset columns, " +
       "memberships.is_active, admin_action_log table + organization_id/organization_name columns present",
   );
 }

@@ -36,6 +36,13 @@ interface AdminUserListItem {
   email: string;
   name: string | null;
   emailVerified: boolean;
+  // Sticky "has been verified at least once, ever" flag (users.has_been_verified,
+  // added by scripts/manual-migration-015.mjs). emailVerified alone cannot tell a
+  // genuine fresh pending registration apart from a live, data-bearing account an
+  // admin just change-emailed -- both read emailVerified = false. The Status column
+  // and the action buttons below both branch on the pair, not on emailVerified
+  // alone, because deleting the second kind cascades a whole tenant's data.
+  hasBeenVerified: boolean;
   isSuperAdmin: boolean;
   isActive: boolean;
   createdAt: string;
@@ -343,13 +350,29 @@ export default function Admin() {
                 <TableBody>
                   {rows.map((u) => {
                     const isSelf = u.id === user.id;
+                    // Two very different accounts both sit at emailVerified = false:
+                    // a fresh registration that has never been verified (disposable,
+                    // safe to verify or delete), and a live account whose email an
+                    // admin changed, which is only temporarily unverified while the
+                    // new address is claimed. The second one owns real tenant data and
+                    // must never be offered a delete button.
+                    const isPendingRegistration = !u.emailVerified && !u.hasBeenVerified;
+                    const isMidEmailChange = !u.emailVerified && u.hasBeenVerified;
                     return (
                       <TableRow key={u.id}>
                         <TableCell>{u.email}</TableCell>
                         <TableCell>{u.name ?? "-"}</TableCell>
                         <TableCell>
-                          {!u.emailVerified ? (
+                          {isPendingRegistration ? (
                             <Badge variant="outline">Pending</Badge>
+                          ) : isMidEmailChange ? (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-500 text-amber-700 whitespace-nowrap"
+                              title="This account was verified before. An admin changed its email and the new address hasn't been verified yet. It holds live data and cannot be deleted."
+                            >
+                              Pending (email change)
+                            </Badge>
                           ) : !u.isActive ? (
                             <Badge variant="destructive">Deactivated</Badge>
                           ) : u.isSuperAdmin ? (
@@ -427,7 +450,30 @@ export default function Admin() {
                         </TableCell>
                         <TableCell>{new Date(u.createdAt).toLocaleDateString()}</TableCell>
                         <TableCell>
-                          {!u.emailVerified && (
+                          {/* Mid-email-change rows get Verify but NOT Delete. Verify stays
+                              available on purpose: it is the only way a super-admin can
+                              unblock someone whose change-email link never arrived (a real
+                              case while Resend is in sandbox mode), and it grants nothing
+                              the account didn't already have -- it was verified before.
+                              Delete is gone because DELETE /api/admin/users/:id now 409s on
+                              this state, and showing a button that only ever fails is worse
+                              than showing none. */}
+                          {isMidEmailChange && (
+                            <div className="flex flex-col items-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => verify.mutate(u.id)}
+                                disabled={verify.isPending}
+                              >
+                                Verify
+                              </Button>
+                              <p className="text-xs text-neutral-400 text-right">
+                                Live account — delete unavailable
+                              </p>
+                            </div>
+                          )}
+                          {isPendingRegistration && (
                             <div className="flex gap-2 justify-end">
                               <Button
                                 variant="ghost"

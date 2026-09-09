@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, exists, ilike, inArray, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "./db";
 import { MODULE_REGISTRY, isKnownModuleKey } from "./modules";
 import {
@@ -204,6 +204,12 @@ export interface AdminUserListItem {
   email: string;
   name: string | null;
   emailVerified: boolean;
+  // Exposed alongside emailVerified so the panel can tell a genuine fresh
+  // pending registration (!emailVerified && !hasBeenVerified -- verifiable,
+  // deletable) apart from a live account mid email-change
+  // (!emailVerified && hasBeenVerified -- must not offer delete, the server
+  // rejects it with 409). Without this the two look identical in the UI.
+  hasBeenVerified: boolean;
   isSuperAdmin: boolean;
   isActive: boolean;
   createdAt: Date;
@@ -485,6 +491,14 @@ export class DbStorage implements IStorage {
         passwordResetToken: null,
         passwordResetTokenExpiresAt: null,
         emailVerified: true,
+        // Invariant: hasBeenVerified must be true wherever emailVerified has
+        // ever been true, so every method that sets emailVerified: true sets
+        // this too (here and verifyUserEmail below are the only two). This
+        // path in particular is how a change-emailed account claims its new
+        // address, and how an admin-triggered reset on a never-verified
+        // account verifies it -- without this, that second case would end up
+        // verified but still matched by both hard-delete paths.
+        hasBeenVerified: true,
       })
       .where(eq(users.id, userId));
   }
@@ -494,10 +508,22 @@ export class DbStorage implements IStorage {
     return row;
   }
 
+  // Single point for "this account is now verified", serving both the
+  // self-service POST /api/auth/verify-email path and the super-admin panel's
+  // POST /api/admin/users/:id/verify. hasBeenVerified is set here alongside
+  // emailVerified and, unlike emailVerified, is never set back to false --
+  // that stickiness is what lets the two hard-delete paths tell a genuine
+  // never-verified registration apart from a live account that is only
+  // temporarily unverified because an admin changed its email.
   async verifyUserEmail(userId: number): Promise<void> {
     await db
       .update(users)
-      .set({ emailVerified: true, emailVerificationToken: null, emailVerificationTokenExpiresAt: null })
+      .set({
+        emailVerified: true,
+        hasBeenVerified: true,
+        emailVerificationToken: null,
+        emailVerificationTokenExpiresAt: null,
+      })
       .where(eq(users.id, userId));
   }
 
@@ -510,23 +536,65 @@ export class DbStorage implements IStorage {
 
   async deleteExpiredUnverifiedRegistrations(): Promise<number> {
     const now = new Date();
+    // hasBeenVerified, not emailVerified -- same reason as
+    // deleteUnverifiedUserById below, but this path is worse because it needs
+    // no admin action at all. An account whose email an admin changed sits at
+    // emailVerified = false with a live organization behind it; the affected
+    // user, told to verify their email, clicks the perfectly legitimate
+    // "resend verification email" and thereby ARMS a fresh 24-hour
+    // email_verification_token_expires_at. This sweep then matched them and
+    // deleted the user and their organizations unattended. Only a genuinely
+    // never-verified registration is eligible.
     const expired = await db
-      .select({ userId: users.id, organizationId: memberships.organizationId })
+      .select({
+        userId: users.id,
+        organizationId: memberships.organizationId,
+        role: memberships.role,
+      })
       .from(users)
       .innerJoin(memberships, eq(memberships.userId, users.id))
-      .where(and(eq(users.emailVerified, false), lt(users.emailVerificationTokenExpiresAt, now)));
+      .where(and(eq(users.hasBeenVerified, false), lt(users.emailVerificationTokenExpiresAt, now)));
 
     if (expired.length === 0) return 0;
 
-    const orgIds = Array.from(new Set(expired.map((r) => r.organizationId)));
     const userIds = Array.from(new Set(expired.map((r) => r.userId)));
+
+    // Org deletion is scoped exactly the way deleteUnverifiedUserById scopes
+    // it: only an org the matched user OWNS, and only when no OTHER user
+    // holds a membership in it. This method previously deleted EVERY
+    // organization a matched user belonged to, with no owner-role or
+    // solo-membership check at all -- so a matched user who had been added to
+    // someone else's live tenant via POST /api/team/invite (which has no
+    // emailVerified gate) would take that unrelated tenant down with them.
+    // That was deferred as unreachable when only never-verified accounts
+    // could match here; the change-email path above demonstrably reaches it,
+    // so it is scoped now.
+    const candidateOwnedOrgIds = Array.from(
+      new Set(expired.filter((r) => r.role === "owner").map((r) => r.organizationId)),
+    );
+    const orgIds: number[] = [];
+    for (const orgId of candidateOwnedOrgIds) {
+      // "Other" means any member who is not itself being swept in this same
+      // run -- notInArray over the whole matched set, rather than
+      // deleteUnverifiedUserById's single-target ne(), because a sweep can
+      // match several users at once and two of them sharing one org must not
+      // each veto the other's cleanup.
+      const otherMembers = await db
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(and(eq(memberships.organizationId, orgId), notInArray(memberships.userId, userIds)));
+      if (otherMembers.length === 0) orgIds.push(orgId);
+    }
 
     // organizations.id cascades to memberships (see shared/schema.ts), so
     // deleting the org already clears its membership row(s). Deleting the
     // users afterward is defensive -- in case a user row ever exists
     // without a membership, which shouldn't happen given registration
     // always creates exactly one, but this keeps the sweep correct even if
-    // that ever changes.
+    // that ever changes. A matched user whose org was NOT eligible for
+    // deletion above still has their own user row removed here, and their
+    // membership rows cascade off users.id -- same as
+    // deleteUnverifiedUserById's otherMembers.length > 0 branch.
     //
     // Both deletes run via db.batch() (a single atomic HTTP round-trip on
     // Neon's driver) rather than sequential awaits, so a crash between the
@@ -539,10 +607,16 @@ export class DbStorage implements IStorage {
     // .transaction() throws "No transactions support in neon-http driver"
     // at runtime; db.batch() is the driver's actual atomic-multi-statement
     // primitive.
-    await db.batch([
-      db.delete(organizations).where(inArray(organizations.id, orgIds)),
-      db.delete(users).where(inArray(users.id, userIds)),
-    ]);
+    // orgIds can legitimately be empty now that org deletion is scoped (every
+    // matched user was a non-owner, or shared their org with someone not
+    // being swept), and db.batch() needs at least one statement -- so the org
+    // delete is only included when there is actually an org to delete.
+    const statements = [];
+    if (orgIds.length > 0) {
+      statements.push(db.delete(organizations).where(inArray(organizations.id, orgIds)));
+    }
+    statements.push(db.delete(users).where(inArray(users.id, userIds)));
+    await db.batch(statements as [(typeof statements)[number], ...typeof statements]);
 
     return userIds.length;
   }
@@ -1685,6 +1759,7 @@ export class DbStorage implements IStorage {
         email: u.email,
         name: u.name,
         emailVerified: u.emailVerified,
+        hasBeenVerified: u.hasBeenVerified,
         isSuperAdmin: u.isSuperAdmin,
         isActive: u.isActive,
         createdAt: u.createdAt,
@@ -1700,7 +1775,14 @@ export class DbStorage implements IStorage {
   ): Promise<"deleted" | "not_found" | "already_verified"> {
     const [target] = await db.select().from(users).where(eq(users.id, userId));
     if (!target) return "not_found";
-    if (target.emailVerified) return "already_verified";
+    // hasBeenVerified, not emailVerified. An account that has EVER been
+    // verified is off-limits to this path regardless of its CURRENT
+    // emailVerified value: storage.setNewEmailPendingVerification sets
+    // emailVerified = false on a live, data-bearing tenant account so the new
+    // address can be re-verified, and gating on emailVerified made that
+    // account look identical to a disposable fresh registration -- two clicks
+    // from a cascade delete of its whole organization.
+    if (target.hasBeenVerified) return "already_verified";
 
     // Only ever delete an organization this user OWNS (registration always
     // creates role: "owner" for the org it creates; a membership added via
@@ -1745,16 +1827,27 @@ export class DbStorage implements IStorage {
       targetEmail: target.email,
     });
 
+    // Both deletes re-assert has_been_verified = false in their own WHERE
+    // clause rather than relying on the read above. Without that, a verify
+    // (self-service or admin) landing between the SELECT and this batch would
+    // be raced straight past and a now-verified account deleted anyway. The
+    // org delete carries the same condition as an EXISTS subquery on the
+    // target user, so the two statements can never disagree: if the user
+    // delete no-ops because the flag flipped, the org delete no-ops with it
+    // rather than orphaning a freshly-verified owner from their organization.
+    const stillNeverVerified = () =>
+      exists(db.select().from(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))));
+
     if (orgIdToDelete) {
       await db.batch([
         logEntry,
-        db.delete(organizations).where(eq(organizations.id, orgIdToDelete)),
-        db.delete(users).where(eq(users.id, userId)),
+        db.delete(organizations).where(and(eq(organizations.id, orgIdToDelete), stillNeverVerified())),
+        db.delete(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))),
       ]);
     } else {
       await db.batch([
         logEntry,
-        db.delete(users).where(eq(users.id, userId)),
+        db.delete(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))),
       ]);
     }
 
@@ -1800,6 +1893,13 @@ export class DbStorage implements IStorage {
   // the password-reset token, not a fresh email-verification token; any
   // stale email-verification token is cleared since it no longer applies to
   // the new address.
+  //
+  // hasBeenVerified is deliberately NOT in the set below and must never be
+  // added to it. emailVerified going false here is what put live tenant
+  // accounts in reach of both hard-delete paths; hasBeenVerified surviving
+  // untouched is precisely what now keeps them out of it. An account that has
+  // ever been verified stays permanently ineligible for deletion, however
+  // many times its email is changed.
   async setNewEmailPendingVerification(
     userId: number,
     newEmail: string,
