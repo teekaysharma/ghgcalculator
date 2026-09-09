@@ -435,7 +435,12 @@ async function finalizedEntityLockMessage(
 
 /**
  * Rank ceiling for the org-admin account-wide routes
- * (POST /api/team/members/:id/deactivate|reactivate|change-email|reset-password).
+ * (POST /api/team/members/:id/deactivate|reactivate|change-email|reset-password),
+ * and also for the membership-level POST /api/team/memberships/:id/deactivate
+ * (a gap found while re-reviewing finding I2's neighborhood: that route had
+ * neither this rank check nor a self-block, so an admin could deactivate
+ * their own org owner's membership, or a solo owner could deactivate their
+ * own only membership directly).
  * Returns the 403 message to reject with, or null when the actor may proceed.
  *
  * storage.isUsersSoleOrganization, which those routes already check, only
@@ -460,18 +465,22 @@ async function finalizedEntityLockMessage(
  *
  * The membership lookup only runs when the actor is not an owner -- an owner
  * already outranks every role in their own org, so there is nothing to check.
+ * A caller that already has the target's role in this org in hand (the
+ * membership-level route looks it up by membership id anyway, for the
+ * self-block check) can pass it as knownTargetRole to skip that lookup.
  */
 async function accountActionRankError(
   target: { id: number; isSuperAdmin: boolean },
   actorRole: string,
   organizationId: number,
+  knownTargetRole?: string,
 ): Promise<string | null> {
   if (target.isSuperAdmin) {
     return "Only a super-admin can act on a super-admin account.";
   }
   if (actorRole !== "owner") {
-    const targetMembership = await storage.getMembership(target.id, organizationId);
-    if (targetMembership?.role === "owner") {
+    const targetRole = knownTargetRole ?? (await storage.getMembership(target.id, organizationId))?.role;
+    if (targetRole === "owner") {
       return "Only an owner can act on another owner's account.";
     }
   }
@@ -1164,16 +1173,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!note) {
       return res.status(400).json({ message: "A reason is required to deactivate a membership." });
     }
+    const targetMembership = await storage.getMembershipById(membershipId, req.organizationId!);
+    if (!targetMembership) return res.status(404).json({ message: "Membership not found" });
+    // Self-check first (cheap: only needs the userId already in hand from the
+    // lookup above) so a solo owner deactivating their own only membership --
+    // the case this lockout is worst for, since there is no one else in the
+    // org left to reverse it -- gets the accurate reason instead of the
+    // rank-ceiling message. Same ordering rationale as I2's self-check on the
+    // account-level deactivate route.
+    if (targetMembership.userId === (req.user as { id: number }).id) {
+      return res.status(403).json({ message: "You cannot deactivate your own membership." });
+    }
+    const target = await storage.getUser(targetMembership.userId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    const rankError = await accountActionRankError(target, req.membership!.role, req.organizationId!, targetMembership.role);
+    if (rankError) return res.status(403).json({ message: rankError });
     const updated = await storage.deactivateMembership(membershipId, req.organizationId!);
     if (!updated) return res.status(404).json({ message: "Membership not found" });
-    const target = await storage.getUser(updated.userId);
     const org = await storage.getOrganization(updated.organizationId);
     try {
       await storage.logAdminAction({
         actorUserId: (req.user as { id: number }).id,
         action: "deactivate_membership",
         targetUserId: updated.userId,
-        targetEmail: target?.email ?? "",
+        targetEmail: target.email,
         organizationId: updated.organizationId,
         organizationName: org?.name,
         note,

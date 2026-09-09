@@ -412,6 +412,7 @@ export interface IStorage {
   deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">;
   promoteToSuperAdmin(userId: number): Promise<void>;
   demoteFromSuperAdmin(userId: number): Promise<void>;
+  getMembershipById(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined>;
   deactivateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined>;
   activateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined>;
   deactivateAccount(userId: number): Promise<void>;
@@ -1863,6 +1864,14 @@ export class DbStorage implements IStorage {
 
   async demoteFromSuperAdmin(userId: number): Promise<void> {
     await db.update(users).set({ isSuperAdmin: false }).where(eq(users.id, userId));
+  }
+
+  async getMembershipById(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined> {
+    const where = scopedToOrgId
+      ? and(eq(memberships.id, membershipId), eq(memberships.organizationId, scopedToOrgId))
+      : eq(memberships.id, membershipId);
+    const [row] = await db.select().from(memberships).where(where);
+    return row;
   }
 
   async deactivateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined> {

@@ -12,7 +12,10 @@
 // GET /api/team/action-log. The 2026-09-09 final-review fix wave added
 // coverage of GET /api/cron/cleanup-unverified-users on top (the daily
 // unverified-registration sweep, which one of the fixed findings made
-// reachable against live tenant data) -- kept separate from scripts/verify-branch.mjs
+// reachable against live tenant data), and a gap found while re-reviewing
+// finding I2's neighborhood: POST /api/team/memberships/:id/deactivate had
+// neither the rank ceiling nor the self-block its account-level sibling got,
+// closed with scenario 35 below -- kept separate from scripts/verify-branch.mjs
 // on purpose (see docs/superpowers/specs/2026-09-04-super-admin-panel-design.md
 // and docs/superpowers/specs/2026-09-04-membership-lifecycle-management-design.md):
 // it deletes data, so it isn't something to run on every npm run verify pass.
@@ -1874,6 +1877,128 @@ async function main() {
         fail(
           "change-email uses its own email copy, not the reset template (I4)",
           `call sites ${changeEmailCalls} (expected 2), sibling exists ${siblingExists}, free of "safely ignore" ${noSafelyIgnore}`,
+        );
+      }
+    }
+
+    // --- scenario 35 (gap found re-reviewing I2's neighborhood): the
+    // MEMBERSHIP-level POST /api/team/memberships/:id/deactivate had neither
+    // guard its ACCOUNT-level sibling (/api/team/members/:id/deactivate,
+    // fixed by I2) and the rank ceiling (fixed by C1) got: (a) an org `admin`
+    // could deactivate their own org `owner`'s membership, leaving the owner
+    // with no active membership in that org and therefore no way back in
+    // (requireOrg only resolves active memberships, so even the activate
+    // route 403s them); (b) a solo owner -- their org's only member -- could
+    // deactivate their own only membership directly, which TeamPanel already
+    // hid the button for (post-I2) but nothing stopped server-side, the exact
+    // client-only-mitigation pattern I2 was raised to eliminate elsewhere.
+    // (c) proves the fix is a targeted guard, not a route-wide block: the
+    // same admin acting on an ordinary member's membership still works. ---
+    {
+      // (a) rank ceiling: plainCookie is org A's admin since scenario 28.
+      // Target is s8OrgAOwner's own membership row in org A -- looked up by
+      // SQL since no earlier scenario captured its membership id (only its
+      // user id and, separately, plainEmail's membership id in org A).
+      const ownerMembershipRow = await pool.query(
+        "SELECT id, is_active FROM memberships WHERE user_id = $1 AND organization_id = $2",
+        [s8OrgAOwner.userId, s8OrgAOwner.organizationId],
+      );
+      const ownerMembershipId = ownerMembershipRow.rows[0]?.id;
+      const rankRes = await fetch(`${BASE_URL}/api/team/memberships/${ownerMembershipId}/deactivate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: plainCookie,
+          "X-Organization-Id": String(s8OrgAOwner.organizationId),
+        },
+        body: JSON.stringify({ note: "admin trying to deactivate the org owner's membership" }),
+      });
+      const rankBody = await rankRes.json().catch(() => ({}));
+      const ownerMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [ownerMembershipId]);
+      if (
+        rankRes.status === 403 &&
+        /Only an owner can act on another owner/i.test(rankBody.message || "") &&
+        ownerMembershipAfter.rows[0]?.is_active === true
+      ) {
+        ok(
+          "POST /api/team/memberships/:id/deactivate (admin on org owner's membership)",
+          "403, rejected by the rank ceiling, owner's membership still active",
+        );
+      } else {
+        fail(
+          "POST /api/team/memberships/:id/deactivate (admin on org owner's membership)",
+          `status ${rankRes.status}, body ${JSON.stringify(rankBody)}, is_active ${ownerMembershipAfter.rows[0]?.is_active}`,
+        );
+      }
+
+      // (b) self-block: a fresh SOLO owner (their org's only member, unlike
+      // s8OrgAOwner whose org has picked up several other members over the
+      // course of this run) targets their own membership.
+      const soloOwner = await seedOwner(pool, `${RUN_TAG}-membershipselfblock`);
+      createdEmails.push(soloOwner.email);
+      const soloOwnerCookie = await login(soloOwner.email);
+      const soloMembershipRow = await pool.query(
+        "SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2",
+        [soloOwner.userId, soloOwner.organizationId],
+      );
+      const soloMembershipId = soloMembershipRow.rows[0]?.id;
+      const selfRes = await fetch(`${BASE_URL}/api/team/memberships/${soloMembershipId}/deactivate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: soloOwnerCookie,
+          "X-Organization-Id": String(soloOwner.organizationId),
+        },
+        body: JSON.stringify({ note: "solo owner trying to deactivate their own only membership" }),
+      });
+      const selfBody = await selfRes.json().catch(() => ({}));
+      const soloMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [soloMembershipId]);
+      if (
+        selfRes.status === 403 &&
+        /cannot deactivate your own membership/i.test(selfBody.message || "") &&
+        soloMembershipAfter.rows[0]?.is_active === true
+      ) {
+        ok(
+          "POST /api/team/memberships/:id/deactivate (solo owner, own membership)",
+          "403, rejected by the self-block, membership still active",
+        );
+      } else {
+        fail(
+          "POST /api/team/memberships/:id/deactivate (solo owner, own membership)",
+          `status ${selfRes.status}, body ${JSON.stringify(selfBody)}, is_active ${soloMembershipAfter.rows[0]?.is_active}`,
+        );
+      }
+
+      // (c) counter-case: the same admin actor, against an ordinary member's
+      // membership in the same org, must still succeed -- proving (a) blocked
+      // by RANK specifically, not by disabling the route for admins.
+      const plainMember = await seedMemberInOrg(pool, `${RUN_TAG}-membershipgapmember`, s8OrgAOwner.organizationId);
+      createdEmails.push(plainMember.email);
+      const memberMembershipRow = await pool.query(
+        "SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2",
+        [plainMember.userId, s8OrgAOwner.organizationId],
+      );
+      const memberMembershipId = memberMembershipRow.rows[0]?.id;
+      const counterRes = await fetch(`${BASE_URL}/api/team/memberships/${memberMembershipId}/deactivate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: plainCookie,
+          "X-Organization-Id": String(s8OrgAOwner.organizationId),
+        },
+        body: JSON.stringify({ note: "admin deactivating an ordinary member's membership -- should still work" }),
+      });
+      const counterBody = await counterRes.json().catch(() => ({}));
+      const memberMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [memberMembershipId]);
+      if (counterRes.status === 200 && counterBody.membership?.isActive === false && memberMembershipAfter.rows[0]?.is_active === false) {
+        ok(
+          "POST /api/team/memberships/:id/deactivate (admin on an ordinary member, still allowed)",
+          "200, membership deactivated -- guard blocks by rank/identity, not a blanket disable",
+        );
+      } else {
+        fail(
+          "POST /api/team/memberships/:id/deactivate (admin on an ordinary member, still allowed)",
+          `status ${counterRes.status}, body ${JSON.stringify(counterBody)}, is_active ${memberMembershipAfter.rows[0]?.is_active}`,
         );
       }
     }
