@@ -700,7 +700,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/me", requireAuth, async (req, res) => {
     const user = req.user as { id: number; email: string; name: string | null; isSuperAdmin: boolean };
-    const memberships = await storage.getMembershipsForUser(user.id);
+    // Active memberships only, matching what requireOrg actually serves.
+    // requireOrg moved to getActiveMembershipsForUser in an earlier task while
+    // this route kept the unfiltered list, so a user with a deactivated
+    // membership in one of two orgs was still handed both here -- and every
+    // client reader of this payload picks organizations[0] with no ordering
+    // guarantee and no active check (Home.tsx's header, TeamPanel's role gate,
+    // OrganizationReport's enabledModules). The client could therefore label
+    // the page with one org's name and branding while every API call behind it
+    // was being served a DIFFERENT org's data. In a product whose output is
+    // compliance evidence, a mislabelled report is a real defect, not a
+    // cosmetic one.
+    //
+    // Checked before making this change: nothing in client/src reads these
+    // fields expecting to see an inactive membership (no "you were removed
+    // from X" UI exists), so filtering here breaks no reader.
+    const memberships = await storage.getActiveMembershipsForUser(user.id);
     const organizations = await Promise.all(
       memberships.map(async (m) => {
         const org = await storage.getOrganization(m.organizationId);

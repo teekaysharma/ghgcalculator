@@ -1687,6 +1687,79 @@ async function main() {
         );
       }
     }
+
+    // --- scenario 33 (I3): GET /api/auth/me must only report organizations the
+    // caller currently has ACTIVE access to. requireOrg switched to
+    // getActiveMembershipsForUser in an earlier task but this route kept the
+    // unfiltered list, so a user with a deactivated membership in one of two
+    // orgs was still handed both -- and every client reader picks
+    // organizations[0] with no ordering guarantee and no active check, so the
+    // page could be labelled with one org while its API calls were served the
+    // other's data. plainEmail is the natural fixture: two memberships since
+    // scenario 23 (its own org, plus org A). ---
+    {
+      const meUrl = `${BASE_URL}/api/auth/me`;
+      const readMe = async () => {
+        const res = await fetch(meUrl, { headers: { Cookie: plainCookie } });
+        const body = await res.json().catch(() => ({}));
+        return {
+          status: res.status,
+          orgIds: (body.organizations || []).map((o) => o.organizationId),
+          membershipOrgIds: (body.memberships || []).map((m) => m.organizationId),
+        };
+      };
+      const plainOwnOrgRow = await pool.query(
+        "SELECT organization_id FROM memberships WHERE user_id = $1 AND role = 'owner'",
+        [await getUserId(pool, plainEmail)],
+      );
+      const plainOwnOrgId = plainOwnOrgRow.rows[0]?.organization_id;
+
+      const before = await readMe();
+      if (
+        before.status === 200 &&
+        before.orgIds.includes(s8OrgAOwner.organizationId) &&
+        before.orgIds.includes(plainOwnOrgId)
+      ) {
+        ok("GET /api/auth/me (two active memberships) (I3)", `200, sees both org ${plainOwnOrgId} and org ${s8OrgAOwner.organizationId}`);
+      } else {
+        fail("GET /api/auth/me (two active memberships) (I3)", `status ${before.status}, orgIds ${JSON.stringify(before.orgIds)}`);
+      }
+
+      const deactivateRes = await fetch(`${BASE_URL}/api/admin/memberships/${plainMembershipInOrgAId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "Verification testing: I3 /api/auth/me filtering" }),
+      });
+      if (deactivateRes.status === 200) ok("POST /api/admin/memberships/:id/deactivate (I3 setup)", "200");
+      else fail("POST /api/admin/memberships/:id/deactivate (I3 setup)", `expected 200, got ${deactivateRes.status}`);
+
+      const after = await readMe();
+      const orgAGoneFromBoth =
+        !after.orgIds.includes(s8OrgAOwner.organizationId) && !after.membershipOrgIds.includes(s8OrgAOwner.organizationId);
+      if (after.status === 200 && orgAGoneFromBoth && after.orgIds.includes(plainOwnOrgId)) {
+        ok("GET /api/auth/me (one membership deactivated) (I3)", "deactivated org absent from organizations AND memberships, own org still present");
+      } else {
+        fail(
+          "GET /api/auth/me (one membership deactivated) (I3)",
+          `status ${after.status}, orgIds ${JSON.stringify(after.orgIds)}, membershipOrgIds ${JSON.stringify(after.membershipOrgIds)}`,
+        );
+      }
+
+      const activateRes = await fetch(`${BASE_URL}/api/admin/memberships/${plainMembershipInOrgAId}/activate`, {
+        method: "POST",
+        headers: { Cookie: adminCookie },
+      });
+      if (activateRes.status !== 200) {
+        fail("POST /api/admin/memberships/:id/activate (I3 teardown)", `expected 200, got ${activateRes.status}`);
+      } else {
+        const restored = await readMe();
+        if (restored.orgIds.includes(s8OrgAOwner.organizationId)) {
+          ok("GET /api/auth/me (membership reactivated) (I3)", "reactivated org visible again, so the filter is live per request");
+        } else {
+          fail("GET /api/auth/me (membership reactivated) (I3)", `orgIds ${JSON.stringify(restored.orgIds)}`);
+        }
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as

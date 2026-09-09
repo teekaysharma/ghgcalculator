@@ -630,11 +630,14 @@ export class DbStorage implements IStorage {
     return db.select().from(memberships).where(eq(memberships.userId, userId));
   }
 
-  // Used by requireOrg going forward -- an inactive membership must be
-  // invisible to tenant-access resolution. getMembershipsForUser above
-  // (all memberships, active or not) is unchanged and still used by
-  // /api/auth/me and the sole-organization boundary check below, which both
-  // need to see a deactivated membership, not just active ones.
+  // Used by requireOrg and, since the 2026-09-09 final-review fix wave (I3),
+  // by GET /api/auth/me too -- an inactive membership must be invisible both to
+  // tenant-access resolution and to the client deciding which organization it
+  // is looking at, or the two disagree and the UI mislabels whose data it is
+  // showing. getMembershipsForUser above (all memberships, active or not) is
+  // unchanged but now has no server callers left: the sole-organization
+  // boundary check (isUsersSoleOrganization below) deliberately counts ALL
+  // membership rows and does its own query for that.
   async getActiveMembershipsForUser(userId: number): Promise<Membership[]> {
     return db
       .select()
