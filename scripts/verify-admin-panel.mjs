@@ -701,11 +701,15 @@ async function main() {
     // --- scenario 16: membership deactivate blocks requireOrg access (which
     // re-resolves fresh on every request, never trusting anything cached on
     // the session), reactivate restores it ---
-    let s1, s1MembershipId;
+    // s1Cookie outlives this block: scenario 31 (I1) reuses this exact
+    // already-issued cookie to prove the ACCOUNT-level equivalent of what this
+    // scenario proves for a membership, without spending another of POST
+    // /api/auth/login's 10-per-15-minutes budget.
+    let s1, s1MembershipId, s1Cookie;
     {
       s1 = await seedOwner(pool, `${RUN_TAG}-s1`);
       createdEmails.push(s1.email);
-      const s1Cookie = await login(s1.email);
+      s1Cookie = await login(s1.email);
       const membershipRow = await pool.query("SELECT id FROM memberships WHERE user_id = $1", [s1.userId]);
       s1MembershipId = membershipRow.rows[0]?.id;
 
@@ -1523,6 +1527,82 @@ async function main() {
         fail(
           "DELETE /api/admin/users/:id (never-verified registration) (C2)",
           `status ${routeDelete.status}, user present ${routeUserGone.rowCount === 1}, org present ${routeOrgGone.rowCount === 1}`,
+        );
+      }
+    }
+
+    // --- scenario 31 (I1): account-level deactivation must bite on the very
+    // next request of an ALREADY-ISSUED session, exactly like scenario 16 proves
+    // for membership deactivation. Login was already blocked before this fix,
+    // but nothing re-checked users.is_active for a live session, so a 7-day
+    // cookie kept full access after the account was deactivated -- /admin
+    // included, if that account happened to be a super-admin. Reuses s1's
+    // cookie from scenario 16 (same account, still active at the end of it), so
+    // this adds no login calls. ---
+    {
+      const beforeRes = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
+      if (beforeRes.status === 200) ok("GET /api/setup-status (active account, existing cookie)", "200");
+      else fail("GET /api/setup-status (active account, existing cookie)", `expected 200, got ${beforeRes.status}`);
+
+      const deactivateRes = await fetch(`${BASE_URL}/api/admin/users/${s1.userId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "Verification testing: I1 session eviction" }),
+      });
+      if (deactivateRes.status === 200) ok("POST /api/admin/users/:id/deactivate (I1 setup)", "200");
+      else fail("POST /api/admin/users/:id/deactivate (I1 setup)", `expected 200, got ${deactivateRes.status}`);
+
+      // Same cookie, no re-login: 401 here is passport's deserializeUser
+      // refusing to hydrate a deactivated account, which makes
+      // req.isAuthenticated() false and lets requireAuth reject normally. A 403
+      // instead would mean the session still authenticated and only requireOrg
+      // stopped it, which is NOT what this finding is about.
+      const afterRes = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
+      const afterBody = await afterRes.json().catch(() => ({}));
+      if (afterRes.status === 401 && /Authentication required/.test(afterBody.message || "")) {
+        ok("GET /api/setup-status (deactivated account, same cookie) (I1)", "401 Authentication required");
+      } else {
+        fail(
+          "GET /api/setup-status (deactivated account, same cookie) (I1)",
+          `expected 401 + Authentication required, got ${afterRes.status}, body ${JSON.stringify(afterBody)}`,
+        );
+      }
+
+      // /api/auth/me is the other thing a live session leans on, and it is what
+      // the client polls to decide whether it is logged in at all.
+      const meRes = await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: s1Cookie } });
+      if (meRes.status === 401) ok("GET /api/auth/me (deactivated account, same cookie) (I1)", "401");
+      else fail("GET /api/auth/me (deactivated account, same cookie) (I1)", `expected 401, got ${meRes.status}`);
+
+      const reactivateRes = await fetch(`${BASE_URL}/api/admin/users/${s1.userId}/reactivate`, {
+        method: "POST",
+        headers: { Cookie: adminCookie },
+      });
+      if (reactivateRes.status === 200) ok("POST /api/admin/users/:id/reactivate (I1 teardown)", "200");
+      else fail("POST /api/admin/users/:id/reactivate (I1 teardown)", `expected 200, got ${reactivateRes.status}`);
+
+      // The old cookie stays dead even after reactivation, and that is correct
+      // rather than a bug in the fix. passport's session strategy
+      // (node_modules/passport/lib/strategies/session.js) does
+      // `delete req.session[key].user` whenever deserializeUser yields no user,
+      // so the first request the deactivated account made stripped its own
+      // session record's user id -- there is nothing left in that session to
+      // re-hydrate. The fix is therefore a real logout, stronger than the
+      // "access withheld until reactivated" that final-review-fix-brief.md's I1
+      // test sketch expected ("reactivate, retry, assert success again"); this
+      // assertion locks in the actual, more secure behaviour instead, the same
+      // way scenario 24 above does for its own brief's mismatched expectation.
+      // The account can of course log in again -- scenario 17 already proves
+      // POST /api/auth/login goes 401-then-200 across a
+      // deactivate/reactivate pair, and re-proving it here would spend the last
+      // slot of that endpoint's 10-per-15-minutes budget for no new coverage.
+      const restoredRes = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
+      if (restoredRes.status === 401) {
+        ok("GET /api/setup-status (reactivated account, OLD cookie) (I1)", "401, the evicted session is not revived by reactivation");
+      } else {
+        fail(
+          "GET /api/setup-status (reactivated account, OLD cookie) (I1)",
+          `expected 401 (session already stripped by passport), got ${restoredRes.status}`,
         );
       }
     }
