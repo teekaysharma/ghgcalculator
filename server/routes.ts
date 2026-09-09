@@ -745,6 +745,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Self-service display-name edit -- requireAuth only, no requireOrg and no
+  // super-admin gate, since editing your own name isn't a tenant-scoped or
+  // privileged action. Empty/whitespace-only clears the name back to null
+  // (falls back to email display) rather than storing a blank string,
+  // mirroring registerSchema's own name handling.
+  app.patch("/api/auth/me", requireAuth, async (req, res) => {
+    const parsed = z.object({ name: z.string().trim().max(200).optional() }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid input", errors: parsed.error.flatten() });
+    }
+    const name = parsed.data.name && parsed.data.name.length > 0 ? parsed.data.name : null;
+    const actorId = (req.user as { id: number }).id;
+    await storage.updateOwnName(actorId, name);
+    return res.status(200).json({ name });
+  });
+
   // -----------------------------------------------------------------------
   // Platform admin (super-admin only, cross-tenant). See
   // docs/superpowers/specs/2026-09-04-super-admin-panel-design.md. Delete is

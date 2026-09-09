@@ -6,6 +6,8 @@ import Register from "@/pages/Register";
 import VerifyEmail from "@/pages/VerifyEmail";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
+import PrivacyPolicy from "@/pages/PrivacyPolicy";
+import HelpSupport from "@/pages/HelpSupport";
 import Admin from "@/pages/Admin";
 import Footer from "./Footer"; // Import the Footer component
 import { AuthProvider } from "@/hooks/use-auth";
@@ -19,6 +21,8 @@ function Router() {
       <Route path="/verify-email" component={VerifyEmail} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
+      <Route path="/privacy" component={PrivacyPolicy} />
+      <Route path="/help" component={HelpSupport} />
       <Route path="/admin">
         <ProtectedRoute>
           <Admin />

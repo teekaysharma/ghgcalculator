@@ -69,6 +69,63 @@ function SuperAdminControlPanel({ hasOrg }: { hasOrg: boolean }) {
   );
 }
 
+function NameEditor({ currentName }: { currentName: string | null }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(currentName ?? "");
+
+  const saveName = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", "/api/auth/me", { name: draft });
+      return res.json();
+    },
+    onSuccess: async () => {
+      setEditing(false);
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({ title: "Name updated" });
+    },
+    onError: (err) => toast({ title: "Could not update name", description: err.message, variant: "destructive" }),
+  });
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <Input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") saveName.mutate();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="h-7 text-sm w-40"
+        />
+        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => saveName.mutate()} disabled={saveName.isPending}>
+          Save
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="font-medium text-neutral-800 hover:underline text-left"
+      onClick={() => {
+        setDraft(currentName ?? "");
+        setEditing(true);
+      }}
+      title="Click to edit your name"
+    >
+      {currentName ?? "Set your name"}
+    </button>
+  );
+}
+
 export default function Home() {
   const { user, organizations, logout } = useAuth();
   const org = organizations[0];
@@ -89,8 +146,14 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-3 mt-4 md:mt-0">
               <div className="text-right text-sm">
-                {org && <div className="font-medium text-neutral-800">{org.name}</div>}
-                {user && <div className="text-neutral-500">{user.email}</div>}
+                {org && <div className="text-neutral-800">{org.name}</div>}
+                {user && (
+                  <div className="flex items-center justify-end gap-2">
+                    <NameEditor currentName={user.name} />
+                    <span className="text-neutral-400">·</span>
+                    <span className="text-neutral-500">{user.email}</span>
+                  </div>
+                )}
               </div>
               {user?.isSuperAdmin && (
                 <Link href="/admin" className="text-sm text-primary-600 hover:underline">
@@ -123,12 +186,12 @@ export default function Home() {
           <div className="flex flex-col md:flex-row justify-between items-center">
             <p>GHG Emissions Calculator &copy; {new Date().getFullYear()} | All rights reserved</p>
             <div className="mt-4 md:mt-0">
-              <a href="#" className="text-primary-600 hover:text-primary-800 mr-4">
+              <Link href="/privacy" className="text-primary-600 hover:text-primary-800 mr-4">
                 Privacy Policy
-              </a>
-              <a href="#" className="text-primary-600 hover:text-primary-800">
+              </Link>
+              <Link href="/help" className="text-primary-600 hover:text-primary-800">
                 Help & Support
-              </a>
+              </Link>
             </div>
           </div>
         </footer>

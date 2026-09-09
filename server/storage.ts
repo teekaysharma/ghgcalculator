@@ -270,6 +270,7 @@ export interface IStorage {
   setEmailVerificationToken(userId: number, token: string, expiresAt: Date): Promise<void>;
   setPasswordResetToken(userId: number, token: string, expiresAt: Date): Promise<void>;
   resetPassword(userId: number, passwordHash: string): Promise<void>;
+  updateOwnName(userId: number, name: string | null): Promise<void>;
   deleteExpiredUnverifiedRegistrations(): Promise<number>;
 
   // Memberships (the tenant-scoping join)
@@ -512,6 +513,15 @@ export class DbStorage implements IStorage {
         hasBeenVerified: true,
       })
       .where(eq(users.id, userId));
+  }
+
+  // Self-service display-name edit. Deliberately unrestricted to any
+  // authenticated user (not super-admin-only) -- there's no reason someone's
+  // own display name should need an admin. `name` arriving null means "clear
+  // it" (falls back to email display elsewhere in the UI), matching how the
+  // registration flow already treats an unset name.
+  async updateOwnName(userId: number, name: string | null): Promise<void> {
+    await db.update(users).set({ name }).where(eq(users.id, userId));
   }
 
   async getUserByVerificationToken(token: string): Promise<User | undefined> {
