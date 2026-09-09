@@ -49,6 +49,231 @@ interface AdminUserListItem {
   organizations: AdminOrgSummary[];
 }
 
+interface AdminReportingEntity {
+  id: number;
+  name: string;
+  legalEntity: string | null;
+  baseYear: number | null;
+}
+
+interface AdminFacility {
+  id: number;
+  reportingEntityId: number;
+  name: string;
+  country: string | null;
+}
+
+interface AdminReportingBoundary {
+  id: number;
+  reportingEntityId: number;
+  reportingYear: number;
+  consolidationApproach: string;
+  status: string;
+}
+
+interface AdminConsolidatedReport {
+  reportingBoundary: { reportingYear: number; consolidationApproach: string; status: string };
+  totals: { scope1: number; scope2: number; scope3: number; biogenicCo2: number };
+  gasBreakdown: { gas: string; co2e: number; pctOfTotal: number }[];
+  facilities: { id: number; name: string; country: string | null; scope1: number; scope2: number; scope3: number; incomplete: boolean }[];
+}
+
+// Read-only drill-down into one tenant's actual GHG data: reporting
+// entities -> their facilities and reporting boundaries -> a boundary's
+// consolidated report. Every fetch here hits a super-admin-only,
+// explicitly-read-only route (server/routes.ts, "Read-only cross-tenant
+// data browsing") that calls the exact same storage methods the tenant's
+// own pages use -- this component only ever renders what those return, it
+// never offers an action that writes to another tenant's data.
+function TenantDataBrowser({ orgId, orgName }: { orgId: number; orgName: string }) {
+  const [expandedEntityId, setExpandedEntityId] = useState<number | null>(null);
+  const [viewingBoundaryId, setViewingBoundaryId] = useState<number | null>(null);
+
+  const entitiesQuery = useQuery<{ reportingEntities: AdminReportingEntity[] }>({
+    queryKey: ["/api/admin/organizations", orgId, "reporting-entities"],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/organizations/${orgId}/reporting-entities`, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  });
+
+  const facilitiesQuery = useQuery<{ facilities: AdminFacility[] }>({
+    queryKey: ["/api/admin/organizations", orgId, "facilities"],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/organizations/${orgId}/facilities`, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  });
+
+  const boundariesQuery = useQuery<{ reportingBoundaries: AdminReportingBoundary[] }>({
+    queryKey: ["/api/admin/organizations", orgId, "reporting-boundaries"],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/organizations/${orgId}/reporting-boundaries`, { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  });
+
+  const reportQuery = useQuery<{ report: AdminConsolidatedReport }>({
+    queryKey: ["/api/admin/organizations", orgId, "reporting-boundaries", viewingBoundaryId, "consolidated-report"],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/admin/organizations/${orgId}/reporting-boundaries/${viewingBoundaryId}/consolidated-report`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: viewingBoundaryId !== null,
+  });
+
+  const entities = entitiesQuery.data?.reportingEntities ?? [];
+  const facilities = facilitiesQuery.data?.facilities ?? [];
+  const boundaries = boundariesQuery.data?.reportingBoundaries ?? [];
+
+  return (
+    <Card className="mb-6 border-primary-200">
+      <CardHeader>
+        <CardTitle className="text-base">Tenant Data — {orgName}</CardTitle>
+        <CardDescription>
+          Read-only. Reporting entities, facilities, and reporting boundaries exactly as this org sees them — nothing
+          here can be edited from the admin panel.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {entitiesQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
+        {entitiesQuery.isError && (
+          <p className="text-sm text-destructive">Couldn't load reporting entities. {(entitiesQuery.error as Error)?.message}</p>
+        )}
+        {!entitiesQuery.isLoading && entities.length === 0 && (
+          <p className="text-sm text-neutral-500">No reporting entities set up yet.</p>
+        )}
+        <div className="space-y-2">
+          {entities.map((entity) => {
+            const entityFacilities = facilities.filter((f) => f.reportingEntityId === entity.id);
+            const entityBoundaries = boundaries.filter((b) => b.reportingEntityId === entity.id);
+            const isExpanded = expandedEntityId === entity.id;
+            return (
+              <div key={entity.id} className="border border-neutral-200 rounded-md">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-neutral-50"
+                  onClick={() => setExpandedEntityId(isExpanded ? null : entity.id)}
+                >
+                  <span className="font-medium text-sm">
+                    {entity.name}
+                    {entity.baseYear && <span className="text-neutral-500 font-normal"> · base year {entity.baseYear}</span>}
+                  </span>
+                  <span className="text-xs text-neutral-500">
+                    {entityFacilities.length} {entityFacilities.length === 1 ? "facility" : "facilities"} ·{" "}
+                    {entityBoundaries.length} {entityBoundaries.length === 1 ? "boundary" : "boundaries"} {isExpanded ? "▲" : "▼"}
+                  </span>
+                </button>
+                {isExpanded && (
+                  <div className="px-4 pb-4 pt-1 border-t border-neutral-100 space-y-4">
+                    <div>
+                      <p className="text-xs font-mono uppercase tracking-wide text-neutral-400 mb-1.5">Facilities</p>
+                      {entityFacilities.length === 0 ? (
+                        <p className="text-sm text-neutral-500">None yet.</p>
+                      ) : (
+                        <ul className="text-sm space-y-1">
+                          {entityFacilities.map((f) => (
+                            <li key={f.id}>
+                              {f.name}
+                              {f.country && <span className="text-neutral-500"> · {f.country}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-mono uppercase tracking-wide text-neutral-400 mb-1.5">Reporting boundaries</p>
+                      {entityBoundaries.length === 0 ? (
+                        <p className="text-sm text-neutral-500">None yet.</p>
+                      ) : (
+                        <ul className="text-sm space-y-1">
+                          {entityBoundaries.map((b) => (
+                            <li key={b.id} className="flex items-center gap-2">
+                              <span>
+                                {b.reportingYear} · <span className="capitalize">{b.consolidationApproach.replace(/_/g, " ")}</span>{" "}
+                                <Badge variant={b.status === "finalized" ? "secondary" : "outline"} className="capitalize ml-1">
+                                  {b.status}
+                                </Badge>
+                              </span>
+                              <button
+                                type="button"
+                                className="text-primary-600 hover:underline text-xs"
+                                onClick={() => setViewingBoundaryId(viewingBoundaryId === b.id ? null : b.id)}
+                              >
+                                {viewingBoundaryId === b.id ? "Hide report" : "View report"}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    {viewingBoundaryId !== null && entityBoundaries.some((b) => b.id === viewingBoundaryId) && (
+                      <div className="bg-neutral-50 border border-neutral-200 rounded-md p-3">
+                        {reportQuery.isLoading && <p className="text-sm text-neutral-500">Loading report...</p>}
+                        {reportQuery.isError && (
+                          <p className="text-sm text-destructive">Couldn't load report. {(reportQuery.error as Error)?.message}</p>
+                        )}
+                        {reportQuery.data && (
+                          <div className="space-y-3 text-sm">
+                            <div className="grid grid-cols-3 gap-3">
+                              <div>
+                                <p className="text-xs text-neutral-500">Scope 1</p>
+                                <p className="font-mono font-medium">{reportQuery.data.report.totals.scope1.toFixed(2)} tCO2e</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-neutral-500">Scope 2</p>
+                                <p className="font-mono font-medium">{reportQuery.data.report.totals.scope2.toFixed(2)} tCO2e</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-neutral-500">Scope 3</p>
+                                <p className="font-mono font-medium">{reportQuery.data.report.totals.scope3.toFixed(2)} tCO2e</p>
+                              </div>
+                            </div>
+                            {reportQuery.data.report.gasBreakdown.length > 0 && (
+                              <div>
+                                <p className="text-xs text-neutral-500 mb-1">Gas breakdown</p>
+                                <p className="text-neutral-700">
+                                  {reportQuery.data.report.gasBreakdown
+                                    .map((g) => `${g.gas} ${g.pctOfTotal.toFixed(1)}%`)
+                                    .join(" · ")}
+                                </p>
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-xs text-neutral-500 mb-1">
+                                Facilities ({reportQuery.data.report.facilities.length})
+                              </p>
+                              <ul className="space-y-0.5">
+                                {reportQuery.data.report.facilities.map((f) => (
+                                  <li key={f.id} className="text-neutral-700">
+                                    {f.name}: {(f.scope1 + f.scope2 + f.scope3).toFixed(2)} tCO2e
+                                    {f.incomplete && <span className="text-amber-600"> (incomplete)</span>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 interface AdminOrganizationListItem {
   id: number;
   name: string;
@@ -359,7 +584,8 @@ export default function Admin() {
           <CardHeader>
             <CardTitle className="text-base">Organizations</CardTitle>
             <CardDescription>
-              Every tenant on the platform. Click a name to see and administer just that org's members below.
+              Every tenant on the platform. Click a name to filter its members below and browse its GHG data
+              (read-only) further down.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -406,6 +632,8 @@ export default function Admin() {
             )}
           </CardContent>
         </Card>
+
+        {orgFilter && <TenantDataBrowser orgId={orgFilter.id} orgName={orgFilter.name} />}
 
         <Card>
           <CardHeader>

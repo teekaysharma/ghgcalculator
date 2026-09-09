@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { z } from "zod";
 import rateLimit from "express-rate-limit";
@@ -827,6 +827,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const result = await storage.listAllOrganizationsForAdmin();
     return res.json({ organizations: result });
   });
+
+  // -----------------------------------------------------------------------
+  // Read-only cross-tenant data browsing. Every route below calls the exact
+  // same storage method the tenant's own requireOrg-gated routes call
+  // (listReportingEntities, listFacilities, listReportingBoundaries,
+  // getConsolidatedReport) -- just with organizationId taken from the URL
+  // (super-admin-only, validated to exist) instead of resolved from the
+  // caller's own membership. No new business logic, no write path: this
+  // deliberately does NOT let a super-admin edit another tenant's GHG data,
+  // only see it, matching the explicit scope confirmed for this feature.
+  // Membership-based tenant isolation (requireOrg) is completely untouched
+  // by this -- these are new, separate, additive routes.
+  // -----------------------------------------------------------------------
+  async function requireExistingOrgParam(req: Request, res: Response): Promise<number | null> {
+    const orgId = Number(req.params.orgId);
+    if (!Number.isInteger(orgId) || orgId <= 0) {
+      res.status(400).json({ message: "Invalid organization id" });
+      return null;
+    }
+    const org = await storage.getOrganization(orgId);
+    if (!org) {
+      res.status(404).json({ message: "Organization not found" });
+      return null;
+    }
+    return orgId;
+  }
+
+  app.get("/api/admin/organizations/:orgId/reporting-entities", requireAuth, requireSuperAdmin, async (req, res) => {
+    const orgId = await requireExistingOrgParam(req, res);
+    if (orgId === null) return;
+    const reportingEntitiesList = await storage.listReportingEntities(orgId);
+    return res.json({ reportingEntities: reportingEntitiesList });
+  });
+
+  app.get("/api/admin/organizations/:orgId/facilities", requireAuth, requireSuperAdmin, async (req, res) => {
+    const orgId = await requireExistingOrgParam(req, res);
+    if (orgId === null) return;
+    const facilitiesList = await storage.listFacilities(orgId);
+    return res.json({ facilities: facilitiesList });
+  });
+
+  app.get("/api/admin/organizations/:orgId/reporting-boundaries", requireAuth, requireSuperAdmin, async (req, res) => {
+    const orgId = await requireExistingOrgParam(req, res);
+    if (orgId === null) return;
+    const boundaries = await storage.listReportingBoundaries(orgId);
+    return res.json({ reportingBoundaries: boundaries });
+  });
+
+  app.get(
+    "/api/admin/organizations/:orgId/reporting-boundaries/:boundaryId/consolidated-report",
+    requireAuth,
+    requireSuperAdmin,
+    async (req, res) => {
+      const orgId = await requireExistingOrgParam(req, res);
+      if (orgId === null) return;
+      const boundaryId = Number(req.params.boundaryId);
+      if (!Number.isInteger(boundaryId) || boundaryId <= 0) {
+        return res.status(400).json({ message: "Invalid reporting boundary id" });
+      }
+      const report = await storage.getConsolidatedReport(orgId, boundaryId);
+      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+      return res.json({ report });
+    },
+  );
 
   app.post("/api/admin/users/:id/verify", requireAuth, requireSuperAdmin, async (req, res) => {
     const targetId = Number(req.params.id);
