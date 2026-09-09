@@ -43,7 +43,7 @@ interface TeamActionLogEntry {
 }
 
 export default function TeamPanel() {
-  const { organizations } = useAuth();
+  const { user, organizations } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [inviteEmail, setInviteEmail] = useState("");
@@ -201,7 +201,21 @@ export default function TeamPanel() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {members.map((m) => (
+                {members.map((m) => {
+                  // Your own row gets no action controls at all, mirroring how
+                  // Admin.tsx already gates its account-action block behind
+                  // !isSelf. Every control in this cell is a way to lock
+                  // yourself out: "Deactivate account" blocks your own login
+                  // (and, since the I1 fix, drops your current session on the
+                  // next request), and "Deactivate membership" revokes your own
+                  // access to this organization's data. For the typical customer
+                  // -- a solo owner, one user in one org, with no second admin
+                  // to undo any of it -- both are irreversible from inside the
+                  // product. POST /api/team/members/:id/deactivate now rejects a
+                  // self-target server-side too; this just stops offering the
+                  // button that would 403.
+                  const isSelf = m.userId === user?.id;
+                  return (
                   <TableRow key={m.id}>
                     <TableCell>{m.name || "-"}</TableCell>
                     <TableCell>{m.email}</TableCell>
@@ -228,7 +242,12 @@ export default function TeamPanel() {
                         </div>
                       </div>
                     </TableCell>
-                    {canManage && (
+                    {canManage && isSelf && (
+                      <TableCell>
+                        <p className="text-xs text-neutral-400 text-right">(you)</p>
+                      </TableCell>
+                    )}
+                    {canManage && !isSelf && (
                       <TableCell>
                         <div className="flex flex-wrap gap-2 justify-end">
                           {m.isActive ? (
@@ -430,7 +449,8 @@ export default function TeamPanel() {
                       </TableCell>
                     )}
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}

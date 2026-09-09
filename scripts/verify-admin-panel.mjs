@@ -1606,6 +1606,87 @@ async function main() {
         );
       }
     }
+
+    // --- scenario 32 (I2): neither deactivate-account route may target the
+    // caller. demote has had this guard since the super-admin panel shipped
+    // ("the platform stays continuously usable"); neither deactivate route did,
+    // even though deactivating yourself is strictly worse -- it blocks your own
+    // login, and since I1 also kills your live session on the next request.
+    // Admin.tsx mitigated the super-admin side client-side only; TeamPanel had
+    // no filter at all, so a solo tenant owner was two clicks from locking
+    // themselves out of their own account with nobody able to undo it. ---
+    {
+      const adminSelfRes = await fetch(`${BASE_URL}/api/admin/users/${adminId}/deactivate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "trying to deactivate myself" }),
+      });
+      const adminSelfBody = await adminSelfRes.json().catch(() => ({}));
+      const adminStill = await pool.query("SELECT is_active FROM users WHERE id = $1", [adminId]);
+      if (
+        adminSelfRes.status === 403 &&
+        /cannot deactivate your own account/i.test(adminSelfBody.message || "") &&
+        adminStill.rows[0]?.is_active === true
+      ) {
+        ok("POST /api/admin/users/:id/deactivate (self) (I2)", "403, actor still active");
+      } else {
+        fail(
+          "POST /api/admin/users/:id/deactivate (self) (I2)",
+          `status ${adminSelfRes.status}, body ${JSON.stringify(adminSelfBody)}, is_active ${adminStill.rows[0]?.is_active}`,
+        );
+      }
+
+      // The org-admin equivalent, from an owner acting on their own row. This is
+      // the case with no client-side mitigation before this fix, and the one a
+      // real single-user tenant actually hits.
+      const teamSelfRes = await fetch(`${BASE_URL}/api/team/members/${s8OrgAOwner.userId}/deactivate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: s8OrgAOwnerCookie,
+          "X-Organization-Id": String(s8OrgAOwner.organizationId),
+        },
+        body: JSON.stringify({ note: "trying to deactivate myself" }),
+      });
+      const teamSelfBody = await teamSelfRes.json().catch(() => ({}));
+      const ownerStill = await pool.query("SELECT is_active FROM users WHERE id = $1", [s8OrgAOwner.userId]);
+      if (
+        teamSelfRes.status === 403 &&
+        /cannot deactivate your own account/i.test(teamSelfBody.message || "") &&
+        ownerStill.rows[0]?.is_active === true
+      ) {
+        ok("POST /api/team/members/:id/deactivate (self) (I2)", "403, owner still active");
+      } else {
+        fail(
+          "POST /api/team/members/:id/deactivate (self) (I2)",
+          `status ${teamSelfRes.status}, body ${JSON.stringify(teamSelfBody)}, is_active ${ownerStill.rows[0]?.is_active}`,
+        );
+      }
+
+      // The guard must be about SELF, not a blanket disable: the same owner
+      // session deactivating a different account in its own org still works.
+      // c1Member (scenario 28) is a plain member of org A whose only membership
+      // is that one, so the sole-organization boundary rule passes for it.
+      const c1MemberId = await getUserId(pool, `${RUN_TAG}-c1member@example.invalid`);
+      const otherRes = await fetch(`${BASE_URL}/api/team/members/${c1MemberId}/deactivate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: s8OrgAOwnerCookie,
+          "X-Organization-Id": String(s8OrgAOwner.organizationId),
+        },
+        body: JSON.stringify({ note: "Verification testing: deactivating someone else still works" }),
+      });
+      const otherAfter = await pool.query("SELECT is_active FROM users WHERE id = $1", [c1MemberId]);
+      if (otherRes.status === 200 && otherAfter.rows[0]?.is_active === false) {
+        ok("POST /api/team/members/:id/deactivate (a different member) (I2)", "200, target deactivated");
+      } else {
+        fail(
+          "POST /api/team/members/:id/deactivate (a different member) (I2)",
+          `status ${otherRes.status}, is_active ${otherAfter.rows[0]?.is_active}`,
+        );
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as

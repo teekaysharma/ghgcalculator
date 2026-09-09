@@ -931,6 +931,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!note) {
       return res.status(400).json({ message: "A reason is required to deactivate an account." });
     }
+    // Same class of guard rail as demote's self-block above, and for the same
+    // reason -- the platform stays continuously usable. Deactivating your own
+    // account blocks your own login, and since the I1 fix it also kills your
+    // current session on the next request, so a lone super-admin could lock the
+    // platform out of this panel in two clicks with nobody able to undo it.
+    // Admin.tsx already filters the whole action block with !isSelf, but that
+    // was only ever a client-side courtesy.
+    if (targetId === (req.user as { id: number }).id) {
+      return res.status(403).json({ message: "You cannot deactivate your own account." });
+    }
     const target = await storage.getUser(targetId);
     if (!target) return res.status(404).json({ message: "User not found" });
     if (!target.emailVerified) {
@@ -1180,6 +1190,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
     if (!note) {
       return res.status(400).json({ message: "A reason is required to deactivate an account." });
+    }
+    // The lockout this guard prevents is worst here. The typical customer is a
+    // solo tenant owner -- one user, one org, trivially "sole organization" --
+    // so before this check they could deactivate their own login from their own
+    // Team panel with no second admin in the org to reverse it. Checked before
+    // the sole-organization rule so the rejection says what actually happened
+    // rather than blaming the boundary rule.
+    if (targetId === (req.user as { id: number }).id) {
+      return res.status(403).json({ message: "You cannot deactivate your own account." });
     }
     if (!(await storage.isUsersSoleOrganization(targetId, req.organizationId!))) {
       return res.status(403).json({
