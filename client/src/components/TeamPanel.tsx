@@ -33,6 +33,14 @@ interface TeamMember {
   createdAt: string;
 }
 
+// See the identical note in client/src/pages/Admin.tsx: the change-email and
+// reset-password routes now report emailSendFailed instead of answering with an
+// unconditional "sent" when Resend refused the message (final-review finding
+// I4).
+interface MaybeEmailSendFailed {
+  emailSendFailed?: boolean;
+}
+
 interface TeamActionLogEntry {
   id: number;
   actorEmail: string;
@@ -140,16 +148,25 @@ export default function TeamPanel() {
   const changeEmail = useMutation({
     mutationFn: async ({ userId, newEmail, note }: { userId: number; newEmail: string; note: string }) => {
       const res = await apiRequest("POST", `/api/team/members/${userId}/change-email`, { newEmail, note });
-      return res.json();
+      return res.json() as Promise<MaybeEmailSendFailed>;
     },
-    onSuccess: (_data, { userId }) => {
+    onSuccess: (data, { userId }) => {
       invalidateAll();
       setChangeEmailDrafts((prev) => {
         const next = { ...prev };
         delete next[userId];
         return next;
       });
-      toast({ title: "Email changed — a reset link was sent to the new address" });
+      if (data?.emailSendFailed) {
+        toast({
+          variant: "destructive",
+          title: "Email changed, but no email could be sent",
+          description:
+            "The address has already been changed and nobody can log in to the account until they set a password. Tell them another way, then retry to send a fresh link.",
+        });
+      } else {
+        toast({ title: "Email changed — a reset link was sent to the new address" });
+      }
     },
     onError: (err) => toast({ title: "Could not change email", description: err.message, variant: "destructive" }),
   });
@@ -157,16 +174,24 @@ export default function TeamPanel() {
   const resetPassword = useMutation({
     mutationFn: async ({ userId, note }: { userId: number; note: string }) => {
       const res = await apiRequest("POST", `/api/team/members/${userId}/reset-password`, { note });
-      return res.json();
+      return res.json() as Promise<MaybeEmailSendFailed>;
     },
-    onSuccess: (_data, { userId }) => {
+    onSuccess: (data, { userId }) => {
       invalidateAll();
       setResetPasswordNotes((prev) => {
         const next = { ...prev };
         delete next[userId];
         return next;
       });
-      toast({ title: "Password reset email sent" });
+      if (data?.emailSendFailed) {
+        toast({
+          variant: "destructive",
+          title: "Reset link generated, but no email could be sent",
+          description: "Their current password still works, so nothing is broken. Retry, or check the email configuration.",
+        });
+      } else {
+        toast({ title: "Password reset email sent" });
+      }
     },
     onError: (err) => toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
   });

@@ -71,6 +71,16 @@ interface AdminActionLogEntry {
 
 const PAGE_SIZE = 25;
 
+// Both change-email and reset-password return emailSendFailed: true when the
+// route did its job but Resend refused the message (2026-09-09, final-review
+// finding I4 -- they used to log the failure and still answer with a confident
+// green "sent"). Resend is in sandbox mode per the README and can only deliver
+// to the account owner's own address, so for any other real user this is the
+// normal outcome, not a rare one.
+interface MaybeEmailSendFailed {
+  emailSendFailed?: boolean;
+}
+
 export default function Admin() {
   const { user, isLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -253,16 +263,25 @@ export default function Admin() {
   const changeEmail = useMutation({
     mutationFn: async ({ id, newEmail, note }: { id: number; newEmail: string; note: string }) => {
       const res = await apiRequest("POST", `/api/admin/users/${id}/change-email`, { newEmail, note });
-      return res.json();
+      return res.json() as Promise<MaybeEmailSendFailed>;
     },
-    onSuccess: (_data, { id }) => {
+    onSuccess: (data, { id }) => {
       invalidateAll();
       setChangeEmailDrafts((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
-      toast({ title: "Email changed — a reset link was sent to the new address" });
+      if (data?.emailSendFailed) {
+        toast({
+          variant: "destructive",
+          title: "Email changed, but no email could be sent",
+          description:
+            "The address has already been changed and nobody can log in to the account until they set a password. Tell them another way, then retry to send a fresh link.",
+        });
+      } else {
+        toast({ title: "Email changed — a reset link was sent to the new address" });
+      }
     },
     onError: (err) => toast({ title: "Could not change email", description: err.message, variant: "destructive" }),
   });
@@ -270,16 +289,24 @@ export default function Admin() {
   const resetPassword = useMutation({
     mutationFn: async ({ id, note }: { id: number; note: string }) => {
       const res = await apiRequest("POST", `/api/admin/users/${id}/reset-password`, { note });
-      return res.json();
+      return res.json() as Promise<MaybeEmailSendFailed>;
     },
-    onSuccess: (_data, { id }) => {
+    onSuccess: (data, { id }) => {
       invalidateAll();
       setResetPasswordNotes((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
-      toast({ title: "Password reset email sent" });
+      if (data?.emailSendFailed) {
+        toast({
+          variant: "destructive",
+          title: "Reset link generated, but no email could be sent",
+          description: "Their current password still works, so nothing is broken. Retry, or check the email configuration.",
+        });
+      } else {
+        toast({ title: "Password reset email sent" });
+      }
     },
     onError: (err) => toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
   });

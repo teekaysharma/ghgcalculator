@@ -33,6 +33,10 @@
 import "dotenv/config";
 import { Pool } from "pg";
 import bcrypt from "bcryptjs";
+// Scenario 34 (I4) reads server/email.ts and server/routes.ts to assert
+// change-email stopped reusing the forgot-password body -- the only part of that
+// finding that can't be observed from an HTTP response.
+import { readFile } from "node:fs/promises";
 
 const PORT = process.env.PORT || "5000";
 const BASE_URL = `http://localhost:${PORT}`;
@@ -279,13 +283,15 @@ async function main() {
   const createdEmails = [];
   // Declared here (rather than inside the try block below, where the rest
   // of this file's scenario-scoped `let`s live) because the cleanup step in
-  // `finally` needs to read s8OrgAOwner/s9Boundary's ids -- a `let` inside
+  // `finally` needs to read s8OrgAOwner's org and user id -- a `let` inside
   // `try { ... }` is not visible from a sibling `finally { ... }` block.
+  // s9Boundary and c1SuperAdminInOrgA are hoisted alongside it for the same
+  // original reason; cleanup no longer names either of them individually (it
+  // strips every non-owner org-A membership row belonging to this run in one
+  // query instead), but they stay here rather than churning the scenarios that
+  // assign them.
   let s8OrgAOwner;
   let s9Boundary;
-  // Scenario 27's fixture: seeded via seedMemberInOrg, so its only membership
-  // is org A's -- it has no org of its own for the cleanup loop to infer, and
-  // that membership row has to be stripped explicitly in `finally` below.
   let c1SuperAdminInOrgA;
 
   try {
@@ -1760,6 +1766,117 @@ async function main() {
         }
       }
     }
+
+    // --- scenario 34 (I4): all four notification routes must report whether the
+    // email actually went out. They used to wrap the send in try/catch, log the
+    // error and still answer 200 with a confident success message, so an admin
+    // saw a green "sent" toast while the target -- in change-email's case, with
+    // their address already reassigned and login blocked -- had no idea a link
+    // was supposedly coming, because it wasn't.
+    //
+    // What is asserted is the CONTRACT: emailSendFailed present and boolean, the
+    // way POST /api/auth/register has always reported it. Asserting `=== true`
+    // would pass today for the wrong reason and start failing the day someone
+    // verifies a sending domain: this project's Resend account is in
+    // sandbox/test mode and refuses every recipient except the account owner, so
+    // every @example.invalid send in this file really does fail right now. The
+    // value observed per route is printed, so a run doubles as a live check of
+    // which way it actually went. ---
+    {
+      const reportShape = (label, status, body) => {
+        if (status === 200 && typeof body.emailSendFailed === "boolean") {
+          ok(`${label} (I4)`, `200, emailSendFailed: ${body.emailSendFailed} (reported, not swallowed)`);
+        } else {
+          fail(`${label} (I4)`, `status ${status}, body ${JSON.stringify(body)}`);
+        }
+      };
+
+      const i4Admin = await seedOwner(pool, `${RUN_TAG}-i4admin`);
+      createdEmails.push(i4Admin.email);
+      const i4AdminNewEmail = `${RUN_TAG}-i4admin-new@example.invalid`;
+      createdEmails.push(i4AdminNewEmail);
+      const adminChangeRes = await fetch(`${BASE_URL}/api/admin/users/${i4Admin.userId}/change-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ newEmail: i4AdminNewEmail, note: "Verification testing: I4 change-email" }),
+      });
+      reportShape(
+        "POST /api/admin/users/:id/change-email",
+        adminChangeRes.status,
+        await adminChangeRes.json().catch(() => ({})),
+      );
+
+      const i4Reset = await seedOwner(pool, `${RUN_TAG}-i4reset`);
+      createdEmails.push(i4Reset.email);
+      const adminResetRes = await fetch(`${BASE_URL}/api/admin/users/${i4Reset.userId}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: adminCookie },
+        body: JSON.stringify({ note: "Verification testing: I4 reset-password" }),
+      });
+      reportShape(
+        "POST /api/admin/users/:id/reset-password",
+        adminResetRes.status,
+        await adminResetRes.json().catch(() => ({})),
+      );
+
+      // The org-admin tier of the same two routes. Fixtures are seeded straight
+      // into org A so the sole-organization boundary rule passes and these calls
+      // reach their send step.
+      const teamHeaders = {
+        "Content-Type": "application/json",
+        Cookie: s8OrgAOwnerCookie,
+        "X-Organization-Id": String(s8OrgAOwner.organizationId),
+      };
+      const i4TeamChange = await seedMemberInOrg(pool, `${RUN_TAG}-i4teamchange`, s8OrgAOwner.organizationId);
+      createdEmails.push(i4TeamChange.email);
+      const i4TeamNewEmail = `${RUN_TAG}-i4teamchange-new@example.invalid`;
+      createdEmails.push(i4TeamNewEmail);
+      const teamChangeRes = await fetch(`${BASE_URL}/api/team/members/${i4TeamChange.userId}/change-email`, {
+        method: "POST",
+        headers: teamHeaders,
+        body: JSON.stringify({ newEmail: i4TeamNewEmail, note: "Verification testing: I4 org-admin change-email" }),
+      });
+      reportShape(
+        "POST /api/team/members/:id/change-email",
+        teamChangeRes.status,
+        await teamChangeRes.json().catch(() => ({})),
+      );
+
+      const i4TeamReset = await seedMemberInOrg(pool, `${RUN_TAG}-i4teamreset`, s8OrgAOwner.organizationId);
+      createdEmails.push(i4TeamReset.email);
+      const teamResetRes = await fetch(`${BASE_URL}/api/team/members/${i4TeamReset.userId}/reset-password`, {
+        method: "POST",
+        headers: teamHeaders,
+        body: JSON.stringify({ note: "Verification testing: I4 org-admin reset-password" }),
+      });
+      reportShape(
+        "POST /api/team/members/:id/reset-password",
+        teamResetRes.status,
+        await teamResetRes.json().catch(() => ({})),
+      );
+
+      // The route work is only half the fix: change-email must also stop reusing
+      // sendPasswordResetEmail, whose "you can safely ignore this email -- your
+      // password won't change" line is the opposite of the truth once an
+      // address has already been reassigned. Asserted at the source rather than
+      // by intercepting mail: whichever way the send went, the route must be
+      // calling the sibling function written for this case.
+      const routesSrc = await readFile(new URL("../server/routes.ts", import.meta.url), "utf8");
+      const emailSrc = await readFile(new URL("../server/email.ts", import.meta.url), "utf8");
+      const changeEmailCalls = (routesSrc.match(/sendEmailChangedByAdminEmail\(/g) || []).length;
+      const siblingExists = /export async function sendEmailChangedByAdminEmail/.test(emailSrc);
+      const noSafelyIgnore = !/safely ignore/i.test(
+        emailSrc.slice(emailSrc.indexOf("export async function sendEmailChangedByAdminEmail")),
+      );
+      if (changeEmailCalls === 2 && siblingExists && noSafelyIgnore) {
+        ok("change-email uses its own email copy, not the reset template (I4)", "both change-email routes call sendEmailChangedByAdminEmail; no \"safely ignore\" line in it");
+      } else {
+        fail(
+          "change-email uses its own email copy, not the reset template (I4)",
+          `call sites ${changeEmailCalls} (expected 2), sibling exists ${siblingExists}, free of "safely ignore" ${noSafelyIgnore}`,
+        );
+      }
+    }
   } finally {
     // Cleanup. Order matters: admin_action_log.actor_user_id is a real FK
     // with no cascade (same class of constraint as
@@ -1785,55 +1902,28 @@ async function main() {
       }
       await pool.query("DELETE FROM admin_action_log WHERE target_email LIKE $1", [`${RUN_TAG}%`]);
 
-      // Task 8 additions: plainEmail and s9Boundary each picked up a SECOND
-      // membership (in org A, alongside their own original org) via
-      // scenarios 23/24's /api/team/invite calls. The per-user loop below
-      // assumes exactly one membership row per user (true for every other
-      // scratch account in this file, and for these two before this task) --
-      // for plainEmail in particular that would otherwise risk deleting org
-      // A (which s8OrgAOwner still owns) instead of plainEmail's own
-      // original org, depending on which row the unordered SELECT in that
-      // loop happens to return first, and leaving whichever org it didn't
-      // pick permanently dangling. Stripping these org-A membership rows
-      // first restores the one-membership-per-user assumption before that
-      // loop runs; org A itself is still cleaned up normally afterward, via
-      // s8OrgAOwner's own (by then sole) membership row.
+      // Org A (s8OrgAOwner's) collects extra membership rows over the course of
+      // a run: plainEmail and s9Boundary are invited into it on top of their own
+      // orgs (scenarios 23/24), and the seedMemberInOrg fixtures for scenarios
+      // 27, 28, 30 and 34 hold their ONLY membership there and own no org at
+      // all. The per-user loop below assumes exactly one membership row per user
+      // and deletes "their" org from it, so either shape can make it delete org
+      // A out from under s8OrgAOwner -- depending on which row an unordered
+      // SELECT happens to return first -- and leave whichever org it didn't pick
+      // permanently dangling.
+      //
+      // So: strip every org-A membership row belonging to this run EXCEPT
+      // s8OrgAOwner's own. That restores the one-membership-per-user assumption
+      // before the loop runs, and leaves org A itself to be cleaned up normally
+      // through s8OrgAOwner's own (by then sole) row. One query rather than a
+      // list of per-fixture special cases, so a scenario added later that seeds
+      // another org-A member needs no matching cleanup edit.
       if (s8OrgAOwner) {
-        // plainEmail itself (the try block's local const) isn't visible from
-        // this finally block, same reason s8OrgAOwner/s9Boundary had to be
-        // hoisted above try -- reconstruct it the same deterministic way
-        // pendingId1Email is reconstructed just above (registerAndVerify
-        // always builds `${tag}@example.invalid`).
-        const plainEmailForCleanup = `${RUN_TAG}-plain@example.invalid`;
-        const plainIdForCleanup = await getUserId(pool, plainEmailForCleanup);
-        if (plainIdForCleanup) {
-          await pool.query("DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2", [
-            plainIdForCleanup,
-            s8OrgAOwner.organizationId,
-          ]);
-        }
-        if (s9Boundary) {
-          await pool.query("DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2", [
-            s9Boundary.userId,
-            s8OrgAOwner.organizationId,
-          ]);
-        }
-
-        // Scenarios 27-28's and scenario 30's seedMemberInOrg fixtures hold
-        // their ONLY membership in org A and own no org of their own. Left in
-        // place, the per-user loop below would read org A as "their" org and
-        // delete it out from under s8OrgAOwner (which still owns it) depending
-        // on loop order. Stripping these rows first leaves org A to be cleaned
-        // up normally via s8OrgAOwner's own membership, exactly like the
-        // plainEmail/s9Boundary rows above. The `-c%` prefix covers both the
-        // C1 (c1super/c1member) and C2 (c2freshguest) fixtures -- the latter
-        // should already have been swept away by scenario 30, but if that
-        // assertion ever fails, its surviving membership row must not take org
-        // A down with it during cleanup.
         await pool.query(
           `DELETE FROM memberships WHERE organization_id = $1
-             AND user_id IN (SELECT id FROM users WHERE email LIKE $2)`,
-          [s8OrgAOwner.organizationId, `${RUN_TAG}-c%`],
+             AND user_id <> $2
+             AND user_id IN (SELECT id FROM users WHERE email LIKE $3)`,
+          [s8OrgAOwner.organizationId, s8OrgAOwner.userId, `${RUN_TAG}%`],
         );
       }
 

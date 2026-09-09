@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 import crypto from "crypto";
 import { storage } from "./storage";
 import { hashPassword, comparePassword, passport } from "./auth";
-import { sendVerificationEmail, sendPasswordResetEmail } from "./email";
+import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangedByAdminEmail } from "./email";
 import { requireAuth, requireOrg } from "./middleware/tenant";
 import { requireSuperAdmin } from "./middleware/admin";
 import {
@@ -1015,14 +1015,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await storage.setNewEmailPendingVerification(target.id, parsed.data.newEmail, token, expiresAt);
+    // emailSendFailed is surfaced rather than swallowed, matching the precedent
+    // POST /api/auth/register already set. A silent green "sent" toast is worst
+    // exactly here: the address has already been changed and login is blocked
+    // until the link is used, so if the mail never left, the target is locked
+    // out and has no way to know a link is coming. Resend is in sandbox mode
+    // (see README), so for any address but the account owner's this is the
+    // normal case, not an edge case.
+    let emailSendFailed = false;
     try {
-      await sendPasswordResetEmail({
+      await sendEmailChangedByAdminEmail({
         to: parsed.data.newEmail,
         token,
         requestOrigin: `${req.protocol}://${req.get("host")}`,
       });
     } catch (emailError) {
-      console.error("Failed to send password reset email (change-email):", emailError);
+      console.error("Failed to send email-changed notice (change-email):", emailError);
+      emailSendFailed = true;
     }
     try {
       await storage.logAdminAction({
@@ -1035,7 +1044,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Failed to write admin action log (change_email):", err);
     }
-    return res.status(200).json({ user: { id: target.id, email: parsed.data.newEmail } });
+    return res.status(200).json({ user: { id: target.id, email: parsed.data.newEmail }, emailSendFailed });
   });
 
   app.post("/api/admin/users/:id/reset-password", requireAuth, requireSuperAdmin, async (req, res) => {
@@ -1052,6 +1061,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await storage.setPasswordResetToken(target.id, token, expiresAt);
+    // See the change-email route above for why this is surfaced rather than
+    // only logged. Milder here (the account is untouched and its current
+    // password still works) but still wrong to report as sent when it wasn't.
+    let emailSendFailed = false;
     try {
       await sendPasswordResetEmail({
         to: target.email,
@@ -1060,6 +1073,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (emailError) {
       console.error("Failed to send password reset email (admin reset-password):", emailError);
+      emailSendFailed = true;
     }
     try {
       await storage.logAdminAction({
@@ -1072,7 +1086,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Failed to write admin action log (reset_password):", err);
     }
-    return res.status(200).json({ message: "Password reset email sent." });
+    return res.status(200).json({
+      message: emailSendFailed ? "Reset link generated, but the email could not be sent." : "Password reset email sent.",
+      emailSendFailed,
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -1307,14 +1324,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await storage.setNewEmailPendingVerification(target.id, parsed.data.newEmail, token, expiresAt);
+    // Same reasoning as the super-admin change-email route above.
+    let emailSendFailed = false;
     try {
-      await sendPasswordResetEmail({
+      await sendEmailChangedByAdminEmail({
         to: parsed.data.newEmail,
         token,
         requestOrigin: `${req.protocol}://${req.get("host")}`,
       });
     } catch (emailError) {
-      console.error("Failed to send password reset email (change-email, org-admin):", emailError);
+      console.error("Failed to send email-changed notice (change-email, org-admin):", emailError);
+      emailSendFailed = true;
     }
     const org = await storage.getOrganization(req.organizationId!);
     try {
@@ -1330,7 +1350,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Failed to write admin action log (change_email, org-admin):", err);
     }
-    return res.status(200).json({ user: { id: target.id, email: parsed.data.newEmail } });
+    return res.status(200).json({ user: { id: target.id, email: parsed.data.newEmail }, emailSendFailed });
   });
 
   app.post("/api/team/members/:id/reset-password", requireAuth, requireOrg, async (req, res) => {
@@ -1357,6 +1377,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await storage.setPasswordResetToken(target.id, token, expiresAt);
+    // Same reasoning as the super-admin reset-password route above.
+    let emailSendFailed = false;
     try {
       await sendPasswordResetEmail({
         to: target.email,
@@ -1365,6 +1387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (emailError) {
       console.error("Failed to send password reset email (admin reset-password, org-admin):", emailError);
+      emailSendFailed = true;
     }
     const org = await storage.getOrganization(req.organizationId!);
     try {
@@ -1380,7 +1403,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Failed to write admin action log (reset_password, org-admin):", err);
     }
-    return res.status(200).json({ message: "Password reset email sent." });
+    return res.status(200).json({
+      message: emailSendFailed ? "Reset link generated, but the email could not be sent." : "Password reset email sent.",
+      emailSendFailed,
+    });
   });
 
   app.get("/api/team/action-log", requireAuth, requireOrg, async (req, res) => {
