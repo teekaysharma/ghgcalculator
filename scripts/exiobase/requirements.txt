@@ -1,0 +1,17 @@
+# Python dependencies for scripts/exiobase/build_factors.py.
+# See scripts/exiobase/README.md for the full runbook.
+#
+# pymrio pulls in numpy/pandas/scipy as its own dependencies -- not listed
+# separately here, pip resolves them automatically.
+#
+# No version was pinned when this pipeline was first run (2026-09-03) and none
+# is asserted here yet. If you are the first person re-running this on a new
+# machine: install pymrio fresh (`pip install pymrio`), confirm the pipeline
+# still produces the expected 25-GHG-row, M.EUR-unit output described in the
+# README, then pin the exact version you used:
+#
+#   pip freeze | grep -i pymrio >> scripts/exiobase/requirements.txt
+#
+# and commit that pin, so the next machine doesn't have to rediscover a
+# working version from scratch.
+pymrio

@@ -18,6 +18,11 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Python (scripts/exiobase/build_factors.py -- offline/local only, see
+# scripts/exiobase/README.md; this is compiled-bytecode cache, never source)
+__pycache__/
+*.pyc
+
 # Local-only project instructions -- must never be pushed to GitHub,
 # per standing instruction. Claude Code still reads it locally regardless
 # of git-tracking status; this only prevents it from being committed.
