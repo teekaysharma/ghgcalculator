@@ -159,6 +159,55 @@ figures (clause numbers, thresholds, version numbers, commit status) get flagged
 not stated with confidence. Flag assumptions before proceeding rather than silently picking one
 when more than one interpretation is plausible.
 
+## Working principles (carried over from Tapas's standing behavioral guidelines)
+
+Adapted 2026-09-10 from `C:\Users\LENOVO\Documents\ClaudeCowork\ABOUT ME\CLAUDE-TKS.md` -- Tapas's
+cross-project behavioral contract for browser-based Cowork sessions. That file stays authoritative
+and unchanged for its own scope; this is the ghgcalculator-relevant subset, adapted where the two
+environments differ (see the Filesystem note above -- the sandbox-vs-Windows-write risk that file
+warns about doesn't apply to Claude Code).
+
+**Investigate before claiming.** Never state what a file, script, schema, or standard says without
+actually opening or querying it in this session -- not from the filename, not from a remembered
+prior version, not from a skill file's summary table. A loaded skill's own clause-number summary
+was found wrong against the primary ISO 14064-1 text in this session (2026-09-10 gap-check) --
+that's exactly the failure mode this rule exists to catch. Never retype or reconstruct file content
+from memory when a task needs to reference or edit it; read it fresh even if it was read earlier in
+the same session. If checking isn't possible right now, say so explicitly and label the claim
+unverified -- don't let it read the same as a verified one.
+
+**Scope is explicit, not inferred.** When an instruction could apply to one instance or to every
+instance of a pattern, state which, or ask. Do not silently narrow or widen scope.
+
+**Surgical edits.** Touch only what was asked. Don't reformat or "improve" adjacent code that
+wasn't part of the request. Match the existing file's style and conventions. If a pre-existing
+issue turns up elsewhere while editing, flag it -- don't fix it silently as a drive-by.
+
+**Goal-driven execution.** Before starting a multi-step task, state what "done" looks like as a
+checkable condition, not a vague direction. For autonomous multi-step work, state an iteration cap
+before starting; if stuck at the cap, stop and report the blocker rather than looping. Judgment-
+heavy calls (architecture tradeoffs, scope decisions, anything commercially or legally sensitive)
+are TeeKay's to make, not something to resolve by continuing to iterate alone.
+
+**Regulatory and standards citations** (this app's own domain content, not just meta-process):
+verify the specific clause/decree/resolution number, threshold, and jurisdictional scope before
+citing -- never generalize a UAE regulation across all emirates/sectors, and never state an ISO
+clause's requirement without reading the actual text (RAG query or the standard itself), even when
+a skill file already names the clause.
+
+**Parallel independent reads/calls, no exceptions.** When a task needs several known, independent
+pieces of information, fetch them in the same turn. Sequential calls for independent lookups are a
+process failure, not a style choice.
+
+**Context continuity -- adapted, not copied verbatim.** Tapas's Cowork guidelines set a hard
+75%-context stop with a mandatory handoff-file write, because that environment doesn't auto-manage
+context. Claude Code auto-compacts long sessions instead, so the literal mechanism doesn't transfer
+-- but the underlying principle does: don't silently push a long session past the point where
+quality degrades, and proactively checkpoint (a ledger entry, a memory update, a clear status
+report) at natural stopping points rather than waiting to be asked.
+
+When in doubt: ask one focused question. Do not fill gaps with assumptions.
+
 ## Session start checklist
 
 1. `git status`, `git log --oneline -20`, `git branch --show-current` -- confirm what's actually
