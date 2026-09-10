@@ -1,0 +1,171 @@
+# CLAUDE.md -- ghgcalculator
+
+This file is read automatically by Claude Code at the start of every session in this repo. Treat
+it as authoritative project context. Refreshed 2026-09-10 to match reality after several weeks of
+drift -- if anything here conflicts with what you observe in the actual code/git history, trust
+the code and flag the conflict rather than assuming this file is right.
+
+**Scope note (avoid confusing this with other files also named CLAUDE.md):** there is a global
+`~/.claude/CLAUDE.md` that applies to every Claude Code session across every project on this
+machine -- unrelated to this repo, no authority here. There is also a separate
+`C:\Users\LENOVO\Documents\ClaudeCowork\ABOUT ME\CLAUDE.md`, a workspace map for browser-based
+Claude Cowork sessions -- not read by Claude Code, no authority here either. Three files, three
+scopes, intentionally not merged or reconciled.
+
+## Ownership
+
+This is TeeKay's personal project, going commercial independently. It is **not** a Sustainacert
+deliverable. Do not attribute it to Sustainacert regardless of what any other context source
+implies. Ownership is personal for all of TeeKay's projects unless he explicitly says
+"Sustainacert" for that specific project.
+
+## Repo
+
+- GitHub: https://github.com/teekaysharma/ghgcalculator, branch `main` (the `saas-multitenant`
+  branch this file used to reference was merged and retired)
+- This is the local clone -- `git`/`npm` work directly, no setup needed
+- Production: deployed on Vercel (`https://ghgcalculator.vercel.app`, project
+  `prj_jb7KsczBioMHBmpGeF42oYhvL901`, team "Tapas' projects"). Local dev and production share the
+  **same** Neon Postgres database -- confirmed empirically, not assumed. A local migration run
+  affects what production serves the moment new code deploys. Treat any DB-touching local work
+  with that in mind.
+- Database: Neon (Postgres) via `drizzle-orm/neon-http`. `DATABASE_URL` lives in the local `.env`
+  (gitignored, present on this filesystem as of 2026-09-03) -- not something to ask TeeKay for
+  unless it's missing.
+- `drizzle-orm/neon-http` throws at runtime on `.transaction()` -- `db.batch()` is the only atomic
+  multi-statement primitive available. This has bitten prior work; don't reach for `.transaction()`.
+
+## Development process -- AI-native SDLC playbook (adopted 2026-09-10)
+
+Deliberately aligned to Anthropic's playbook
+(https://claude.com/blog/the-ai-native-sdlc-playbook) on TeeKay's explicit instruction. Every
+feature's artifact chain, in order:
+
+1. **`docs/superpowers/intents/YYYY-MM-DD-<topic>-intent.md`** -- the raw ask, in TeeKay's own
+   words, timestamped, authored to his email. Written *before* the spec. Captures Stage 1 (Plan).
+2. **`docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`** -- via `superpowers:brainstorming`.
+   Questions asked one at a time, 2-3 approaches proposed with a recommendation, design presented
+   in sections with approval after each, written up, self-reviewed, then TeeKay reviews the actual
+   file before anything proceeds. Links back to its intent.
+3. **`docs/superpowers/plans/YYYY-MM-DD-<topic>.md`** -- via `superpowers:writing-plans`.
+   Task-by-task, verbatim code, no placeholders. Large plans split into dependency-ordered
+   sub-plans (e.g. the verification-ready-inventory plan is 01-schema through 04-jurisdiction).
+4. **Execution** -- via `superpowers:subagent-driven-development` when time allows: fresh
+   implementer + task reviewer per task, a final whole-branch review, fix wave, scoped re-review
+   before merge. Under real deadline pressure (e.g. the 2026-09-09 production-push weekend) work
+   has sometimes been done directly in the main session instead -- a real, acknowledged deviation,
+   not the default.
+5. **`superpowers:finishing-a-development-branch`** -- merge/PR/keep decision.
+
+Plan-mandated findings (a defect traceable to the plan's own text, not implementer deviation)
+always go to TeeKay via `AskUserQuestion` -- never silently fixed or dismissed, even when the
+"right" answer looks obvious.
+
+**Known gaps against the playbook's later stages** (correlated 2026-09-10, confirmed by direct
+inspection, not yet closed):
+- No `.claude/skills/` directory of project-specific policy skills (only generic `superpowers`
+  process skills are in use) -- conventions like the `organizationId`-scoping rule below live only
+  in this file and in code comments, not in a discoverable skill.
+- No hooks configured anywhere.
+- Zero `.test.`/`.spec.` files in the repo. `npm run verify` (`scripts/verify-branch.mjs`) plus
+  several standalone `verify-*.mjs` scripts do real end-to-end smoke checks against a running
+  server, but it's happy-path coverage, not a regression suite.
+- No `.github/` directory -- zero CI/CD, not even lint/typecheck on push.
+- No PR-based workflow, no `REVIEW.md` gate -- see "Merge policy" below for what actually happens
+  instead.
+- Vercel MCP deployment tooling gets used manually/interactively in chat, not wired as an
+  automated pipeline step.
+- No monitoring, control-band alerting, or autonomous-maintenance loop (Stage 6) exists.
+
+## Stack and architecture rules (non-negotiable)
+
+- React + TypeScript client (Vite), Express server, Drizzle ORM, Postgres (Neon),
+  passport-local + session auth.
+- Every tenant-scoped table query must filter on `organizationId`. No exceptions. A prior session
+  found and fixed 6 `upsertX` methods in `server/storage.ts` missing `organizationId` in their
+  `onConflictDoUpdate` conflict condition -- treat this class of bug as a standing thing to check
+  in any new upsert method, not a one-off.
+- `drizzle-kit push` is retired for this project -- confirmed broken across three early attempts.
+  Use hand-written idempotent migration scripts (`scripts/manual-migration-NNN.mjs`) instead --
+  `information_schema` checks before any DDL change, `applied`/`skipped` tracking, wrapped in one
+  transaction, safe to re-run. Latest is `015`; the next one is `016`.
+- GWP values: sourced from the `gwp_values` table, versioned (AR6 by default, `gwpVersion` column
+  present at the schema level, not just in the static reference xlsx) -- the version-tagging gap
+  this file used to list as open is closed.
+- Emission factor sourcing hierarchy: local/site-specific -> national -> regional -> named global
+  agencies (IEA, IPCC EFDB, UNFCCC, GHG Protocol, DEFRA) -> IPCC generic defaults, in that order,
+  with any IPCC-default substitution flagged in the data quality fields. Never silently default to
+  IPCC generic.
+- Any destructive database operation runs as two genuinely separate steps: (1) a dry-run that
+  prints exactly what will be affected, (2) a hard stop to actually read that output, (3) a
+  separate execution step, only after confirming nothing unexpected showed up. Established after a
+  real incident (2026-09-09: a chained dry-run+delete script removed an org without pausing to
+  react to its own diagnostic output). Never chain check-then-delete in one script run again.
+
+## Current state (as of 2026-09-10 -- verify anything load-bearing before trusting)
+
+- **Base layer**: multi-tenancy (organizations/users/memberships), registration with email
+  verification (Resend) and password complexity rules, ISO 14064-1 boundary setup (reporting
+  entities/facilities/reporting boundaries with base year + rationale, three consolidation
+  approaches), scope 1/2/3 calculator.
+- **Facility-level MRV layer**: source streams, calculation/measurement/fallback approaches
+  (per-gas, ISO/TS 14064-4-aligned), methane reports, data quality records (tier + uncertainty %),
+  verification findings, management QA records, a finalize/recalculate snapshot mechanic
+  (`reportingBoundaries.status` draft/finalized, logged recalculation reasons).
+- **Consolidated reporting**: org-level rollup across facilities, biogenic CO2 as a memo item,
+  GRI 305-4/IFRS S2 intensity ratios, Scope 2 dual reporting (location + market-based), Scope 3
+  categories 1-15 as a required field on source streams (not free-text).
+- **Emission factor sources**: IPCC defaults (incremental), EPA NAICS Supply Chain factors
+  (1,016 rows), EXIOBASE region x sector multipliers via a genuine Leontief-inverse pipeline
+  (`scripts/exiobase/`, offline/local-only, non-commercial license -- see its own README before
+  this product is ever sold with EXIOBASE-derived factors live). No upload UI for any of these yet
+  -- all seeded via one-off migration scripts. A generic upload facility (native file upload +
+  format recognizers + mandatory validation preview + saved column-mapping templates,
+  superadmin-only) has been designed but **not approved for building** -- do not start it without
+  explicit go-ahead.
+- **Membership/account lifecycle**: soft deactivate/reactivate for both org memberships and whole
+  accounts, two-tier permission model (super-admin platform-wide vs. org-admin strictly scoped to
+  their own tenant via a sole-organization boundary rule), unified token-based password reset.
+- **Super-admin control panel**: cross-tenant account directory, verify/delete/promote/demote,
+  read-only cross-tenant GHG-data drill-down (reporting entities/facilities/boundaries/consolidated
+  report per org), audit log (`admin_action_log`).
+- **Activity-data document extraction**: intent + design spec written
+  (`docs/superpowers/intents/2026-09-10-document-extraction-intent.md` and its linked spec) --
+  extracts kWh/fuel-volume/period from uploaded bills via Gemini's free-tier vision API, prefills
+  the calculation-approach form, mandatory human review before save. Plan not yet written.
+
+**Durable architecture decisions still binding, not yet built:**
+- Tenant lifecycle (archive/unarchive, governed multi-step deletion) is deliberately NOT built --
+  a tenant must never be deactivated as a side effect of any user/membership action.
+- Identity/profile decoupling (machine-allocated usernames, admin-assigned email as login
+  identity, separate personalizable display name) -- approved concept, needs its own
+  brainstorming/design pass before building. Touches `email`-as-identity everywhere.
+
+## Merge policy
+
+Actual practice, confirmed against `git log`: no PR workflow exists. Feature work lands as direct
+commits to `main` after explicit approval in chat, per instance -- not a standing blanket
+authorization. This is a change from what this file previously stated (a PR-gated policy that was
+never actually followed even before this refresh) -- flagged here rather than silently rewritten
+to match practice without saying so. If TeeKay wants a stricter gate (PR review, multi-person
+verification, a `REVIEW.md` policy per the playbook's Deploy stage) that needs to be decided and
+built, not assumed from what's happened so far.
+
+## Communication style
+
+Technical and directive. Terse. No em dashes. No filler ("certainly," "I'd be happy to,"
+compulsive summaries, closing offers to elaborate). No invented facts -- recalled-but-unverified
+figures (clause numbers, thresholds, version numbers, commit status) get flagged as unverified,
+not stated with confidence. Flag assumptions before proceeding rather than silently picking one
+when more than one interpretation is plausible.
+
+## Session start checklist
+
+1. `git status`, `git log --oneline -20`, `git branch --show-current` -- confirm what's actually
+   committed vs. working-tree-only.
+2. Check `docs/superpowers/intents/`, `docs/superpowers/specs/`, and `docs/superpowers/plans/` for
+   the most recent dated files -- these are the current source of truth for what's in flight.
+   `HANDOFF-SESSION.md` (last touched 2026-08-18) predates this convention and is historical only
+   -- do not treat it as current.
+3. `npm install` if needed, `npm run check` -- report actual output, don't assume clean.
+4. Report current verified state before starting new work.
