@@ -1,6 +1,7 @@
 # Activity-Data Document Extraction — Design
 
 **Status:** Approved by product owner in brainstorming session, 2026-09-10. Ready for `writing-plans`.
+**Intent:** [`docs/superpowers/intents/2026-09-10-document-extraction-intent.md`](../intents/2026-09-10-document-extraction-intent.md)
 
 ## Problem
 
