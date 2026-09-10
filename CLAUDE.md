@@ -212,8 +212,10 @@ When in doubt: ask one focused question. Do not fill gaps with assumptions.
 
 1. `git status`, `git log --oneline -20`, `git branch --show-current` -- confirm what's actually
    committed vs. working-tree-only.
-2. Check `docs/superpowers/intents/`, `docs/superpowers/specs/`, and `docs/superpowers/plans/` for
-   the most recent dated files -- these are the current source of truth for what's in flight.
+2. Read `docs/superpowers/INDEX.md` first -- one row per feature/initiative, current stage and
+   status, links to the relevant intent/spec/plan files. This answers "where does everything
+   stand" without reading every spec/plan or re-deriving it from the codebase; only open a
+   specific intent/spec/plan file once you know which feature you're actually working on.
    `HANDOFF-SESSION.md` (last touched 2026-08-18) predates this convention and is historical only
    -- do not treat it as current.
 3. `npm install` if needed, `npm run check` -- report actual output, don't assume clean.
