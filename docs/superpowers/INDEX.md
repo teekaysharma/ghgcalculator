@@ -15,6 +15,24 @@ specifically so that doesn't happen a third time.
 Deferred / On hold / Not started / Status unknown / Superseded for work that isn't moving through
 that pipeline right now.
 
+## Next priorities, in order
+
+Explicit sequencing, not just per-row status — set 2026-09-11 by the product owner, binding until
+revised here.
+
+1. Finish the SDLC-basics work currently in flight: `.claude/skills/` (spec approved, plan not
+   yet written) and Hooks (design in progress — protected-path methodology settled, reformat
+   scope decided, spec not yet written).
+2. **Once the Hooks work's full repo-wide Prettier reformat lands:** refresh the stale
+   `file:line` anchors throughout
+   [`docs/superpowers/plans/2026-09-10-document-extraction.md`](plans/2026-09-10-document-extraction.md)
+   — the reformat will shift line numbers throughout the repo, and this plan's task steps
+   reference exact lines (`server/routes.ts:2478`, `BoundaryWorkspace.tsx:621`, etc.) that go
+   stale the moment that happens. **Do this before resuming any other feature build**, document
+   extraction included — do not execute that plan against stale line references.
+3. Everything else (document extraction itself, the remaining playbook gaps — test suite, CI/CD,
+   `REVIEW.md`, Stage 6 monitoring) resumes only after 1 and 2 above are both done.
+
 ## Product features
 
 | Feature | Intent | Spec | Plan | Stage | Status |
@@ -29,7 +47,7 @@ that pipeline right now.
 | Membership/account lifecycle | — | [spec](specs/2026-09-04-membership-lifecycle-management-design.md) | [plan](plans/2026-09-04-membership-lifecycle-management.md) | Shipped | Deactivate/reactivate (membership + account), unified token-based password reset, two-tier permission model. |
 | Super-admin control panel | — | [spec](specs/2026-09-04-super-admin-panel-design.md) | [plan](plans/2026-09-04-super-admin-panel.md) | Shipped, extended beyond its plan | Cross-tenant account directory, verify/delete/promote/demote, audit log. Extended 2026-09-09 (self-service name editor, real Privacy/Help pages, read-only cross-tenant GHG-data drill-down, optional org creation) directly in-session under deadline pressure, with no spec/plan of its own for the extension — an acknowledged process deviation, see `CLAUDE.md`'s Development Process section. |
 | Platform BRD | — | [spec](specs/2026-09-09-platform-brd-structure-design.md) | — (writing task, no code — no `plan.md` needed) | Shipped | Published as a Claude Artifact ("GHG Calculator BRD"), 12 sections. |
-| Activity-data document extraction | [intent](intents/2026-09-10-document-extraction-intent.md) | [spec](specs/2026-09-10-document-extraction-design.md) | [plan](plans/2026-09-10-document-extraction.md) | Planned | Plan written 2026-09-10, execution not started. Needs `GEMINI_API_KEY` + `BLOB_READ_WRITE_TOKEN` provisioned (project owner only) before it's testable end to end. |
+| Activity-data document extraction | [intent](intents/2026-09-10-document-extraction-intent.md) | [spec](specs/2026-09-10-document-extraction-design.md) | [plan](plans/2026-09-10-document-extraction.md) | Planned | Plan written 2026-09-10, execution not started. Needs `GEMINI_API_KEY` + `BLOB_READ_WRITE_TOKEN` provisioned (project owner only) before it's testable end to end. **⚠️ Do not execute this plan until "Next priorities" item 2 above (refreshing its stale line references after the Hooks reformat) is done.** |
 | Emissions-factors upload facility (EPA/EXIOBASE/IPCC tables, superadmin-only) | — | — (discussed in-session, never committed to a file) | — | On hold | Design presented and discussed; explicitly **not approved to build** ("think it over... do not attempt anything yet," reinforced twice). Distinct from document extraction above — this one is reference-factor tables, not a tenant's own activity data. |
 | Tenant lifecycle governance (archive/unarchive, governed multi-step deletion) | — | — | — | Deferred by design | Approved concept, no design pass started. Binding constraint meanwhile: a tenant must never be deactivated/deleted as a side effect of any user or membership action. |
 | Identity/profile decoupling (machine-allocated usernames, admin-assigned email as login identity, separate display name) | — | — | — | Deferred by design | Approved concept, needs its own brainstorming/design pass before building — touches `email`-as-identity everywhere (auth, sessions, invites, verification). |
