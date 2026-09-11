@@ -9,6 +9,7 @@ import { hashPassword, comparePassword, passport } from "./auth";
 import { sendVerificationEmail, sendPasswordResetEmail, sendEmailChangedByAdminEmail } from "./email";
 import { requireAuth, requireOrg } from "./middleware/tenant";
 import { requireSuperAdmin } from "./middleware/admin";
+import { calculateEmission } from "./calculations/emission-calculation";
 import {
   Emission,
   GasComponent,
@@ -2502,83 +2503,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Compute the emission server-side whenever we have both an
       // activity-data quantity and a factor, so the persisted number can
       // never drift from its stated inputs (Section 2 of the design spec).
-      //
-      // The emission factor is expressed per unit of activity data in the
-      // factor's own native unit (kg CO2/TJ for every IPCC stationary-
-      // combustion default), so the quantity fed to the multiplication has
-      // to be in that same unit. Two paths:
-      //
-      //   1. Units already match -> multiply directly.
-      //   2. WEIGHT-basis activity data (kg / tonnes) against a TJ factor
-      //      -> convert using the fuel's net calorific value, which arrives
-      //      on the selected bundle's CO2 component
-      //      (ipccDefaultFactors.netCalorificValue, TJ/Gg == GJ/tonne,
-      //      2006 IPCC Guidelines Vol.2 Ch.1 Table 1.2). 1 Gg = 1e6 kg =
-      //      1e3 tonnes, hence the divisors in WEIGHT_UNITS_PER_GG.
-      //
-      // VOLUME-basis units (litres, m3, gallons) are deliberately NOT
-      // converted: going from volume to energy needs a fuel-density dataset
-      // that has not been sourced for this project yet, and guessing a
-      // density would put an unsourced number inside a number a verifier is
-      // meant to be able to reconstruct. Those still fall through to the
-      // reject below -- a disclosed scope boundary, not an oversight.
-      // Anything else that does not match (and any fuel whose factor row
-      // carries no NCV, e.g. the biogenic fuels seeded by
-      // manual-migration-008.mjs) also falls through unchanged.
-      const WEIGHT_UNITS_PER_GG: Record<string, number> = {
-        kg: 1_000_000,
-        kgs: 1_000_000,
-        kilogram: 1_000_000,
-        kilograms: 1_000_000,
-        t: 1_000,
-        tonne: 1_000,
-        tonnes: 1_000,
-        ton: 1_000,
-        tons: 1_000,
-        "metric tonne": 1_000,
-        "metric tonnes": 1_000,
-      };
+      // Extracted to server/calculations/emission-calculation.ts so the
+      // arithmetic can be unit-tested directly -- see
+      // docs/superpowers/specs/2026-09-11-emission-calculation-test-suite-design.md.
+      const calculation = calculateEmission({
+        activityDataValue: data.activityDataValue,
+        activityDataUnit: data.activityDataUnit,
+        emissionFactorValue: data.emissionFactorValue,
+        emissionFactorUnit: data.emissionFactorUnit,
+        gasBreakdown: data.gasBreakdown,
+      });
 
-      let computedEmissionKg: number | null = null;
+      if (calculation.status === "rejected") {
+        return res.status(400).json({ message: calculation.reason });
+      }
+
+      const computedEmissionKg = calculation.status === "computed" ? calculation.computedEmissionKg : null;
       // The activity quantity actually used in the multiplication, in the
       // FACTOR's unit (TJ) -- equal to activityDataValue when no conversion
       // was needed. Persisted on the emission record so that record's
       // `quantity x gasBreakdown[].co2ePerUnit` per-gas rollup (see
       // server/storage.ts getConsolidatedReport) stays arithmetically valid.
-      let activityValueInFactorUnit: number | null = null;
+      const activityValueInFactorUnit = calculation.status === "computed" ? calculation.activityValueInFactorUnit : null;
       // The NCV actually applied, recorded on the calculation approach so an
       // auditor can reconstruct kg -> TJ from the stored row alone.
-      let appliedNetCalorificValue: number | null = null;
-      if (
-        data.activityDataValue !== undefined &&
-        data.activityDataValue !== null &&
-        data.emissionFactorValue !== undefined &&
-        data.emissionFactorValue !== null
-      ) {
-        activityValueInFactorUnit = Number(data.activityDataValue);
-        const activityUnit = data.activityDataUnit?.trim().toLowerCase() ?? "";
-        const factorUnit = data.emissionFactorUnit?.trim().toLowerCase() ?? "";
-
-        if (activityUnit && factorUnit && activityUnit !== factorUnit) {
-          // NCV lives on the CO2 row only (CH4/N2O rows for the same fuel
-          // leave it null rather than repeat it) -- see
-          // ipccDefaultFactors.netCalorificValue in shared/schema.ts.
-          const co2Component = (data.gasBreakdown ?? []).find(
-            (c) => c.gas === "CO2" && typeof c.netCalorificValue === "number" && c.netCalorificValue > 0,
-          );
-          const unitsPerGg = WEIGHT_UNITS_PER_GG[activityUnit];
-          if (factorUnit === "tj" && unitsPerGg !== undefined && co2Component?.netCalorificValue) {
-            appliedNetCalorificValue = co2Component.netCalorificValue;
-            activityValueInFactorUnit = (Number(data.activityDataValue) * appliedNetCalorificValue) / unitsPerGg;
-          } else {
-            return res.status(400).json({
-              message: `Activity data unit ("${data.activityDataUnit}") must match the emission factor's unit ("${data.emissionFactorUnit}"). Unit conversion is only available for weight-basis quantities (kg/tonnes) against an energy-basis factor when the selected fuel has a published net calorific value -- otherwise enter the activity quantity directly in ${data.emissionFactorUnit}.`,
-            });
-          }
-        }
-
-        computedEmissionKg = activityValueInFactorUnit * Number(data.emissionFactorValue);
-      }
+      const appliedNetCalorificValue = calculation.status === "computed" ? calculation.appliedNetCalorificValue : null;
 
       const approach = await storage.upsertCalculationApproach({
         ...data,
