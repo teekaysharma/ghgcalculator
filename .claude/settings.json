@@ -8,6 +8,11 @@
             "type": "command",
             "command": "node scripts/hooks/protected-paths.mjs",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node scripts/hooks/credential-scan.mjs",
+            "timeout": 10
           }
         ]
       }
