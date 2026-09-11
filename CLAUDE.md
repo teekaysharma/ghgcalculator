@@ -63,9 +63,6 @@ always go to TeeKay via `AskUserQuestion` -- never silently fixed or dismissed, 
 
 **Known gaps against the playbook's later stages** (correlated 2026-09-10, confirmed by direct
 inspection, not yet closed):
-- No `.claude/skills/` directory of project-specific policy skills (only generic `superpowers`
-  process skills are in use) -- conventions like the `organizationId`-scoping rule below live only
-  in this file and in code comments, not in a discoverable skill.
 - No hooks configured anywhere.
 - A first Vitest suite now exists (`server/calculations/emission-calculation.test.ts`, 6 tests,
   added 2026-09-11) covering the emission-calculation arithmetic -- no longer "zero" test files,
@@ -85,26 +82,16 @@ inspection, not yet closed):
 
 - React + TypeScript client (Vite), Express server, Drizzle ORM, Postgres (Neon),
   passport-local + session auth.
-- Every tenant-scoped table query must filter on `organizationId`. No exceptions. A prior session
-  found and fixed 6 `upsertX` methods in `server/storage.ts` missing `organizationId` in their
-  `onConflictDoUpdate` conflict condition -- treat this class of bug as a standing thing to check
-  in any new upsert method, not a one-off.
-- `drizzle-kit push` is retired for this project -- confirmed broken across three early attempts.
-  Use hand-written idempotent migration scripts (`scripts/manual-migration-NNN.mjs`) instead --
-  `information_schema` checks before any DDL change, `applied`/`skipped` tracking, wrapped in one
-  transaction, safe to re-run. Latest is `015`; the next one is `016`.
-- GWP values: sourced from the `gwp_values` table, versioned (AR6 by default, `gwpVersion` column
-  present at the schema level, not just in the static reference xlsx) -- the version-tagging gap
-  this file used to list as open is closed.
-- Emission factor sourcing hierarchy: local/site-specific -> national -> regional -> named global
-  agencies (IEA, IPCC EFDB, UNFCCC, GHG Protocol, DEFRA) -> IPCC generic defaults, in that order,
-  with any IPCC-default substitution flagged in the data quality fields. Never silently default to
-  IPCC generic.
-- Any destructive database operation runs as two genuinely separate steps: (1) a dry-run that
-  prints exactly what will be affected, (2) a hard stop to actually read that output, (3) a
-  separate execution step, only after confirming nothing unexpected showed up. Established after a
-  real incident (2026-09-09: a chained dry-run+delete script removed an org without pausing to
-  react to its own diagnostic output). Never chain check-then-delete in one script run again.
+- Every tenant-scoped table query must filter on `organizationId`. No exceptions. See the
+  `database-conventions` skill for the incident history and the exact upsert patterns to use.
+- `drizzle-kit push` is retired for this project -- use hand-written idempotent migration scripts
+  instead. See `database-conventions` for the exact shape and why.
+- GWP values are versioned and sourced from the `gwp_values` table, never hardcoded. See
+  `ghg-domain-conventions`.
+- Emission factor sourcing hierarchy is enforced in order, with IPCC generic defaults last and
+  always flagged when used. See `ghg-domain-conventions`.
+- Any destructive database operation runs as two genuinely separate steps, never chained together.
+  See `database-conventions` for the incident this rule comes from.
 
 ## Current state (as of 2026-09-10 -- verify anything load-bearing before trusting)
 

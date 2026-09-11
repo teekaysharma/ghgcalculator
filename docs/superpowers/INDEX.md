@@ -25,23 +25,21 @@ day, binding until revised again here.
    owner, final whole-branch review + fix wave + scoped re-review, all clean), merged to `main`
    (fast-forward, commit `9bd3666`). `npm run check` and `npm run test` both verified green on the
    merged tree post-merge.
-2. **Deploy-stage pair, per the product owner's 2026-09-11 instruction given right after the
-   merge:** `REVIEW.md` + PR-gated deploy (AI PR review), and Hooks as approval gates. Sequencing
-   between/within these two not yet finalized — see the flagged dependency-graph conflict below
-   before starting either.
-3. **Resume the paused Hooks (build-time guardrails) execution** — worktree already created and
+2. ~~`.claude/skills/`~~ — **done.** Implemented 2026-09-11 via
+   [`docs/superpowers/plans/2026-09-11-claude-skills.md`](plans/2026-09-11-claude-skills.md): all
+   three skills created, `CLAUDE.md` trimmed to point at them. This closes the dependency-graph
+   conflict this section previously flagged — asked of the product owner 2026-09-11, answer was
+   "build skills first, then REVIEW.md." `REVIEW.md`/PR-review is now unblocked.
+3. **Deploy-stage pair, now the active priority (unblocked by item 2 above):** `REVIEW.md` +
+   PR-gated deploy (AI PR review), and Hooks as approval gates. Sequencing between/within these two
+   not yet finalized.
+4. **Resume the paused Hooks (build-time guardrails) execution** — worktree already created and
    ready at `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), dependencies
    installed, baseline `npm run check` verified clean, Task 1's implementer not yet dispatched.
    Nothing to redo, just re-enter and continue when this becomes the priority again. Distinct
-   initiative from item 2's "Hooks as approval gates" — this one is protected-path/credential-scan/
+   initiative from item 3's "Hooks as approval gates" — this one is protected-path/credential-scan/
    formatting guardrails during a session, not deploy-time gating.
-4. `.claude/skills/` — spec approved, plan not yet written. **Also a documented prerequisite for
-   item 2's PR-review piece** ("PR review requires updated CLAUDE.md and skills" per the playbook's
-   own dependency graph, and the skills initiative row below says the same) — this is the flagged
-   conflict: the product owner's new ordering puts REVIEW.md/PR-review ahead of skills, but the
-   playbook's own dependency graph says skills must come first. Not resolved silently; surfaced for
-   a decision before either piece of item 2 starts.
-5. **Once Hooks' full repo-wide Prettier reformat actually lands** (still pending — item 3 above
+5. **Once Hooks' full repo-wide Prettier reformat actually lands** (still pending — item 4 above
    hasn't run yet, so this hasn't triggered): refresh the stale `file:line` anchors throughout
    [`docs/superpowers/plans/2026-09-10-document-extraction.md`](plans/2026-09-10-document-extraction.md)
    — the reformat will shift line numbers repo-wide, and this plan's task steps reference exact
@@ -78,7 +76,7 @@ day, binding until revised again here.
 | `intent.md` → `spec.md` → `plan.md` artifact chain | Adopted | Established 2026-09-10 per https://claude.com/blog/the-ai-native-sdlc-playbook. Applied going forward; not backfilled onto the pre-existing specs/plans above (no value in reconstructing intent that was never recorded — this index's rows are the equivalent lightweight pointer instead). |
 | `CLAUDE.md` as shared institutional knowledge | Done | Committed and refreshed 2026-09-10 (was git-ignored and 3+ weeks stale before). Critical subset of `ClaudeCowork/ABOUT ME/CLAUDE-TKS.md` carried over. |
 | This index | Done | Created 2026-09-11. |
-| `.claude/skills/` (project-specific policy skills) — [intent](intents/2026-09-11-claude-skills-intent.md) · [spec](specs/2026-09-11-claude-skills-design.md) | Spec approved | Design done 2026-09-11: three skills (`database-conventions`, `ghg-domain-conventions`, `api-conventions`), `CLAUDE.md`'s overlapping bullets to be trimmed to one-liners + pointers once built. Plan not yet written. Real prerequisite for PR review per the playbook's own dependency graph ("PR review requires updated CLAUDE.md and skills"). |
+| `.claude/skills/` (project-specific policy skills) — [intent](intents/2026-09-11-claude-skills-intent.md) · [spec](specs/2026-09-11-claude-skills-design.md) · [plan](plans/2026-09-11-claude-skills.md) | Shipped | Implemented 2026-09-11: all three skills created (`database-conventions`, `ghg-domain-conventions`, `api-conventions`) under `.claude/skills/`, `CLAUDE.md`'s overlapping bullets trimmed to one-liners + pointers. Closes the playbook's own dependency-graph prerequisite for PR review ("PR review requires updated CLAUDE.md and skills"). |
 | Hooks (build-time guardrails) — [intent](intents/2026-09-11-build-hooks-intent.md) · [spec](specs/2026-09-11-build-hooks-design.md) · [plan](plans/2026-09-11-build-hooks.md) | Plan written, execution paused | **Paused 2026-09-11 at a clean, resumable checkpoint** — mid-way through kicking off `subagent-driven-development`, before Task 1's implementer was dispatched. Worktree already created and ready at `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), `npm install` done, `npm run check` baseline verified clean. Paused (not abandoned) to take up the Test-suite item below at the user's request. Resume by re-entering that worktree and dispatching Task 1 — no setup work is lost. Includes the full one-time repo-wide reformat that triggers "Next priorities" item 2 above (still applies once resumed). |
 | Test suite — [intent](intents/2026-09-11-emission-calculation-test-suite-intent.md) · [spec](specs/2026-09-11-emission-calculation-test-suite-design.md) · [plan](plans/2026-09-11-emission-calculation-test-suite.md) | Shipped (first slice) | GHG calculation arithmetic in `PUT /api/source-streams/:id/calculation-approach` extracted to pure `server/calculations/emission-calculation.ts` and tested with Vitest. First slice: 6 passing tests covering units matching, kilogram/tonne conversion via NCV, volume-basis rejection, missing-NCV rejection, and insufficient-data cases. Establishes baseline feedback loop for later Continuous Evals. Broader coverage (tenant-isolation, hooks, additional slices) remains separate, not-yet-scoped work. **Coverage gap (found during final review, 2026-09-11):** `PUT /api/source-streams/:id/calculation-approach` itself has no end-to-end/integration test coverage of its own — `npm run verify` does not reach it (confirmed by direct inspection of `scripts/verify-branch.mjs`, which only exercises the unrelated legacy `POST /api/calculate` endpoint); the product owner ruled independent manual code review plus these Vitest unit tests sufficient proof for this extraction instead. **Also found during that review (pre-existing, not introduced by this branch, not fixed here):** `calculateEmission` can silently produce wrong results on malformed input — a non-numeric `activityDataValue` (e.g. `"abc"`) yields `status: "computed"` with `computedEmissionKg: NaN`; an empty-string value yields `computedEmissionKg: 0` (silently treating a cleared field as zero emissions, rather than "not recorded"); and an `activityDataUnit` of `"constructor"` or `"__proto__"` resolves through `Object.prototype` in the `WEIGHT_UNITS_PER_GG` lookup, bypassing its `undefined` guard, also producing `NaN`. All three are reachable from real user input and would persist to Postgres as the string `"NaN"`. Flagged as candidate first cases for the next test-suite slice. |
 | CI/CD | Not started | No `.github/` directory at all — not even lint/typecheck on push. |
