@@ -14,7 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { groupIpccFactorsByGasBundle, type IpccDefaultFactorRow, type GwpValueRow, type IpccGasBundle } from "@/lib/ipccGasBundle";
+import {
+  groupIpccFactorsByGasBundle,
+  type IpccDefaultFactorRow,
+  type GwpValueRow,
+  type IpccGasBundle,
+} from "@/lib/ipccGasBundle";
 
 // Shared factor-picker for both the legacy Scope 1/2/3 calculator
 // (ScopeInput.tsx/EmissionCalculator.tsx) and the facility-level MRV
@@ -100,12 +105,8 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
   });
 
   const orgFactors = (orgFactorsQuery.data?.factors ?? []).filter((f) => !scope || !f.scope || f.scope === scope);
-  const orgFactorsForCountry = facilityCountry
-    ? orgFactors.filter((f) => f.country === facilityCountry)
-    : [];
-  const orgFactorsOther = facilityCountry
-    ? orgFactors.filter((f) => f.country !== facilityCountry)
-    : orgFactors;
+  const orgFactorsForCountry = facilityCountry ? orgFactors.filter((f) => f.country === facilityCountry) : [];
+  const orgFactorsOther = facilityCountry ? orgFactors.filter((f) => f.country !== facilityCountry) : orgFactors;
   const ipccBundles = groupIpccFactorsByGasBundle(
     ipccQuery.data?.ipccDefaultFactors ?? [],
     gwpValuesQuery.data?.gwpValues ?? [],
@@ -145,7 +146,14 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
         });
       }
       setShowAddForm(false);
-      setNewFactor({ name: "", factor: "", unit: "", sourceUrl: "", authorityName: "", country: facilityCountry ?? "" });
+      setNewFactor({
+        name: "",
+        factor: "",
+        unit: "",
+        sourceUrl: "",
+        authorityName: "",
+        country: facilityCountry ?? "",
+      });
     },
     onError: (err: Error) => toast({ title: "Could not add factor", description: err.message, variant: "destructive" }),
   });
@@ -170,9 +178,7 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
       const bundleKey = key.slice(5);
       const bundle = ipccBundles.find((b) => b.key === bundleKey);
       if (bundle) {
-        const sourceDocs = Array.from(
-          new Set((bundle.factor.gasBreakdown ?? []).map((c) => c.gas)),
-        );
+        const sourceDocs = Array.from(new Set((bundle.factor.gasBreakdown ?? []).map((c) => c.gas)));
         onSelect({
           label: bundle.factor.name,
           factorValue: String(bundle.factor.factor),
@@ -269,15 +275,17 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
                     {c.gas}: {c.nativeFactor} native x GWP {c.gwpValue} ({c.gwpVersion})
                     {c.isBiogenic && c.gas === "CO2" && " — biogenic"}
                   </span>
-                  <span>{c.co2ePerUnit.toFixed(1)} kg CO2e/{bundle?.unit}</span>
+                  <span>
+                    {c.co2ePerUnit.toFixed(1)} kg CO2e/{bundle?.unit}
+                  </span>
                 </div>
               ))}
               {isBiogenic && biogenicCo2PerUnit > 0 && (
                 <p className="pt-1 text-amber-700">
-                  {((biogenicCo2PerUnit / (bundle?.factor.factor || 1)) * 100).toFixed(0)}% of the number shown in
-                  the dropdown above is biogenic CO2. It will NOT count toward this report's gross Scope 1/2/3
-                  totals — it is excluded and shown separately as a memo item, per GHG Protocol / GRI 305
-                  convention. Only the CH4/N2O share above stays in the gross total.
+                  {((biogenicCo2PerUnit / (bundle?.factor.factor || 1)) * 100).toFixed(0)}% of the number shown in the
+                  dropdown above is biogenic CO2. It will NOT count toward this report's gross Scope 1/2/3 totals — it
+                  is excluded and shown separately as a memo item, per GHG Protocol / GRI 305 convention. Only the
+                  CH4/N2O share above stays in the gross total.
                 </p>
               )}
             </div>
@@ -285,14 +293,18 @@ export function EmissionFactorPicker({ scope, facilityCountry, onSelect }: Emiss
         })()}
 
       {!showAddForm ? (
-        <button type="button" className="text-xs text-primary-600 hover:text-primary-800 underline" onClick={() => setShowAddForm(true)}>
+        <button
+          type="button"
+          className="text-xs text-primary-600 hover:text-primary-800 underline"
+          onClick={() => setShowAddForm(true)}
+        >
           + Add your own factor (requires a traceable source)
         </button>
       ) : (
         <div className="space-y-2 border rounded-md p-3 bg-neutral-50">
           <p className="text-xs text-neutral-500">
-            IPCC defaults are the fallback and are never replaced, only supplemented -- every factor you add
-            supplements them for this specific activity and must be traceable to a real, checkable source.
+            IPCC defaults are the fallback and are never replaced, only supplemented -- every factor you add supplements
+            them for this specific activity and must be traceable to a real, checkable source.
           </p>
           <Input
             placeholder="Activity name"

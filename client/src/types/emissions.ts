@@ -1,4 +1,4 @@
-export type ScopeType = 'scope1' | 'scope2' | 'scope3';
+export type ScopeType = "scope1" | "scope2" | "scope3";
 
 // Per-gas component of a combined factor, e.g. one row for CO2, one for
 // CH4, one for N2O -- built from ipccDefaultFactors (gas-native factor) +

@@ -54,8 +54,8 @@ export default function HelpSupport() {
             <h2 className="font-heading font-semibold text-lg text-neutral-900 mb-3">Managing your team</h2>
             <p className="text-neutral-600 text-sm">
               Org owners and admins can invite existing accounts, and deactivate or reactivate a member's access —
-              either just to your organization, or to their account entirely — from the Team tab. Every change is
-              logged with a reason.
+              either just to your organization, or to their account entirely — from the Team tab. Every change is logged
+              with a reason.
             </p>
           </section>
 
@@ -65,22 +65,21 @@ export default function HelpSupport() {
               <div>
                 <p className="font-medium text-neutral-900">I didn't get a verification email.</p>
                 <p className="text-neutral-600">
-                  Use the resend link on the verification page, and check your spam folder. If it still doesn't
-                  arrive, contact us below.
+                  Use the resend link on the verification page, and check your spam folder. If it still doesn't arrive,
+                  contact us below.
                 </p>
               </div>
               <div>
                 <p className="font-medium text-neutral-900">I forgot my password.</p>
                 <p className="text-neutral-600">
-                  Use "Forgot your password?" on the login page — you'll get a one-time link to set a new one. Nobody
-                  at this company ever sees or sets your password directly.
+                  Use "Forgot your password?" on the login page — you'll get a one-time link to set a new one. Nobody at
+                  this company ever sees or sets your password directly.
                 </p>
               </div>
               <div>
                 <p className="font-medium text-neutral-900">Can I change my account's email address?</p>
                 <p className="text-neutral-600">
-                  Not yet, self-service — ask your org's owner/admin, or a platform administrator, to change it for
-                  you.
+                  Not yet, self-service — ask your org's owner/admin, or a platform administrator, to change it for you.
                 </p>
               </div>
             </div>

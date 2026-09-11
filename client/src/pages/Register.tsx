@@ -81,8 +81,8 @@ export default function Register() {
               </p>
             ) : (
               <p>
-                We've sent a verification link to <span className="font-medium">{pendingEmail}</span>. Verify
-                within 24 hours, or this registration will be removed and you'll need to sign up again.
+                We've sent a verification link to <span className="font-medium">{pendingEmail}</span>. Verify within 24
+                hours, or this registration will be removed and you'll need to sign up again.
               </p>
             )}
           </div>
@@ -93,7 +93,11 @@ export default function Register() {
             onClick={resend}
             disabled={resendState === "sending"}
           >
-            {resendState === "sending" ? "Sending..." : resendState === "sent" ? "Sent — check your inbox" : "Resend email"}
+            {resendState === "sending"
+              ? "Sending..."
+              : resendState === "sent"
+                ? "Sent — check your inbox"
+                : "Resend email"}
           </Button>
           <p className="text-sm text-neutral-600 text-center">
             <Link href="/login" className="text-primary font-medium hover:underline">

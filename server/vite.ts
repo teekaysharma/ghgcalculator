@@ -27,9 +27,7 @@ export function serveStatic(app: Express, distPathOverride?: string) {
   const distPath = distPathOverride ?? path.resolve(__dirname, "public");
 
   if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
-    );
+    throw new Error(`Could not find the build directory: ${distPath}, make sure to build the client first`);
   }
 
   app.use(express.static(distPath));

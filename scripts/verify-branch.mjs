@@ -263,7 +263,10 @@ async function step5_smokeTest() {
     if (res.status === 401 && body.reason === "unverified") {
       ok("POST /api/auth/login (unverified)", "401, reason: unverified");
     } else {
-      fail("POST /api/auth/login (unverified)", `expected 401 + reason unverified, got ${res.status}, body ${JSON.stringify(body)}`);
+      fail(
+        "POST /api/auth/login (unverified)",
+        `expected 401 + reason unverified, got ${res.status}, body ${JSON.stringify(body)}`,
+      );
     }
   }
 
@@ -336,7 +339,9 @@ async function step5_smokeTest() {
           {
             const pool = new Pool({ connectionString: process.env.DATABASE_URL });
             try {
-              const res = await pool.query("SELECT email_verification_token FROM users WHERE email = $1", [resendEmail]);
+              const res = await pool.query("SELECT email_verification_token FROM users WHERE email = $1", [
+                resendEmail,
+              ]);
               tokenAfter = res.rows[0]?.email_verification_token;
             } finally {
               await pool.end();
@@ -418,7 +423,8 @@ async function step5_smokeTest() {
       }),
     });
     const body = await res.json().catch(() => ({}));
-    if (res.status === 201 && body.boundary?.id) ok("POST /api/reporting-boundaries", `boundary id ${body.boundary.id}`);
+    if (res.status === 201 && body.boundary?.id)
+      ok("POST /api/reporting-boundaries", `boundary id ${body.boundary.id}`);
     else fail("POST /api/reporting-boundaries", `status ${res.status}, body ${JSON.stringify(body)}`);
   }
 

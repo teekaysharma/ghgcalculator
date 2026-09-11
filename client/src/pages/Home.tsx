@@ -27,7 +27,8 @@ function SuperAdminControlPanel({ hasOrg }: { hasOrg: boolean }) {
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       toast({ title: "Organization created" });
     },
-    onError: (err) => toast({ title: "Could not create organization", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not create organization", description: err.message, variant: "destructive" }),
   });
 
   return (
@@ -49,11 +50,7 @@ function SuperAdminControlPanel({ hasOrg }: { hasOrg: boolean }) {
               Optionally, create one of your own to enter data and use the app as a regular tenant would:
             </p>
             <div className="flex gap-2 max-w-sm">
-              <Input
-                placeholder="Organization name"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-              />
+              <Input placeholder="Organization name" value={orgName} onChange={(e) => setOrgName(e.target.value)} />
               <Button
                 variant="outline"
                 onClick={() => createOrg.mutate()}
@@ -101,7 +98,13 @@ function NameEditor({ currentName }: { currentName: string | null }) {
           }}
           className="h-7 text-sm w-40"
         />
-        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => saveName.mutate()} disabled={saveName.isPending}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2"
+          onClick={() => saveName.mutate()}
+          disabled={saveName.isPending}
+        >
           Save
         </Button>
         <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditing(false)}>
@@ -140,9 +143,7 @@ export default function Home() {
               <h1 className="font-heading font-bold text-3xl md:text-4xl text-primary-800 mb-2 font-work-sans">
                 GHG Emissions Calculator
               </h1>
-              <p className="text-neutral-600">
-                Track, calculate, and visualize your carbon footprint
-              </p>
+              <p className="text-neutral-600">Track, calculate, and visualize your carbon footprint</p>
             </div>
             <div className="flex items-center gap-3 mt-4 md:mt-0">
               <div className="text-right text-sm">

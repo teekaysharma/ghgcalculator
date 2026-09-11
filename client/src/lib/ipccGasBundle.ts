@@ -69,10 +69,7 @@ function gwpGasKeyFor(gasType: string, isBiogenic: boolean): string {
  * rows (e.g. a future non-combustion category), it still produces a single
  * standalone bundle so the picker/calculator degrade gracefully.
  */
-export function groupIpccFactorsByGasBundle(
-  rows: IpccDefaultFactorRow[],
-  gwpRows: GwpValueRow[],
-): IpccGasBundle[] {
+export function groupIpccFactorsByGasBundle(rows: IpccDefaultFactorRow[], gwpRows: GwpValueRow[]): IpccGasBundle[] {
   const gwpByGas = new Map<string, GwpValueRow>();
   for (const g of gwpRows) {
     gwpByGas.set(g.gas, g);
@@ -89,7 +86,10 @@ export function groupIpccFactorsByGasBundle(
   }
 
   // Sector-specific rows (CH4/N2O today), grouped by (activity, sector).
-  const sectorGroups = new Map<string, { activity: IpccDefaultFactorRow; sector: string; rows: IpccDefaultFactorRow[] }>();
+  const sectorGroups = new Map<
+    string,
+    { activity: IpccDefaultFactorRow; sector: string; rows: IpccDefaultFactorRow[] }
+  >();
   for (const r of rows) {
     if (r.sector === "all") continue;
     const key = `${activityKey(r)}::${r.sector}`;

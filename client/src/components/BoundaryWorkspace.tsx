@@ -170,7 +170,10 @@ export default function BoundaryWorkspace({
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="text-base">Boundary workspace</CardTitle>
-            <CardDescription>Source streams, methane reporting, verification findings, and management QA for this facility and reporting year.</CardDescription>
+            <CardDescription>
+              Source streams, methane reporting, verification findings, and management QA for this facility and
+              reporting year.
+            </CardDescription>
           </div>
           {reportingBoundary.status === "draft" ? (
             <Button
@@ -185,7 +188,8 @@ export default function BoundaryWorkspace({
           ) : (
             <div className="flex items-center gap-2 shrink-0">
               <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
-                Finalized {reportingBoundary.finalizedAt ? new Date(reportingBoundary.finalizedAt).toLocaleDateString() : ""}
+                Finalized{" "}
+                {reportingBoundary.finalizedAt ? new Date(reportingBoundary.finalizedAt).toLocaleDateString() : ""}
               </span>
               <RecalculateButton reportingBoundaryId={reportingBoundary.id} />
             </div>
@@ -391,7 +395,8 @@ function SourceStreamsTab({ facilityId, reportingBoundaryId }: { facilityId: num
       toast({ title: "Source stream created" });
       if (data?.sourceStream?.id) setSelectedStreamId(data.sourceStream.id);
     },
-    onError: (err) => toast({ title: "Could not create source stream", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not create source stream", description: err.message, variant: "destructive" }),
   });
 
   const remove = useMutation({
@@ -403,7 +408,8 @@ function SourceStreamsTab({ facilityId, reportingBoundaryId }: { facilityId: num
       queryClient.invalidateQueries({ queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/source-streams`] });
       toast({ title: "Source stream removed" });
     },
-    onError: (err) => toast({ title: "Could not remove source stream", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not remove source stream", description: err.message, variant: "destructive" }),
   });
 
   const selectedStream = streams.find((s) => s.id === selectedStreamId) ?? null;
@@ -436,9 +442,7 @@ function SourceStreamsTab({ facilityId, reportingBoundaryId }: { facilityId: num
                 <TableCell className="font-medium">{s.name}</TableCell>
                 <TableCell className="capitalize">
                   {s.scope ? s.scope.replace("scope", "Scope ") : "-"}
-                  {s.scope === "scope3" && s.scope3Category
-                    ? ` (Cat. ${s.scope3Category})`
-                    : ""}
+                  {s.scope === "scope3" && s.scope3Category ? ` (Cat. ${s.scope3Category})` : ""}
                 </TableCell>
                 <TableCell className="capitalize">{s.materiality ?? "-"}</TableCell>
                 <TableCell className="capitalize">{s.quantificationApproach?.replace("_", " ") ?? "not set"}</TableCell>
@@ -564,7 +568,11 @@ function SourceStreamDetail({
             <Label className="text-sm font-medium">How is this measured?</Label>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {[
-                { value: "calculation_based", title: "Calculation-based", desc: "Activity data \u00d7 an emission factor." },
+                {
+                  value: "calculation_based",
+                  title: "Calculation-based",
+                  desc: "Activity data \u00d7 an emission factor.",
+                },
                 { value: "measurement_based", title: "Measurement-based", desc: "Continuous monitoring equipment." },
                 { value: "fallback", title: "Fallback", desc: "Neither is available, estimate and justify." },
               ].map((opt) => (
@@ -694,10 +702,18 @@ function CalculationApproachForm({
   return (
     <div className="space-y-3 bg-neutral-50 rounded-md p-3">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <Input placeholder="Fuel / material type" value={fields.fuelOrMaterialType} onChange={set("fuelOrMaterialType")} />
+        <Input
+          placeholder="Fuel / material type"
+          value={fields.fuelOrMaterialType}
+          onChange={set("fuelOrMaterialType")}
+        />
         <Input placeholder="Activity data value" value={fields.activityDataValue} onChange={set("activityDataValue")} />
         <Input placeholder="Activity data unit" value={fields.activityDataUnit} onChange={set("activityDataUnit")} />
-        <Input placeholder="Activity data source" value={fields.activityDataSource} onChange={set("activityDataSource")} />
+        <Input
+          placeholder="Activity data source"
+          value={fields.activityDataSource}
+          onChange={set("activityDataSource")}
+        />
         <Input placeholder="Activity data tier" value={fields.activityDataTier} onChange={set("activityDataTier")} />
       </div>
 
@@ -728,7 +744,10 @@ function CalculationApproachForm({
             {/* State the kg CO2e basis explicitly: the server's
                 quantity x factor / 1000 computation assumes it, and a
                 factor entered in tonnes would be a silent 1000x error. */}
-            Using: <span className="font-medium">{fields.emissionFactorValue} kg CO2e/{fields.emissionFactorUnit}</span>
+            Using:{" "}
+            <span className="font-medium">
+              {fields.emissionFactorValue} kg CO2e/{fields.emissionFactorUnit}
+            </span>
             {isIpccDefault && <span className="ml-2 text-amber-700 font-medium">IPCC default</span>}
           </div>
           {fields.emissionFactorAuthorityName && <div>Authority: {fields.emissionFactorAuthorityName}</div>}
@@ -743,7 +762,11 @@ function CalculationApproachForm({
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <Input placeholder="Emission factor tier" value={fields.emissionFactorTier} onChange={set("emissionFactorTier")} />
+        <Input
+          placeholder="Emission factor tier"
+          value={fields.emissionFactorTier}
+          onChange={set("emissionFactorTier")}
+        />
         <Input
           placeholder="Oxidation / carbonation factor"
           value={fields.oxidationOrCarbonationFactor}
@@ -799,7 +822,11 @@ function MeasurementApproachForm({ sourceStreamId }: { sourceStreamId: number })
     <div className="space-y-3 bg-neutral-50 rounded-md p-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Input placeholder="Measurement method" value={fields.measurementMethod} onChange={set("measurementMethod")} />
-        <Input placeholder="Monitoring frequency" value={fields.monitoringFrequency} onChange={set("monitoringFrequency")} />
+        <Input
+          placeholder="Monitoring frequency"
+          value={fields.monitoringFrequency}
+          onChange={set("monitoringFrequency")}
+        />
         <Input placeholder="Measurement unit" value={fields.measurementUnit} onChange={set("measurementUnit")} />
         <Input
           placeholder="Annual measured quantity"
@@ -807,7 +834,11 @@ function MeasurementApproachForm({ sourceStreamId }: { sourceStreamId: number })
           onChange={set("annualMeasuredQuantity")}
         />
         <Input placeholder="QA/QC procedure" value={fields.qaqcProcedure} onChange={set("qaqcProcedure")} />
-        <Input placeholder="Calibration frequency" value={fields.calibrationFrequency} onChange={set("calibrationFrequency")} />
+        <Input
+          placeholder="Calibration frequency"
+          value={fields.calibrationFrequency}
+          onChange={set("calibrationFrequency")}
+        />
       </div>
       <Textarea placeholder="Notes" value={fields.notes} onChange={set("notes")} rows={2} />
       <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
@@ -1005,7 +1036,9 @@ function MethaneReportTab({ facilityId, reportingBoundaryId }: { facilityId: num
   const [methaneSourcesDescription, setMethaneSourcesDescription] = useState(existing?.methaneSourcesDescription ?? "");
   const [quantificationMethod, setQuantificationMethod] = useState(existing?.quantificationMethod ?? "");
   const [annualMethaneEmissions, setAnnualMethaneEmissions] = useState(existing?.annualMethaneEmissions ?? "");
-  const [annualMethaneEmissionsUnit, setAnnualMethaneEmissionsUnit] = useState(existing?.annualMethaneEmissionsUnit ?? "");
+  const [annualMethaneEmissionsUnit, setAnnualMethaneEmissionsUnit] = useState(
+    existing?.annualMethaneEmissionsUnit ?? "",
+  );
   const [notes, setNotes] = useState(existing?.notes ?? "");
 
   const save = useMutation({
@@ -1074,7 +1107,9 @@ function VerificationFindingsTab({ reportingBoundaryId }: { reportingBoundaryId:
   const [status, setStatus] = useState("open");
 
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/verification-findings`] });
+    queryClient.invalidateQueries({
+      queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/verification-findings`],
+    });
 
   const create = useMutation({
     mutationFn: async () => {
@@ -1118,7 +1153,8 @@ function VerificationFindingsTab({ reportingBoundaryId }: { reportingBoundaryId:
           <div key={f.id} className="flex items-start justify-between border-b border-neutral-100 pb-2 text-sm">
             <div>
               <div className="font-medium capitalize">
-                {f.findingType.replace("_", " ")} \u00b7 <span className="capitalize">{f.status.replace("_", " ")}</span>
+                {f.findingType.replace("_", " ")} \u00b7{" "}
+                <span className="capitalize">{f.status.replace("_", " ")}</span>
               </div>
               <div>{f.description}</div>
               {f.severity && <div className="text-neutral-500 capitalize">Severity: {f.severity}</div>}
@@ -1164,7 +1200,12 @@ function VerificationFindingsTab({ reportingBoundaryId }: { reportingBoundaryId:
             </SelectContent>
           </Select>
         </div>
-        <Textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+        <Textarea
+          placeholder="Description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+        />
         <Button onClick={() => create.mutate()} disabled={create.isPending || !description}>
           {create.isPending ? "Adding..." : "Add finding"}
         </Button>
@@ -1250,8 +1291,16 @@ function ManagementQaTab({ reportingBoundaryId }: { reportingBoundaryId: number 
           rows={2}
         />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Input placeholder="Responsible person" value={responsiblePerson} onChange={(e) => setResponsiblePerson(e.target.value)} />
-          <Input placeholder="Review frequency" value={reviewFrequency} onChange={(e) => setReviewFrequency(e.target.value)} />
+          <Input
+            placeholder="Responsible person"
+            value={responsiblePerson}
+            onChange={(e) => setResponsiblePerson(e.target.value)}
+          />
+          <Input
+            placeholder="Review frequency"
+            value={reviewFrequency}
+            onChange={(e) => setReviewFrequency(e.target.value)}
+          />
           <Input type="date" value={lastReviewDate} onChange={(e) => setLastReviewDate(e.target.value)} />
         </div>
         <Button onClick={() => create.mutate()} disabled={create.isPending}>

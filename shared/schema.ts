@@ -1,4 +1,16 @@
-import { pgTable, text, serial, integer, boolean, numeric, timestamp, unique, uniqueIndex, index, jsonb } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  boolean,
+  numeric,
+  timestamp,
+  unique,
+  uniqueIndex,
+  index,
+  jsonb,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -141,8 +153,12 @@ export const memberships = pgTable(
   "memberships",
   {
     id: serial("id").primaryKey(),
-    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("member"),
     // Access-lifecycle flag (2026-09-04): requireOrg (server/middleware/tenant.ts)
     // only resolves active memberships -- deactivating one revokes that org's
@@ -178,7 +194,9 @@ export const organizationModules = pgTable(
   "organization_modules",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     moduleKey: text("module_key").notNull(),
     enabledAt: timestamp("enabled_at").defaultNow().notNull(),
     // Free-text note of who/how this was granted (e.g. an email or invoice
@@ -225,7 +243,9 @@ export const adminActionLog = pgTable("admin_action_log", {
   // organizationModules.enabledBy below) -- the actor here is always an
   // authenticated super-admin or org-admin session, never a vendor-script
   // identity.
-  actorUserId: integer("actor_user_id").notNull().references(() => users.id),
+  actorUserId: integer("actor_user_id")
+    .notNull()
+    .references(() => users.id),
   action: text("action").notNull(),
   // Deliberately NOT a foreign key: the delete action's entire point is
   // removing this row, and a hard FK would either block the delete or
@@ -266,7 +286,7 @@ export type InsertAdminActionLog = z.infer<typeof insertAdminActionLogSchema>;
 export type AdminActionLog = typeof adminActionLog.$inferSelect;
 
 // GHG Emission types
-export type ScopeType = 'scope1' | 'scope2' | 'scope3';
+export type ScopeType = "scope1" | "scope2" | "scope3";
 
 // ---------------------------------------------------------------------------
 // Persisted, tenant-scoped tables
@@ -282,7 +302,9 @@ export const emissionFactorsTable = pgTable(
   "emission_factors",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     factor: numeric("factor", { precision: 20, scale: 8 }).notNull(),
     unit: text("unit").notNull(),
@@ -356,7 +378,9 @@ export const emissionRecordsTable = pgTable(
   "emission_records",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     createdBy: integer("created_by").references(() => users.id),
     scope: text("scope").notNull(),
     activity: text("activity").notNull(),
@@ -387,8 +411,12 @@ export const emissionRecordsTable = pgTable(
     // Plan 3 rollup query filters directly without a join chain.
     facilityId: integer("facility_id").references(() => facilities.id, { onDelete: "cascade" }),
     sourceStreamId: integer("source_stream_id").references(() => sourceStreams.id, { onDelete: "cascade" }),
-    calculationApproachId: integer("calculation_approach_id").references(() => calculationApproaches.id, { onDelete: "set null" }),
-    reportingBoundaryId: integer("reporting_boundary_id").references(() => reportingBoundaries.id, { onDelete: "cascade" }),
+    calculationApproachId: integer("calculation_approach_id").references(() => calculationApproaches.id, {
+      onDelete: "set null",
+    }),
+    reportingBoundaryId: integer("reporting_boundary_id").references(() => reportingBoundaries.id, {
+      onDelete: "cascade",
+    }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -472,7 +500,9 @@ export const reportingEntities = pgTable(
   "reporting_entities",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     legalEntity: text("legal_entity"),
     // Design: docs/superpowers/specs/2026-08-14-verification-ready-multi-facility-inventory-design.md
@@ -503,8 +533,12 @@ export const facilities = pgTable(
   "facilities",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    reportingEntityId: integer("reporting_entity_id").notNull().references(() => reportingEntities.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    reportingEntityId: integer("reporting_entity_id")
+      .notNull()
+      .references(() => reportingEntities.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     country: text("country"),
     // Design: docs/superpowers/specs/2026-08-14-verification-ready-multi-facility-inventory-design.md
@@ -537,8 +571,12 @@ export const reportingBoundaries = pgTable(
   "reporting_boundaries",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    reportingEntityId: integer("reporting_entity_id").notNull().references(() => reportingEntities.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    reportingEntityId: integer("reporting_entity_id")
+      .notNull()
+      .references(() => reportingEntities.id, { onDelete: "cascade" }),
     reportingYear: integer("reporting_year").notNull(),
     consolidationApproach: text("consolidation_approach").notNull(),
     description: text("description"),
@@ -560,7 +598,10 @@ export const reportingBoundaries = pgTable(
   },
   (table) => ({
     orgIdx: index("reporting_boundaries_org_idx").on(table.organizationId),
-    entityYearUnique: unique("reporting_boundaries_entity_year_unique").on(table.reportingEntityId, table.reportingYear),
+    entityYearUnique: unique("reporting_boundaries_entity_year_unique").on(
+      table.reportingEntityId,
+      table.reportingYear,
+    ),
   }),
 );
 
@@ -765,8 +806,13 @@ export const facilityIdentifiers = pgTable(
   "facility_identifiers",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    facilityId: integer("facility_id").notNull().references(() => facilities.id, { onDelete: "cascade" }).unique(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" })
+      .unique(),
     groupParentEntity: text("group_parent_entity"),
     economicLicenceNumber: text("economic_licence_number"),
     environmentalPermitNumber: text("environmental_permit_number"),
@@ -781,7 +827,9 @@ export const facilityIdentifiers = pgTable(
     // unchanged. onDelete: "set null" rather than "cascade": removing a
     // row from the primary_activity_types reference list should never
     // cascade-delete facility data, it should just clear the reference.
-    primaryActivityTypeId: integer("primary_activity_type_id").references(() => primaryActivityTypes.id, { onDelete: "set null" }),
+    primaryActivityTypeId: integer("primary_activity_type_id").references(() => primaryActivityTypes.id, {
+      onDelete: "set null",
+    }),
     // Structured, FK-backed ISIC Rev.4 division reference -- additive,
     // nullable, same reasoning as primaryActivityTypeId above. This is the
     // new main "Primary activity" classification field (primaryActivityTypeId
@@ -821,8 +869,12 @@ export const facilityContacts = pgTable(
   "facility_contacts",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    facilityId: integer("facility_id").notNull().references(() => facilities.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
     contactType: text("contact_type").notNull().default("primary"),
     title: text("title"),
     firstName: text("first_name"),
@@ -859,8 +911,12 @@ export const facilityProducts = pgTable(
   "facility_products",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    facilityId: integer("facility_id").notNull().references(() => facilities.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
     productCode: text("product_code"),
     productCategory: text("product_category"),
     // Structured, FK-backed companion to the free-text productCategory
@@ -869,7 +925,9 @@ export const facilityProducts = pgTable(
     // unchanged. onDelete: "set null" rather than "cascade": removing a
     // row from the product_benchmarks reference list should never
     // cascade-delete facility data, it should just clear the reference.
-    productBenchmarkId: integer("product_benchmark_id").references(() => productBenchmarks.id, { onDelete: "set null" }),
+    productBenchmarkId: integer("product_benchmark_id").references(() => productBenchmarks.id, {
+      onDelete: "set null",
+    }),
     productionTechnology: text("production_technology"),
     energyRelatedEmissions: boolean("energy_related_emissions").default(false),
     processEmissions: boolean("process_emissions").default(false),
@@ -910,9 +968,15 @@ export const sourceStreams = pgTable(
   "source_streams",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    facilityId: integer("facility_id").notNull().references(() => facilities.id, { onDelete: "cascade" }),
-    reportingBoundaryId: integer("reporting_boundary_id").notNull().references(() => reportingBoundaries.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
+    reportingBoundaryId: integer("reporting_boundary_id")
+      .notNull()
+      .references(() => reportingBoundaries.id, { onDelete: "cascade" }),
     streamCode: text("stream_code"),
     name: text("name").notNull(),
     description: text("description"),
@@ -961,8 +1025,13 @@ export const calculationApproaches = pgTable(
   "calculation_approaches",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    sourceStreamId: integer("source_stream_id").notNull().references(() => sourceStreams.id, { onDelete: "cascade" }).unique(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sourceStreamId: integer("source_stream_id")
+      .notNull()
+      .references(() => sourceStreams.id, { onDelete: "cascade" })
+      .unique(),
     fuelOrMaterialType: text("fuel_or_material_type"),
     activityDataValue: numeric("activity_data_value", { precision: 20, scale: 6 }),
     activityDataUnit: text("activity_data_unit"),
@@ -1035,8 +1104,13 @@ export const measurementBasedApproaches = pgTable(
   "measurement_based_approaches",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    sourceStreamId: integer("source_stream_id").notNull().references(() => sourceStreams.id, { onDelete: "cascade" }).unique(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sourceStreamId: integer("source_stream_id")
+      .notNull()
+      .references(() => sourceStreams.id, { onDelete: "cascade" })
+      .unique(),
     measurementMethod: text("measurement_method"),
     monitoringFrequency: text("monitoring_frequency"),
     measurementUnit: text("measurement_unit"),
@@ -1070,8 +1144,13 @@ export const fallbackApproaches = pgTable(
   "fallback_approaches",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    sourceStreamId: integer("source_stream_id").notNull().references(() => sourceStreams.id, { onDelete: "cascade" }).unique(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sourceStreamId: integer("source_stream_id")
+      .notNull()
+      .references(() => sourceStreams.id, { onDelete: "cascade" })
+      .unique(),
     justification: text("justification"),
     fallbackMethodDescription: text("fallback_method_description"),
     estimatedEmissionsTco2e: numeric("estimated_emissions_tco2e", { precision: 20, scale: 4 }),
@@ -1098,9 +1177,15 @@ export const methaneReports = pgTable(
   "methane_reports",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    facilityId: integer("facility_id").notNull().references(() => facilities.id, { onDelete: "cascade" }),
-    reportingBoundaryId: integer("reporting_boundary_id").notNull().references(() => reportingBoundaries.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
+    reportingBoundaryId: integer("reporting_boundary_id")
+      .notNull()
+      .references(() => reportingBoundaries.id, { onDelete: "cascade" }),
     methaneSourcesDescription: text("methane_sources_description"),
     quantificationMethod: text("quantification_method"),
     annualMethaneEmissions: numeric("annual_methane_emissions", { precision: 20, scale: 6 }),
@@ -1137,8 +1222,13 @@ export const dataQualityRecords = pgTable(
   "data_quality_records",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    sourceStreamId: integer("source_stream_id").notNull().references(() => sourceStreams.id, { onDelete: "cascade" }).unique(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sourceStreamId: integer("source_stream_id")
+      .notNull()
+      .references(() => sourceStreams.id, { onDelete: "cascade" })
+      .unique(),
     dataQualityTier: text("data_quality_tier"),
     uncertaintyPercent: numeric("uncertainty_percent", { precision: 6, scale: 2 }),
     uncertaintyJustification: text("uncertainty_justification"),
@@ -1169,8 +1259,12 @@ export const verificationFindings = pgTable(
   "verification_findings",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    reportingBoundaryId: integer("reporting_boundary_id").notNull().references(() => reportingBoundaries.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    reportingBoundaryId: integer("reporting_boundary_id")
+      .notNull()
+      .references(() => reportingBoundaries.id, { onDelete: "cascade" }),
     findingType: text("finding_type").notNull(),
     description: text("description").notNull(),
     severity: text("severity"),
@@ -1201,8 +1295,12 @@ export const managementQaRecords = pgTable(
   "management_qa_records",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    reportingBoundaryId: integer("reporting_boundary_id").notNull().references(() => reportingBoundaries.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    reportingBoundaryId: integer("reporting_boundary_id")
+      .notNull()
+      .references(() => reportingBoundaries.id, { onDelete: "cascade" }),
     qaProcedureDescription: text("qa_procedure_description"),
     responsiblePerson: text("responsible_person"),
     reviewFrequency: text("review_frequency"),
@@ -1230,8 +1328,12 @@ export const mitigationMeasures = pgTable(
   "mitigation_measures",
   {
     id: serial("id").primaryKey(),
-    organizationId: integer("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    facilityId: integer("facility_id").notNull().references(() => facilities.id, { onDelete: "cascade" }),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
     measureDescription: text("measure_description").notNull(),
     status: text("status").notNull().default("planned"),
     estimatedReductionTco2e: numeric("estimated_reduction_tco2e", { precision: 20, scale: 4 }),

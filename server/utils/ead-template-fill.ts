@@ -26,7 +26,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import type { SourceStreamDetail } from "../storage";
-import type { MethaneReport, MitigationMeasure, ManagementQaRecord, FacilityIdentifier, FacilityContact, FacilityProduct } from "@shared/schema";
+import type {
+  MethaneReport,
+  MitigationMeasure,
+  ManagementQaRecord,
+  FacilityIdentifier,
+  FacilityContact,
+  FacilityProduct,
+} from "@shared/schema";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -166,18 +173,30 @@ const ILLUSTRATIVE_CELLS: [string, string][] = [
   // unlike every other illustrative table in this file, which only
   // fills its first row/first few rows) -- confirmed by direct read,
   // not assumed from the row-17/18 pattern above.
-  ["2c2_Facility Description", "D43"], ["2c2_Facility Description", "D44"],
-  ["2c2_Facility Description", "D45"], ["2c2_Facility Description", "D46"],
-  ["2c2_Facility Description", "D47"], ["2c2_Facility Description", "D48"],
-  ["2c2_Facility Description", "D49"], ["2c2_Facility Description", "D50"],
-  ["2c2_Facility Description", "D51"], ["2c2_Facility Description", "D52"],
-  ["2c2_Facility Description", "D53"], ["2c2_Facility Description", "D54"],
-  ["2c2_Facility Description", "D55"], ["2c2_Facility Description", "D56"],
-  ["2c2_Facility Description", "D57"], ["2c2_Facility Description", "D58"],
-  ["2c2_Facility Description", "D59"], ["2c2_Facility Description", "D60"],
-  ["2c2_Facility Description", "D61"], ["2c2_Facility Description", "D62"],
-  ["2c2_Facility Description", "D63"], ["2c2_Facility Description", "D64"],
-  ["2c2_Facility Description", "D65"], ["2c2_Facility Description", "D66"],
+  ["2c2_Facility Description", "D43"],
+  ["2c2_Facility Description", "D44"],
+  ["2c2_Facility Description", "D45"],
+  ["2c2_Facility Description", "D46"],
+  ["2c2_Facility Description", "D47"],
+  ["2c2_Facility Description", "D48"],
+  ["2c2_Facility Description", "D49"],
+  ["2c2_Facility Description", "D50"],
+  ["2c2_Facility Description", "D51"],
+  ["2c2_Facility Description", "D52"],
+  ["2c2_Facility Description", "D53"],
+  ["2c2_Facility Description", "D54"],
+  ["2c2_Facility Description", "D55"],
+  ["2c2_Facility Description", "D56"],
+  ["2c2_Facility Description", "D57"],
+  ["2c2_Facility Description", "D58"],
+  ["2c2_Facility Description", "D59"],
+  ["2c2_Facility Description", "D60"],
+  ["2c2_Facility Description", "D61"],
+  ["2c2_Facility Description", "D62"],
+  ["2c2_Facility Description", "D63"],
+  ["2c2_Facility Description", "D64"],
+  ["2c2_Facility Description", "D65"],
+  ["2c2_Facility Description", "D66"],
   ["2c2_Facility Description", "D67"],
   // E43:E46 only (P01/P02/P03/P03) -- E47:E67 confirmed already blank.
   ["2c2_Facility Description", "E43"],
@@ -332,7 +351,14 @@ const DATA_GAP_ROW_CAPACITY = 10;
 
 export function fillDataGapsSheet(
   wb: ExcelJS.Workbook,
-  gaps: { sourceStreamOrOtherId: string; from: string; until: string; description: string; estimatedEmissionsTco2e: number | null; source: string }[],
+  gaps: {
+    sourceStreamOrOtherId: string;
+    from: string;
+    until: string;
+    description: string;
+    estimatedEmissionsTco2e: number | null;
+    source: string;
+  }[],
 ): { omittedCount: number } {
   const sheet = wb.getWorksheet("4h_Verification and Data Gaps");
   if (!sheet) return { omittedCount: 0 };
@@ -423,7 +449,9 @@ export function fillRemainingSheets(
   // 33 is the last S25 row, row 35 starts table 2's own instructional
   // text). Table 2 header row 39, S01 example row 40 -> data rows 40-64
   // (row 64 is the last S25 row, row 67 is "* End of this worksheet *").
-  const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
+  const measurementStreams = streamDetails
+    .filter((s) => s.approachTier === "measurement")
+    .slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
   const emissionSourceSheet = wb.getWorksheet("3e1_Emission Sources (Measured)");
   if (emissionSourceSheet) {
     measurementStreams.forEach((s, i) => {
@@ -641,7 +669,9 @@ export function fillFacilityDescriptionSheets(
     // column (confirmed: 3e1!C9.f === "'2c2_Facility Description'!G43"),
     // so filling G here is what makes 3e1's "Total emissions" figures
     // resolve to real numbers instead of 0 or a fabricated value.
-    const measurementStreams = streamDetails.filter((s) => s.approachTier === "measurement").slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
+    const measurementStreams = streamDetails
+      .filter((s) => s.approachTier === "measurement")
+      .slice(0, MEASUREMENT_STREAM_ROW_CAPACITY);
     measurementStreams.forEach((s, i) => {
       const row = 43 + i;
       writeIfNotFormula(descSheet, `D${row}`, s.description ?? s.name);

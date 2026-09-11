@@ -36,8 +36,8 @@ export default function PrivacyPolicy() {
             <h2 className="font-heading font-semibold text-lg text-neutral-900 mb-2">Third parties we use</h2>
             <p>
               We use <strong>Resend</strong> to deliver account emails (verification links, password resets). We host
-              the application and database on <strong>Vercel</strong> and <strong>Neon</strong>. None of these
-              providers use your data for anything beyond delivering the service to you.
+              the application and database on <strong>Vercel</strong> and <strong>Neon</strong>. None of these providers
+              use your data for anything beyond delivering the service to you.
             </p>
           </section>
 
@@ -54,8 +54,8 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="font-heading font-semibold text-lg text-neutral-900 mb-2">Your choices</h2>
             <p>
-              You can update your display name at any time from the app's home screen. To request a copy of your
-              data, or to request deletion of your account, contact us using the details below.
+              You can update your display name at any time from the app's home screen. To request a copy of your data,
+              or to request deletion of your account, contact us using the details below.
             </p>
           </section>
 

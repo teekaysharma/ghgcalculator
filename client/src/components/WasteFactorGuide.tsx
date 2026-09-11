@@ -67,12 +67,54 @@ function downloadTemplate() {
   // (shared/schema.ts) and this project's sourcing-hierarchy requirement:
   // every factor must be traceable to where it came from.
   const rows = [
-    { Scope: 1, "Activity Type": "Natural Gas", "Emission Factor": "", Unit: "kWh", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
-    { Scope: 1, "Activity Type": "Diesel", "Emission Factor": "", Unit: "litre", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
-    { Scope: 2, "Activity Type": "Grid Electricity", "Emission Factor": "", Unit: "kWh", Source: "REPLACE - country-specific, see IEA/gov.uk links", Year: "" },
-    { Scope: 3, "Activity Type": "Business Travel - Car", "Emission Factor": "", Unit: "km", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
-    { Scope: 3, "Activity Type": "Paper/Cardboard - Landfill", "Emission Factor": "", Unit: "t", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
-    { Scope: 3, "Activity Type": "Paper/Cardboard - Recycling", "Emission Factor": "", Unit: "t", Source: "REPLACE - see gov.uk link in this guide", Year: "" },
+    {
+      Scope: 1,
+      "Activity Type": "Natural Gas",
+      "Emission Factor": "",
+      Unit: "kWh",
+      Source: "REPLACE - see gov.uk link in this guide",
+      Year: "",
+    },
+    {
+      Scope: 1,
+      "Activity Type": "Diesel",
+      "Emission Factor": "",
+      Unit: "litre",
+      Source: "REPLACE - see gov.uk link in this guide",
+      Year: "",
+    },
+    {
+      Scope: 2,
+      "Activity Type": "Grid Electricity",
+      "Emission Factor": "",
+      Unit: "kWh",
+      Source: "REPLACE - country-specific, see IEA/gov.uk links",
+      Year: "",
+    },
+    {
+      Scope: 3,
+      "Activity Type": "Business Travel - Car",
+      "Emission Factor": "",
+      Unit: "km",
+      Source: "REPLACE - see gov.uk link in this guide",
+      Year: "",
+    },
+    {
+      Scope: 3,
+      "Activity Type": "Paper/Cardboard - Landfill",
+      "Emission Factor": "",
+      Unit: "t",
+      Source: "REPLACE - see gov.uk link in this guide",
+      Year: "",
+    },
+    {
+      Scope: 3,
+      "Activity Type": "Paper/Cardboard - Recycling",
+      "Emission Factor": "",
+      Unit: "t",
+      Source: "REPLACE - see gov.uk link in this guide",
+      Year: "",
+    },
   ];
   const worksheet = utils.json_to_sheet(rows);
   worksheet["!cols"] = [{ wch: 8 }, { wch: 28 }, { wch: 16 }, { wch: 10 }, { wch: 38 }, { wch: 8 }];
@@ -93,9 +135,7 @@ export default function WasteFactorGuide() {
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto pr-2">
         <DialogHeader>
           <DialogTitle>Waste Emission Factors Format Guide</DialogTitle>
-          <DialogDescription>
-            Learn how to structure your waste emission factors Excel file
-          </DialogDescription>
+          <DialogDescription>Learn how to structure your waste emission factors Excel file</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-wrap gap-2">
@@ -118,15 +158,14 @@ export default function WasteFactorGuide() {
         </div>
         <p className="text-xs text-neutral-500">
           The DEFRA file is the real UK Government GHG Conversion Factors for Company Reporting 2026 dataset (Scope
-          1/2/3 "kg CO2e" total factors, DESNZ, Open Government Licence v3.0). The GWP file covers CO2, CH4, N2O,
-          SF6, NF3, and the complete IPCC AR6 gas list (266 gases: HFCs, PFCs, CFCs, HCFCs, halons, halogenated
-          ethers/alcohols) with AR4/AR5/AR6 values side by side, hand-verified
-          against the GHG Protocol's official PDF (not bulk-extracted, see the note in that file's Read Me sheet for
-          why). Both are reshaped to this calculator's format with Source/Year columns for traceability. DEFRA
-          covers UK activities only, replace electricity and other location-specific rows with country-appropriate
-          factors for non-UK operations.
+          1/2/3 "kg CO2e" total factors, DESNZ, Open Government Licence v3.0). The GWP file covers CO2, CH4, N2O, SF6,
+          NF3, and the complete IPCC AR6 gas list (266 gases: HFCs, PFCs, CFCs, HCFCs, halons, halogenated
+          ethers/alcohols) with AR4/AR5/AR6 values side by side, hand-verified against the GHG Protocol's official PDF
+          (not bulk-extracted, see the note in that file's Read Me sheet for why). Both are reshaped to this
+          calculator's format with Source/Year columns for traceability. DEFRA covers UK activities only, replace
+          electricity and other location-specific rows with country-appropriate factors for non-UK operations.
         </p>
-        
+
         <div className="space-y-4 mt-4">
           <div className="border rounded-md p-4 bg-green-50 border-green-200">
             <h3 className="font-medium text-neutral-800 mb-2">Where to get real, verified emission factors</h3>
@@ -158,10 +197,10 @@ export default function WasteFactorGuide() {
           <div className="border rounded-md p-4 bg-neutral-50">
             <h3 className="font-medium text-neutral-800 mb-2">IPCC AR6 GWP-100 values (verified)</h3>
             <p className="text-sm text-neutral-600 mb-3">
-              Used to convert non-CO2 gases to CO2e. GWP-100, without climate-carbon cycle feedbacks, the basis
-              required by the GHG Protocol, CDP, and SBTi. Quick reference below, common gases only, the full
-              266-gas file (download above) has AR4/AR5/AR6 side by side for the complete IPCC AR6 gas list
-              (HFCs, PFCs, CFCs, HCFCs, halons, and halogenated ethers/alcohols).
+              Used to convert non-CO2 gases to CO2e. GWP-100, without climate-carbon cycle feedbacks, the basis required
+              by the GHG Protocol, CDP, and SBTi. Quick reference below, common gases only, the full 266-gas file
+              (download above) has AR4/AR5/AR6 side by side for the complete IPCC AR6 gas list (HFCs, PFCs, CFCs, HCFCs,
+              halons, and halogenated ethers/alcohols).
             </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-neutral-200 border">
@@ -186,26 +225,34 @@ export default function WasteFactorGuide() {
           </div>
 
           <p className="text-sm text-neutral-600">
-            The formats below show how to structure your file. The numbers in these example tables are placeholders
-            to illustrate layout only, not published emission factors, get real values from the sources above.
+            The formats below show how to structure your file. The numbers in these example tables are placeholders to
+            illustrate layout only, not published emission factors, get real values from the sources above.
           </p>
-          
+
           <div className="space-y-4">
             <div className="border rounded-md p-4 bg-neutral-50">
               <h3 className="font-medium text-neutral-800 mb-2">Format 1: Table with Disposal Methods as Columns</h3>
               <p className="text-sm text-neutral-600 mb-3">
                 This format has waste types as rows and disposal methods as columns:
               </p>
-              
+
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-neutral-200 border">
                   <thead className="bg-neutral-100">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Waste Type</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Landfill (kg CO2e/t)</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Incineration (kg CO2e/t)</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Recycling (kg CO2e/t)</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">Composting (kg CO2e/t)</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">
+                        Landfill (kg CO2e/t)
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">
+                        Incineration (kg CO2e/t)
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">
+                        Recycling (kg CO2e/t)
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">
+                        Composting (kg CO2e/t)
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-neutral-200">
@@ -226,25 +273,29 @@ export default function WasteFactorGuide() {
                   </tbody>
                 </table>
               </div>
-              
+
               <p className="text-xs text-neutral-500 mt-2">
                 * The column headers must include disposal method names (Landfill, Incineration, Recycling, Composting)
               </p>
             </div>
-            
+
             <div className="border rounded-md p-4 bg-neutral-50">
               <h3 className="font-medium text-neutral-800 mb-2">Format 2: Separate Rows for Each Disposal Method</h3>
               <p className="text-sm text-neutral-600 mb-3">
                 This format has separate rows for each waste type + disposal method combination:
               </p>
-              
+
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-neutral-200 border">
                   <thead className="bg-neutral-100">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Waste Type</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Disposal Method</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Emission Factor (kg CO2e/unit)</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">
+                        Disposal Method
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">
+                        Emission Factor (kg CO2e/unit)
+                      </th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">Unit</th>
                     </tr>
                   </thead>
@@ -266,20 +317,23 @@ export default function WasteFactorGuide() {
               </div>
             </div>
           </div>
-          
+
           <div className="border rounded-md p-4 bg-neutral-50 mb-4">
             <h3 className="font-medium text-neutral-800 mb-2">Multi-Scope Format with Enhanced Fields</h3>
             <p className="text-sm text-neutral-600 mb-3">
-              You can also provide a single Excel file with multiple sheets or scope indicators, supporting various column names:
+              You can also provide a single Excel file with multiple sheets or scope indicators, supporting various
+              column names:
             </p>
-            
+
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-neutral-200 border">
                 <thead className="bg-neutral-100">
                   <tr>
                     <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Scope</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Activity Type</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">Emission Factor (kg CO2e/unit)</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500 border-r">
+                      Emission Factor (kg CO2e/unit)
+                    </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-neutral-500">Unit</th>
                   </tr>
                 </thead>
@@ -306,7 +360,7 @@ export default function WasteFactorGuide() {
               </table>
             </div>
           </div>
-          
+
           <div className="border rounded-md p-4 bg-neutral-50 mb-4">
             <h3 className="font-medium text-neutral-800 mb-2">Column Name Flexibility</h3>
             <p className="text-sm text-neutral-600 mb-2">
@@ -340,7 +394,7 @@ export default function WasteFactorGuide() {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-blue-50 p-4 rounded-md text-sm text-blue-800">
             <p className="font-medium">Tips:</p>
             <ul className="list-disc list-inside mt-1 space-y-1">

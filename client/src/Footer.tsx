@@ -5,12 +5,7 @@ function Footer() {
     <div style={styles.footer}>
       <p style={styles.text}>
         Built with ❤️ for You. Reach out to me on{" "}
-        <a
-          href="https://github.com/teekaysharma"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={styles.link}
-        >
+        <a href="https://github.com/teekaysharma" target="_blank" rel="noopener noreferrer" style={styles.link}>
           GitHub
         </a>
       </p>

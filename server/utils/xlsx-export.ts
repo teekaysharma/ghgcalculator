@@ -102,7 +102,10 @@ function sourceStreamSheet(streamDetails: SourceStreamDetail[]): XLSX.WorkSheet 
   const rows: (string | number)[][] = [];
   for (const s of streamDetails) {
     const calc = s.calculationApproach;
-    const breakdown = (calc?.gasBreakdown as { gas: string; nativeFactor: number; gwpValue: number; gwpVersion: string; co2ePerUnit: number }[] | null) ?? [];
+    const breakdown =
+      (calc?.gasBreakdown as
+        { gas: string; nativeFactor: number; gwpValue: number; gwpVersion: string; co2ePerUnit: number }[] | null) ??
+      [];
     // Columns shared by every row for this source stream, regardless of
     // whether it has a per-gas breakdown -- factored out so the two branches
     // below don't restate the same 14-column prefix.
@@ -160,7 +163,14 @@ function gasBreakdownSheet(report: ConsolidatedReport): XLSX.WorkSheet {
 }
 
 function dataQualitySheet(report: ConsolidatedReport): XLSX.WorkSheet {
-  const header = ["Source stream", "Data quality tier", "Uncertainty %", "Uncertainty justification", "Used IPCC default factor?", "Substitution reason"];
+  const header = [
+    "Source stream",
+    "Data quality tier",
+    "Uncertainty %",
+    "Uncertainty justification",
+    "Used IPCC default factor?",
+    "Substitution reason",
+  ];
   const rows = report.dataQualityRecords.map((r) => [
     r.sourceStreamName ?? "",
     r.dataQualityTier ?? "",
@@ -184,7 +194,10 @@ function verificationAndQaSheet(report: ConsolidatedReport): XLSX.WorkSheet {
     responsiblePerson: string | null;
     reviewFrequency: string | null;
   }[];
-  const rows: (string | number)[][] = [["VERIFICATION FINDINGS"], ["Type", "Description", "Severity", "Status", "Recalculation-related?"]];
+  const rows: (string | number)[][] = [
+    ["VERIFICATION FINDINGS"],
+    ["Type", "Description", "Severity", "Status", "Recalculation-related?"],
+  ];
   for (const f of findings) {
     // Recalculation reasons are logged as verification findings with
     // findingType "observation" per server/routes.ts's recalculate route

@@ -74,7 +74,8 @@ export default function Login() {
         {deactivated && (
           <Alert variant="destructive">
             <AlertDescription>
-              This account has been deactivated. Contact your organization admin or support if you believe this is a mistake.
+              This account has been deactivated. Contact your organization admin or support if you believe this is a
+              mistake.
             </AlertDescription>
           </Alert>
         )}
@@ -82,14 +83,12 @@ export default function Login() {
           <Alert>
             <AlertDescription className="space-y-2">
               <p>Please verify your email before logging in.</p>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={resend}
-                disabled={resendState === "sending"}
-              >
-                {resendState === "sending" ? "Sending..." : resendState === "sent" ? "Sent — check your inbox" : "Resend verification email"}
+              <Button type="button" size="sm" variant="outline" onClick={resend} disabled={resendState === "sending"}>
+                {resendState === "sending"
+                  ? "Sending..."
+                  : resendState === "sent"
+                    ? "Sent — check your inbox"
+                    : "Resend verification email"}
               </Button>
             </AlertDescription>
           </Alert>

@@ -5,30 +5,15 @@ import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Factory, Plus, Trash2 } from "lucide-react";
-import { Bar } from 'react-chartjs-2';
+import { Bar } from "react-chartjs-2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-} from 'chart.js';
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from "chart.js";
 
 // Register ChartJS components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-);
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 interface ProductIntensityProps {
   emissions: any[];
@@ -43,34 +28,34 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
   // Get product options from the emissions data
   const getProductOptions = () => {
     const uniqueProducts = new Set<string>();
-    
-    emissions.forEach(emission => {
+
+    emissions.forEach((emission) => {
       if (emission.product) {
         uniqueProducts.add(emission.product);
       }
     });
-    
-    return Array.from(uniqueProducts).map(product => ({
+
+    return Array.from(uniqueProducts).map((product) => ({
       value: product,
-      label: product.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+      label: product.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
     }));
   };
 
   // Get year options from the emissions data
   const getYearOptions = () => {
     const uniqueYears = new Set<number>();
-    
-    emissions.forEach(emission => {
+
+    emissions.forEach((emission) => {
       if (emission.year) {
         uniqueYears.add(emission.year);
       }
     });
-    
+
     return Array.from(uniqueYears)
       .sort((a, b) => a - b)
-      .map(year => ({
+      .map((year) => ({
         value: year.toString(),
-        label: year.toString()
+        label: year.toString(),
       }));
   };
 
@@ -81,7 +66,7 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
       { value: "kg", label: "Kilograms" },
       { value: "units", label: "Units" },
       { value: "hours", label: "Hours" },
-      { value: "kwh", label: "kWh" }
+      { value: "kwh", label: "kWh" },
     ];
   };
 
@@ -93,7 +78,7 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/product-intensity", {
         emissions,
-        productionData
+        productionData,
       });
       return response.json();
     },
@@ -104,9 +89,9 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
       toast({
         title: "Product Intensity Error",
         description: error.message || "Failed to calculate product intensities.",
-        variant: "destructive"
+        variant: "destructive",
       });
-    }
+    },
   });
 
   useEffect(() => {
@@ -116,17 +101,17 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
   }, [emissions, productionData, enabled]);
 
   const addProductionData = () => {
-    const defaultProduct = productOptions.length > 0 ? productOptions[0].value : '';
+    const defaultProduct = productOptions.length > 0 ? productOptions[0].value : "";
     const defaultYear = yearOptions.length > 0 ? parseInt(yearOptions[0].value) : new Date().getFullYear();
-    
+
     setProductionData([
       ...productionData,
       {
         name: defaultProduct,
         year: defaultYear,
         production: 0,
-        unit: 'tonnes'
-      }
+        unit: "tonnes",
+      },
     ]);
   };
 
@@ -137,32 +122,32 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
 
   const updateProductionData = (index: number, field: keyof ProductData, value: string | number) => {
     const newData = [...productionData];
-    
-    if (field === 'production') {
-      newData[index][field] = typeof value === 'string' ? parseFloat(value) || 0 : value;
-    } else if (field === 'year') {
-      newData[index][field] = typeof value === 'string' ? parseInt(value) : value;
+
+    if (field === "production") {
+      newData[index][field] = typeof value === "string" ? parseFloat(value) || 0 : value;
+    } else if (field === "year") {
+      newData[index][field] = typeof value === "string" ? parseInt(value) : value;
     } else {
       newData[index][field] = value as string;
     }
-    
+
     setProductionData(newData);
   };
 
   const chartData = {
-    labels: productIntensities.map(item => {
-      const productName = item.product.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    labels: productIntensities.map((item) => {
+      const productName = item.product.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
       return `${productName} (${item.year})`;
     }),
     datasets: [
       {
-        label: 'Emissions Intensity',
-        data: productIntensities.map(item => item.intensity),
-        backgroundColor: productIntensities.map(() => '#3b82f6'),
-        borderColor: productIntensities.map(() => '#2563eb'),
-        borderWidth: 1
-      }
-    ]
+        label: "Emissions Intensity",
+        data: productIntensities.map((item) => item.intensity),
+        backgroundColor: productIntensities.map(() => "#3b82f6"),
+        borderColor: productIntensities.map(() => "#2563eb"),
+        borderWidth: 1,
+      },
+    ],
   };
 
   const chartOptions = {
@@ -170,42 +155,42 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
     maintainAspectRatio: false,
     plugins: {
       legend: {
-        position: 'top' as const,
+        position: "top" as const,
       },
       tooltip: {
         callbacks: {
-          label: function(context: any) {
+          label: function (context: any) {
             const item = productIntensities[context.dataIndex];
             return `Intensity: ${context.formattedValue} kg CO₂e/${item.unit}`;
           },
-          afterLabel: function(context: any) {
+          afterLabel: function (context: any) {
             const item = productIntensities[context.dataIndex];
             return [
               `Emissions: ${item.emissions.toFixed(2)} kg CO₂e`,
-              `Production: ${item.production.toFixed(2)} ${item.unit}`
+              `Production: ${item.production.toFixed(2)} ${item.unit}`,
             ];
-          }
-        }
-      }
+          },
+        },
+      },
     },
     scales: {
       y: {
         beginAtZero: true,
         title: {
           display: true,
-          text: 'Emissions Intensity (kg CO₂e/unit)'
-        }
+          text: "Emissions Intensity (kg CO₂e/unit)",
+        },
       },
       x: {
         title: {
           display: true,
-          text: 'Product / Year'
-        }
-      }
-    }
+          text: "Product / Year",
+        },
+      },
+    },
   };
 
-  if (!enabled || (emissions.length === 0 || !emissions.some(e => e.product && e.year))) {
+  if (!enabled || emissions.length === 0 || !emissions.some((e) => e.product && e.year)) {
     return (
       <Card className="bg-white mt-6">
         <CardContent className="pt-6 text-center py-12">
@@ -213,7 +198,8 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
             <Factory className="h-12 w-12 mb-3 text-neutral-400" />
             <h3 className="text-lg font-medium mb-2">No Product Data Available</h3>
             <p className="text-sm max-w-md">
-              To enable product intensity calculations, please assign products to your emission activities using the "Assign to Product" option in the advanced settings.
+              To enable product intensity calculations, please assign products to your emission activities using the
+              "Assign to Product" option in the advanced settings.
             </p>
           </div>
         </CardContent>
@@ -225,10 +211,10 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
     <Card className="bg-white mt-6">
       <CardContent className="pt-6">
         <h3 className="text-lg font-medium text-neutral-800 mb-4">Product Emissions Intensity</h3>
-        
+
         <div className="mb-6 p-4 border border-neutral-200 rounded-lg bg-neutral-50">
           <h4 className="font-medium text-neutral-700 mb-3">Add Production Data</h4>
-          
+
           <div className="space-y-4">
             {productionData.map((data, index) => (
               <div key={index} className="p-3 border border-neutral-200 rounded-lg bg-white">
@@ -237,10 +223,7 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
                     <Label htmlFor={`product-${index}`} className="mb-1">
                       Product
                     </Label>
-                    <Select
-                      value={data.name}
-                      onValueChange={(value) => updateProductionData(index, "name", value)}
-                    >
+                    <Select value={data.name} onValueChange={(value) => updateProductionData(index, "name", value)}>
                       <SelectTrigger id={`product-${index}`}>
                         <SelectValue placeholder="Select product" />
                       </SelectTrigger>
@@ -291,10 +274,7 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
                     <Label htmlFor={`unit-${index}`} className="mb-1">
                       Unit
                     </Label>
-                    <Select
-                      value={data.unit}
-                      onValueChange={(value) => updateProductionData(index, "unit", value)}
-                    >
+                    <Select value={data.unit} onValueChange={(value) => updateProductionData(index, "unit", value)}>
                       <SelectTrigger id={`unit-${index}`}>
                         <SelectValue placeholder="Select unit" />
                       </SelectTrigger>
@@ -308,7 +288,7 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
                     </Select>
                   </div>
                 </div>
-                
+
                 <div className="mt-2 flex justify-end">
                   <Button
                     variant="ghost"
@@ -323,30 +303,24 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
               </div>
             ))}
           </div>
-          
-          <Button
-            variant="ghost"
-            className="mt-4 text-primary-700 hover:bg-primary-50"
-            onClick={addProductionData}
-          >
+
+          <Button variant="ghost" className="mt-4 text-primary-700 hover:bg-primary-50" onClick={addProductionData}>
             <Plus className="h-4 w-4 mr-1" />
             Add Production Data
           </Button>
-          
+
           {productionData.length > 0 && (
             <Button
               className="mt-4 ml-2"
               onClick={() => intensityMutation.mutate()}
               disabled={intensityMutation.isPending}
             >
-              {intensityMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : null}
+              {intensityMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               Calculate Intensity
             </Button>
           )}
         </div>
-        
+
         {intensityMutation.isPending ? (
           <div className="flex items-center justify-center h-48">
             <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
@@ -357,33 +331,68 @@ export default function ProductIntensity({ emissions, enabled }: ProductIntensit
             <div className="h-72 mb-6">
               <Bar data={chartData} options={chartOptions} />
             </div>
-            
+
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-neutral-200">
                 <thead className="bg-neutral-50">
                   <tr>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Product</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Year</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Emissions (kg CO₂e)</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Production</th>
-                    <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Intensity (kg CO₂e/unit)</th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider"
+                    >
+                      Product
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider"
+                    >
+                      Year
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider"
+                    >
+                      Emissions (kg CO₂e)
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider"
+                    >
+                      Production
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider"
+                    >
+                      Intensity (kg CO₂e/unit)
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-neutral-200">
                   {productIntensities.map((item, index) => (
-                    <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-neutral-50'}>
+                    <tr key={index} className={index % 2 === 0 ? "bg-white" : "bg-neutral-50"}>
                       <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-neutral-800">
-                        {item.product.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                        {item.product.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-600">{item.year}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-600">
-                        {item.emissions.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        {item.emissions.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-600">
-                        {item.production.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} {item.unit}
+                        {item.production.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{" "}
+                        {item.unit}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-neutral-800">
-                        {item.intensity.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        {item.intensity.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </td>
                     </tr>
                   ))}

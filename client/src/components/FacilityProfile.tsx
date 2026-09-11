@@ -262,9 +262,9 @@ function IdentifiersTab({ facilityId }: { facilityId: number }) {
   // Unique sections derived from the division list, sorted by section code, for
   // the first-level picker (~21 options). Divisions available once a section
   // has been chosen, sorted by division code, for the second-level picker.
-  const isicSections = Array.from(
-    new Map(isicDivisions.map((d) => [d.sectionCode, d.sectionName])).entries(),
-  ).sort(([a], [b]) => a.localeCompare(b));
+  const isicSections = Array.from(new Map(isicDivisions.map((d) => [d.sectionCode, d.sectionName])).entries()).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
   const isicDivisionsInSection = isicDivisions
     .filter((d) => d.sectionCode === isicSectionCode)
     .sort((a, b) => a.divisionCode.localeCompare(b.divisionCode));
@@ -502,7 +502,11 @@ function ContactsTab({ facilityId }: { facilityId: number }) {
           <Input placeholder="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <Input placeholder="Surname" value={surname} onChange={(e) => setSurname(e.target.value)} />
           <Input placeholder="Job title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-          <Input placeholder="Organisation" value={organisationName} onChange={(e) => setOrganisationName(e.target.value)} />
+          <Input
+            placeholder="Organisation"
+            value={organisationName}
+            onChange={(e) => setOrganisationName(e.target.value)}
+          />
           <Input placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
           <Input placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
@@ -649,7 +653,10 @@ function ProductsTab({ facilityId }: { facilityId: number }) {
           />
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={energyRelatedEmissions} onCheckedChange={(v) => setEnergyRelatedEmissions(v === true)} />
+              <Checkbox
+                checked={energyRelatedEmissions}
+                onCheckedChange={(v) => setEnergyRelatedEmissions(v === true)}
+              />
               Energy-related emissions
             </label>
             <label className="flex items-center gap-2 text-sm">
@@ -658,12 +665,28 @@ function ProductsTab({ facilityId }: { facilityId: number }) {
             </label>
           </div>
           <div className="flex gap-2">
-            <Input placeholder="Production capacity" value={productionCapacity} onChange={(e) => setProductionCapacity(e.target.value)} />
-            <Input placeholder="Unit" value={productionCapacityUnit} onChange={(e) => setProductionCapacityUnit(e.target.value)} />
+            <Input
+              placeholder="Production capacity"
+              value={productionCapacity}
+              onChange={(e) => setProductionCapacity(e.target.value)}
+            />
+            <Input
+              placeholder="Unit"
+              value={productionCapacityUnit}
+              onChange={(e) => setProductionCapacityUnit(e.target.value)}
+            />
           </div>
           <div className="flex gap-2">
-            <Input placeholder="Actual production" value={actualProduction} onChange={(e) => setActualProduction(e.target.value)} />
-            <Input placeholder="Unit" value={actualProductionUnit} onChange={(e) => setActualProductionUnit(e.target.value)} />
+            <Input
+              placeholder="Actual production"
+              value={actualProduction}
+              onChange={(e) => setActualProduction(e.target.value)}
+            />
+            <Input
+              placeholder="Unit"
+              value={actualProductionUnit}
+              onChange={(e) => setActualProductionUnit(e.target.value)}
+            />
           </div>
         </div>
         <Button onClick={() => create.mutate()} disabled={create.isPending}>

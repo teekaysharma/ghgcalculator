@@ -43,9 +43,7 @@ export function isProtectedPath(absoluteOrRelativePath) {
     const driveLetter = normalized[1].toUpperCase();
     normalized = driveLetter + ":\\" + normalized.substring(3).replace(/\//g, "\\");
   }
-  const absolute = isAbsolute(normalized)
-    ? normalized
-    : resolve(REPO_ROOT, normalized);
+  const absolute = isAbsolute(normalized) ? normalized : resolve(REPO_ROOT, normalized);
   const rel = pathRelative(REPO_ROOT, absolute).replace(/\\/g, "/").replace(/^\.\//, "");
   return PROTECTED_PATTERNS.some((pattern) => pattern.test(rel));
 }

@@ -149,15 +149,12 @@ async function seedOwner(pool, tag, { verified = true } = {}) {
     [email, passwordHash, verified],
   );
   const userId = userRes.rows[0].id;
-  const orgRes = await pool.query(
-    "INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id",
-    [tag, tag],
-  );
+  const orgRes = await pool.query("INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id", [tag, tag]);
   const organizationId = orgRes.rows[0].id;
-  await pool.query(
-    "INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner')",
-    [userId, organizationId],
-  );
+  await pool.query("INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner')", [
+    userId,
+    organizationId,
+  ]);
   return { email, userId, organizationId };
 }
 
@@ -178,10 +175,11 @@ async function seedMemberInOrg(pool, tag, organizationId, role = "member", { ver
     [email, passwordHash, verified],
   );
   const userId = userRes.rows[0].id;
-  await pool.query(
-    "INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, $3)",
-    [userId, organizationId, role],
-  );
+  await pool.query("INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, $3)", [
+    userId,
+    organizationId,
+    role,
+  ]);
   return { email, userId, organizationId };
 }
 
@@ -384,7 +382,11 @@ async function main() {
       const registerRes = await fetch(`${BASE_URL}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: pendingEmail1, password: TEST_PASSWORD, organizationName: `${RUN_TAG}-pending1` }),
+        body: JSON.stringify({
+          email: pendingEmail1,
+          password: TEST_PASSWORD,
+          organizationName: `${RUN_TAG}-pending1`,
+        }),
       });
       if (registerRes.status !== 201) {
         fail("POST /api/auth/register (pending1 setup)", `expected 201, got ${registerRes.status}`);
@@ -395,10 +397,9 @@ async function main() {
           method: "POST",
           headers: { Cookie: adminCookie },
         });
-        const dbRow = await pool.query(
-          "SELECT email_verified, email_verification_token FROM users WHERE id = $1",
-          [pendingId1],
-        );
+        const dbRow = await pool.query("SELECT email_verified, email_verification_token FROM users WHERE id = $1", [
+          pendingId1,
+        ]);
         const verified = dbRow.rows[0]?.email_verified === true && dbRow.rows[0]?.email_verification_token === null;
         if (res.status === 200 && verified) {
           ok("POST /api/admin/users/:id/verify", "200, email_verified=true, token cleared");
@@ -426,7 +427,10 @@ async function main() {
       if (res.status === 200 && dbRow.rows[0]?.is_super_admin === true) {
         ok("POST /api/admin/users/:id/promote (verified)", "200, is_super_admin=true");
       } else {
-        fail("POST /api/admin/users/:id/promote (verified)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+        fail(
+          "POST /api/admin/users/:id/promote (verified)",
+          `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`,
+        );
       }
 
       const logRow = await pool.query(
@@ -470,7 +474,10 @@ async function main() {
       if (res.status === 400 && dbRow.rows[0]?.is_super_admin === true) {
         ok("POST /api/admin/users/:id/demote (no note)", "400, is_super_admin unchanged");
       } else {
-        fail("POST /api/admin/users/:id/demote (no note)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+        fail(
+          "POST /api/admin/users/:id/demote (no note)",
+          `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`,
+        );
       }
     }
 
@@ -485,7 +492,10 @@ async function main() {
       if (res.status === 400 && dbRow.rows[0]?.is_super_admin === true) {
         ok("POST /api/admin/users/:id/demote (self)", "400, actor still a super-admin");
       } else {
-        fail("POST /api/admin/users/:id/demote (self)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+        fail(
+          "POST /api/admin/users/:id/demote (self)",
+          `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`,
+        );
       }
     }
 
@@ -513,7 +523,10 @@ async function main() {
       if (res.status === 200 && dbRow.rows[0]?.is_super_admin === false) {
         ok("POST /api/admin/users/:id/demote (valid)", "200, is_super_admin=false");
       } else {
-        fail("POST /api/admin/users/:id/demote (valid)", `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`);
+        fail(
+          "POST /api/admin/users/:id/demote (valid)",
+          `status ${res.status}, db row ${JSON.stringify(dbRow.rows[0])}`,
+        );
       }
 
       const logRow = await pool.query(
@@ -523,7 +536,10 @@ async function main() {
       if (logRow.rowCount >= 1 && logRow.rows[0].note === demoteNoteText) {
         ok("admin_action_log (demote)", "row written with matching note");
       } else {
-        fail("admin_action_log (demote)", `expected note ${JSON.stringify(demoteNoteText)}, got ${JSON.stringify(logRow.rows[0])}`);
+        fail(
+          "admin_action_log (demote)",
+          `expected note ${JSON.stringify(demoteNoteText)}, got ${JSON.stringify(logRow.rows[0])}`,
+        );
       }
     }
 
@@ -533,7 +549,11 @@ async function main() {
       const registerRes = await fetch(`${BASE_URL}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: pendingEmail2, password: TEST_PASSWORD, organizationName: `${RUN_TAG}-pending2` }),
+        body: JSON.stringify({
+          email: pendingEmail2,
+          password: TEST_PASSWORD,
+          organizationName: `${RUN_TAG}-pending2`,
+        }),
       });
       if (registerRes.status !== 201) {
         fail("POST /api/auth/register (pending2 setup)", `expected 201, got ${registerRes.status}`);
@@ -622,12 +642,23 @@ async function main() {
     {
       const res = await fetch(`${BASE_URL}/api/admin/action-log`, { headers: { Cookie: adminCookie } });
       const body = await res.json().catch(() => ({}));
-      const hasVerify = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "verify");
-      const hasPromote = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "promote");
-      const hasDemote = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "demote" && e.note === demoteNoteText);
-      const hasDelete = Array.isArray(body.entries) && body.entries.some((e) => e.targetEmail === pendingEmail2 && e.action === "delete");
+      const hasVerify =
+        Array.isArray(body.entries) &&
+        body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "verify");
+      const hasPromote =
+        Array.isArray(body.entries) &&
+        body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "promote");
+      const hasDemote =
+        Array.isArray(body.entries) &&
+        body.entries.some((e) => e.targetEmail === pendingEmail1 && e.action === "demote" && e.note === demoteNoteText);
+      const hasDelete =
+        Array.isArray(body.entries) &&
+        body.entries.some((e) => e.targetEmail === pendingEmail2 && e.action === "delete");
       if (res.status === 200 && hasVerify && hasPromote && hasDemote && hasDelete) {
-        ok("GET /api/admin/action-log", "200, contains this run's verify/promote/demote/delete entries, demote note matches");
+        ok(
+          "GET /api/admin/action-log",
+          "200, contains this run's verify/promote/demote/delete entries, demote note matches",
+        );
       } else {
         fail("GET /api/admin/action-log", `status ${res.status}, entries ${JSON.stringify(body.entries?.slice(0, 5))}`);
       }
@@ -657,7 +688,10 @@ async function main() {
       if (inviteRes.status === 201) {
         ok("POST /api/team/invite (unverified user into a different live org)", "201");
       } else {
-        fail("POST /api/team/invite (unverified user into a different live org)", `expected 201, got ${inviteRes.status}`);
+        fail(
+          "POST /api/team/invite (unverified user into a different live org)",
+          `expected 201, got ${inviteRes.status}`,
+        );
       }
 
       const plainId = await getUserId(pool, plainEmail);
@@ -674,7 +708,10 @@ async function main() {
       const targetGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [unverifiedId]);
       const targetOrgGone = await pool.query("SELECT 1 FROM organizations WHERE name = $1", [`${RUN_TAG}-unverified`]);
       if (deleteRes.status === 204 && targetGone.rowCount === 0 && targetOrgGone.rowCount === 0) {
-        ok("DELETE /api/admin/users/:id (cross-membership target)", "204, target row and its own solo-owned org both gone");
+        ok(
+          "DELETE /api/admin/users/:id (cross-membership target)",
+          "204, target row and its own solo-owned org both gone",
+        );
       } else {
         fail(
           "DELETE /api/admin/users/:id (cross-membership target)",
@@ -739,7 +776,10 @@ async function main() {
       // trusting anything set at login time.
       const afterDeactivate = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
       const afterDeactivateBody = await afterDeactivate.json().catch(() => ({}));
-      if (afterDeactivate.status === 403 && /No organization membership found/.test(afterDeactivateBody.message || "")) {
+      if (
+        afterDeactivate.status === 403 &&
+        /No organization membership found/.test(afterDeactivateBody.message || "")
+      ) {
         ok("GET /api/setup-status (deactivated membership, same cookie)", "403, No organization membership found");
       } else {
         fail(
@@ -757,7 +797,11 @@ async function main() {
 
       const afterActivate = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
       if (afterActivate.status === 200) ok("GET /api/setup-status (reactivated membership, same cookie)", "200");
-      else fail("GET /api/setup-status (reactivated membership, same cookie)", `expected 200, got ${afterActivate.status}`);
+      else
+        fail(
+          "GET /api/setup-status (reactivated membership, same cookie)",
+          `expected 200, got ${afterActivate.status}`,
+        );
     }
 
     // --- scenario 17: account deactivate blocks login (401, reason
@@ -776,7 +820,10 @@ async function main() {
       if (deactivateRes.status === 200 && deactivateBody.user?.isActive === false) {
         ok("POST /api/admin/users/:id/deactivate", "200, isActive false");
       } else {
-        fail("POST /api/admin/users/:id/deactivate", `status ${deactivateRes.status}, body ${JSON.stringify(deactivateBody)}`);
+        fail(
+          "POST /api/admin/users/:id/deactivate",
+          `status ${deactivateRes.status}, body ${JSON.stringify(deactivateBody)}`,
+        );
       }
 
       const loginBlocked = await fetch(`${BASE_URL}/api/auth/login`, {
@@ -802,7 +849,10 @@ async function main() {
       if (reactivateRes.status === 200 && reactivateBody.user?.isActive === true) {
         ok("POST /api/admin/users/:id/reactivate", "200, isActive true");
       } else {
-        fail("POST /api/admin/users/:id/reactivate", `status ${reactivateRes.status}, body ${JSON.stringify(reactivateBody)}`);
+        fail(
+          "POST /api/admin/users/:id/reactivate",
+          `status ${reactivateRes.status}, body ${JSON.stringify(reactivateBody)}`,
+        );
       }
 
       const loginRestored = await fetch(`${BASE_URL}/api/auth/login`, {
@@ -849,7 +899,10 @@ async function main() {
       if (changeRes.status === 200 && changeBody.user?.email === s4NewEmail) {
         ok("POST /api/admin/users/:id/change-email", `200, email now ${s4NewEmail}`);
       } else {
-        fail("POST /api/admin/users/:id/change-email", `status ${changeRes.status}, body ${JSON.stringify(changeBody)}`);
+        fail(
+          "POST /api/admin/users/:id/change-email",
+          `status ${changeRes.status}, body ${JSON.stringify(changeBody)}`,
+        );
       }
 
       const tokenRow = await pool.query("SELECT password_reset_token FROM users WHERE email = $1", [s4NewEmail]);
@@ -870,7 +923,10 @@ async function main() {
       const oldStillMatches = newHash ? await bcrypt.compare(TEST_PASSWORD, newHash) : true;
       const newMatches = newHash ? await bcrypt.compare(NEW_PASSWORD, newHash) : false;
       if (emailVerified === true && !oldStillMatches && newMatches) {
-        ok("change-email + reset-password DB state", "email_verified=true, old password hash no longer matches, new one does");
+        ok(
+          "change-email + reset-password DB state",
+          "email_verified=true, old password hash no longer matches, new one does",
+        );
       } else {
         fail(
           "change-email + reset-password DB state",
@@ -993,7 +1049,10 @@ async function main() {
         responses.nonexistent.body.message === responses.unverified.body.message &&
         responses.unverified.body.message === responses.verified.body.message;
       if (allSameShape) {
-        ok("POST /api/auth/forgot-password (identical response shape)", `200, "${responses.verified.body.message}" for all three`);
+        ok(
+          "POST /api/auth/forgot-password (identical response shape)",
+          `200, "${responses.verified.body.message}" for all three`,
+        );
       } else {
         fail("POST /api/auth/forgot-password (identical response shape)", JSON.stringify(responses));
       }
@@ -1032,10 +1091,10 @@ async function main() {
       else fail("POST /api/team/invite (plainEmail into org A)", `expected 201, got ${inviteRes.status}`);
 
       const plainIdForInvite = await getUserId(pool, plainEmail);
-      const membershipRow = await pool.query(
-        "SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2",
-        [plainIdForInvite, s8OrgAOwner.organizationId],
-      );
+      const membershipRow = await pool.query("SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2", [
+        plainIdForInvite,
+        s8OrgAOwner.organizationId,
+      ]);
       plainMembershipInOrgAId = membershipRow.rows[0]?.id;
 
       const deactivateRes = await fetch(`${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/deactivate`, {
@@ -1047,7 +1106,10 @@ async function main() {
       if (deactivateRes.status === 200 && deactivateBody.membership?.isActive === false) {
         ok("POST /api/team/memberships/:id/deactivate (own org)", "200, isActive false");
       } else {
-        fail("POST /api/team/memberships/:id/deactivate (own org)", `status ${deactivateRes.status}, body ${JSON.stringify(deactivateBody)}`);
+        fail(
+          "POST /api/team/memberships/:id/deactivate (own org)",
+          `status ${deactivateRes.status}, body ${JSON.stringify(deactivateBody)}`,
+        );
       }
 
       const activateRes = await fetch(`${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/activate`, {
@@ -1058,7 +1120,10 @@ async function main() {
       if (activateRes.status === 200 && activateBody.membership?.isActive === true) {
         ok("POST /api/team/memberships/:id/activate (own org)", "200, isActive true");
       } else {
-        fail("POST /api/team/memberships/:id/activate (own org)", `status ${activateRes.status}, body ${JSON.stringify(activateBody)}`);
+        fail(
+          "POST /api/team/memberships/:id/activate (own org)",
+          `status ${activateRes.status}, body ${JSON.stringify(activateBody)}`,
+        );
       }
 
       // A membership in a DIFFERENT org (s1's, from scenario 16) must be out
@@ -1095,10 +1160,10 @@ async function main() {
       if (inviteRes.status === 201) ok("POST /api/team/invite (s9Boundary into org A)", "201");
       else fail("POST /api/team/invite (s9Boundary into org A)", `expected 201, got ${inviteRes.status}`);
 
-      const membershipRow = await pool.query(
-        "SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2",
-        [s9Boundary.userId, s8OrgAOwner.organizationId],
-      );
+      const membershipRow = await pool.query("SELECT id FROM memberships WHERE user_id = $1 AND organization_id = $2", [
+        s9Boundary.userId,
+        s8OrgAOwner.organizationId,
+      ]);
       const s9MembershipInOrgAId = membershipRow.rows[0]?.id;
 
       const attemptAllFour = async (label) => {
@@ -1114,7 +1179,10 @@ async function main() {
         const changeEmail = await fetch(`${BASE_URL}/api/team/members/${s9Boundary.userId}/change-email`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
-          body: JSON.stringify({ newEmail: `${RUN_TAG}-s9boundary-blocked@example.invalid`, note: "boundary rule probe" }),
+          body: JSON.stringify({
+            newEmail: `${RUN_TAG}-s9boundary-blocked@example.invalid`,
+            note: "boundary rule probe",
+          }),
         });
         const resetPassword = await fetch(`${BASE_URL}/api/team/members/${s9Boundary.userId}/reset-password`, {
           method: "POST",
@@ -1128,17 +1196,21 @@ async function main() {
           resetPassword: resetPassword.status,
         };
         const all403 = Object.values(statuses).every((s) => s === 403);
-        if (all403) ok(`account-wide actions blocked (${label})`, "403 for deactivate/reactivate/change-email/reset-password");
+        if (all403)
+          ok(`account-wide actions blocked (${label})`, "403 for deactivate/reactivate/change-email/reset-password");
         else fail(`account-wide actions blocked (${label})`, JSON.stringify(statuses));
       };
 
       await attemptAllFour("two orgs");
 
-      const deactivateMembershipRes = await fetch(`${BASE_URL}/api/team/memberships/${s9MembershipInOrgAId}/deactivate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
-        body: JSON.stringify({ note: "Verification testing: deactivate one of two memberships" }),
-      });
+      const deactivateMembershipRes = await fetch(
+        `${BASE_URL}/api/team/memberships/${s9MembershipInOrgAId}/deactivate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: s8OrgAOwnerCookie },
+          body: JSON.stringify({ note: "Verification testing: deactivate one of two memberships" }),
+        },
+      );
       if (deactivateMembershipRes.status === 200) {
         ok("POST /api/team/memberships/:id/deactivate (s9Boundary's org-A membership)", "200");
       } else {
@@ -1178,11 +1250,14 @@ async function main() {
         Cookie: plainCookie,
         "X-Organization-Id": String(s8OrgAOwner.organizationId),
       };
-      const deactivateMembership = await fetch(`${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/deactivate`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ note: "should be rejected" }),
-      });
+      const deactivateMembership = await fetch(
+        `${BASE_URL}/api/team/memberships/${plainMembershipInOrgAId}/deactivate`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ note: "should be rejected" }),
+        },
+      );
       const deactivateAccount = await fetch(`${BASE_URL}/api/team/members/${s8OrgAOwner.userId}/deactivate`, {
         method: "POST",
         headers,
@@ -1196,7 +1271,10 @@ async function main() {
       };
       const all403 = Object.values(statuses).every((s) => s === 403);
       if (all403) {
-        ok("member-role session rejected from /api/team/... lifecycle routes", "403 across membership/account/action-log routes");
+        ok(
+          "member-role session rejected from /api/team/... lifecycle routes",
+          "403 across membership/account/action-log routes",
+        );
       } else {
         fail("member-role session rejected from /api/team/... lifecycle routes", JSON.stringify(statuses));
       }
@@ -1205,10 +1283,14 @@ async function main() {
     // --- scenario 26: GET /api/team/action-log is org-scoped; GET
     // /api/admin/action-log sees everything ---
     {
-      const orgActionLogRes = await fetch(`${BASE_URL}/api/team/action-log`, { headers: { Cookie: s8OrgAOwnerCookie } });
+      const orgActionLogRes = await fetch(`${BASE_URL}/api/team/action-log`, {
+        headers: { Cookie: s8OrgAOwnerCookie },
+      });
       const orgActionLogBody = await orgActionLogRes.json().catch(() => ({}));
       const orgEntries = orgActionLogBody.entries || [];
-      const hasOwnOrgEntry = orgEntries.some((e) => e.targetEmail === plainEmail && e.action === "deactivate_membership");
+      const hasOwnOrgEntry = orgEntries.some(
+        (e) => e.targetEmail === plainEmail && e.action === "deactivate_membership",
+      );
       // s1's membership deactivate (scenario 16) was a super-admin action
       // scoped to s1's own org -- a different tenant than org A -- so it must
       // be absent from org A's own action-log view.
@@ -1269,7 +1351,10 @@ async function main() {
       if (membershipCount.rows[0].c === 1) {
         ok("scenario 27 fixture (super-admin sole-org in org A)", "1 membership, so the boundary rule passes");
       } else {
-        fail("scenario 27 fixture (super-admin sole-org in org A)", `expected 1 membership, got ${membershipCount.rows[0].c}`);
+        fail(
+          "scenario 27 fixture (super-admin sole-org in org A)",
+          `expected 1 membership, got ${membershipCount.rows[0].c}`,
+        );
       }
 
       const results = await attemptAllAccountActions({
@@ -1279,9 +1364,14 @@ async function main() {
         newEmail: `${RUN_TAG}-c1super-hijacked@example.invalid`,
       });
       const all403 = Object.values(results).every((r) => r.status === 403);
-      const allRankMessage = Object.values(results).every((r) => /super-admin can act on a super-admin/i.test(r.message));
+      const allRankMessage = Object.values(results).every((r) =>
+        /super-admin can act on a super-admin/i.test(r.message),
+      );
       if (all403 && allRankMessage) {
-        ok("org-admin account-wide actions on a super-admin (C1)", "403 on all four, rejected by the super-admin rank check");
+        ok(
+          "org-admin account-wide actions on a super-admin (C1)",
+          "403 on all four, rejected by the super-admin rank check",
+        );
       } else {
         fail("org-admin account-wide actions on a super-admin (C1)", JSON.stringify(results));
       }
@@ -1331,9 +1421,14 @@ async function main() {
         newEmail: `${RUN_TAG}-s8orga-hijacked@example.invalid`,
       });
       const all403 = Object.values(results).every((r) => r.status === 403);
-      const allRankMessage = Object.values(results).every((r) => /Only an owner can act on another owner/i.test(r.message));
+      const allRankMessage = Object.values(results).every((r) =>
+        /Only an owner can act on another owner/i.test(r.message),
+      );
       if (all403 && allRankMessage) {
-        ok("org-admin account-wide actions on their org's owner (C1)", "403 on all four, rejected by the owner rank check");
+        ok(
+          "org-admin account-wide actions on their org's owner (C1)",
+          "403 on all four, rejected by the owner rank check",
+        );
       } else {
         fail("org-admin account-wide actions on their org's owner (C1)", JSON.stringify(results));
       }
@@ -1398,10 +1493,9 @@ async function main() {
         headers: { "Content-Type": "application/json", Cookie: adminCookie },
         body: JSON.stringify({ newEmail: c2LiveNewEmail, note: "Verification testing: C2 change-email" }),
       });
-      const stateRow = await pool.query(
-        "SELECT email, email_verified, has_been_verified FROM users WHERE id = $1",
-        [c2Live.userId],
-      );
+      const stateRow = await pool.query("SELECT email, email_verified, has_been_verified FROM users WHERE id = $1", [
+        c2Live.userId,
+      ]);
       const state = stateRow.rows[0] || {};
       if (
         changeRes.status === 200 &&
@@ -1411,7 +1505,10 @@ async function main() {
       ) {
         ok("change-email leaves has_been_verified intact (C2)", "email_verified=false, has_been_verified=true");
       } else {
-        fail("change-email leaves has_been_verified intact (C2)", `status ${changeRes.status}, row ${JSON.stringify(state)}`);
+        fail(
+          "change-email leaves has_been_verified intact (C2)",
+          `status ${changeRes.status}, row ${JSON.stringify(state)}`,
+        );
       }
 
       // (a) the admin panel's delete must refuse it, and refuse it without
@@ -1429,7 +1526,10 @@ async function main() {
         userStill.rowCount === 1 &&
         orgStill.rowCount === 1
       ) {
-        ok("DELETE /api/admin/users/:id (change-emailed live account) (C2)", "409, user row and organization both untouched");
+        ok(
+          "DELETE /api/admin/users/:id (change-emailed live account) (C2)",
+          "409, user row and organization both untouched",
+        );
       } else {
         fail(
           "DELETE /api/admin/users/:id (change-emailed live account) (C2)",
@@ -1445,9 +1545,15 @@ async function main() {
       const listBody = await listRes.json().catch(() => ({}));
       const listed = listBody.users?.find((u) => u.email === c2LiveNewEmail);
       if (listRes.status === 200 && listed && listed.emailVerified === false && listed.hasBeenVerified === true) {
-        ok("GET /api/admin/users exposes hasBeenVerified (C2)", "emailVerified=false, hasBeenVerified=true on the changed row");
+        ok(
+          "GET /api/admin/users exposes hasBeenVerified (C2)",
+          "emailVerified=false, hasBeenVerified=true on the changed row",
+        );
       } else {
-        fail("GET /api/admin/users exposes hasBeenVerified (C2)", `status ${listRes.status}, row ${JSON.stringify(listed)}`);
+        fail(
+          "GET /api/admin/users exposes hasBeenVerified (C2)",
+          `status ${listRes.status}, row ${JSON.stringify(listed)}`,
+        );
       }
     }
 
@@ -1470,9 +1576,15 @@ async function main() {
 
       const c2FreshOwner = await seedOwner(pool, `${RUN_TAG}-c2freshowner`, { verified: false });
       createdEmails.push(c2FreshOwner.email);
-      const c2FreshGuest = await seedMemberInOrg(pool, `${RUN_TAG}-c2freshguest`, s8OrgAOwner.organizationId, "member", {
-        verified: false,
-      });
+      const c2FreshGuest = await seedMemberInOrg(
+        pool,
+        `${RUN_TAG}-c2freshguest`,
+        s8OrgAOwner.organizationId,
+        "member",
+        {
+          verified: false,
+        },
+      );
       createdEmails.push(c2FreshGuest.email);
       await pool.query(
         `UPDATE users SET email_verification_token = 'c2-fresh', email_verification_token_expires_at = now() - interval '1 hour'
@@ -1482,15 +1594,24 @@ async function main() {
 
       const sweep = await runCleanupSweepScopedToThisRun(pool, RUN_TAG);
       if (sweep.status === 200 && typeof sweep.body.deletedCount === "number") {
-        ok("GET /api/cron/cleanup-unverified-users (C2)", `200, deletedCount ${sweep.body.deletedCount}, ${sweep.protectedCount} unrelated row(s) parked and restored`);
+        ok(
+          "GET /api/cron/cleanup-unverified-users (C2)",
+          `200, deletedCount ${sweep.body.deletedCount}, ${sweep.protectedCount} unrelated row(s) parked and restored`,
+        );
       } else {
-        fail("GET /api/cron/cleanup-unverified-users (C2)", `status ${sweep.status}, body ${JSON.stringify(sweep.body)}`);
+        fail(
+          "GET /api/cron/cleanup-unverified-users (C2)",
+          `status ${sweep.status}, body ${JSON.stringify(sweep.body)}`,
+        );
       }
 
       const liveUserStill = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2Live.userId]);
       const liveOrgStill = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2Live.organizationId]);
       if (liveUserStill.rowCount === 1 && liveOrgStill.rowCount === 1) {
-        ok("sweep skips a change-emailed live account (C2)", "user row and its organization both survived an expired token");
+        ok(
+          "sweep skips a change-emailed live account (C2)",
+          "user row and its organization both survived an expired token",
+        );
       } else {
         fail(
           "sweep skips a change-emailed live account (C2)",
@@ -1499,9 +1620,14 @@ async function main() {
       }
 
       const freshOwnerGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2FreshOwner.userId]);
-      const freshOwnerOrgGone = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2FreshOwner.organizationId]);
+      const freshOwnerOrgGone = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [
+        c2FreshOwner.organizationId,
+      ]);
       if (freshOwnerGone.rowCount === 0 && freshOwnerOrgGone.rowCount === 0) {
-        ok("sweep still deletes a never-verified registration (C2)", "user row and its solo-owned organization both removed");
+        ok(
+          "sweep still deletes a never-verified registration (C2)",
+          "user row and its solo-owned organization both removed",
+        );
       } else {
         fail(
           "sweep still deletes a never-verified registration (C2)",
@@ -1512,7 +1638,10 @@ async function main() {
       const freshGuestGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2FreshGuest.userId]);
       const orgAStill = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [s8OrgAOwner.organizationId]);
       if (freshGuestGone.rowCount === 0 && orgAStill.rowCount === 1) {
-        ok("sweep's org deletion is owner-and-solo scoped (C2)", "swept guest removed, the live org it was invited into untouched");
+        ok(
+          "sweep's org deletion is owner-and-solo scoped (C2)",
+          "swept guest removed, the live org it was invited into untouched",
+        );
       } else {
         fail(
           "sweep's org deletion is owner-and-solo scoped (C2)",
@@ -1531,7 +1660,10 @@ async function main() {
       const routeUserGone = await pool.query("SELECT 1 FROM users WHERE id = $1", [c2FreshRoute.userId]);
       const routeOrgGone = await pool.query("SELECT 1 FROM organizations WHERE id = $1", [c2FreshRoute.organizationId]);
       if (routeDelete.status === 204 && routeUserGone.rowCount === 0 && routeOrgGone.rowCount === 0) {
-        ok("DELETE /api/admin/users/:id (never-verified registration) (C2)", "204, user row and solo-owned org both removed");
+        ok(
+          "DELETE /api/admin/users/:id (never-verified registration) (C2)",
+          "204, user row and solo-owned org both removed",
+        );
       } else {
         fail(
           "DELETE /api/admin/users/:id (never-verified registration) (C2)",
@@ -1607,7 +1739,10 @@ async function main() {
       // slot of that endpoint's 10-per-15-minutes budget for no new coverage.
       const restoredRes = await fetch(`${BASE_URL}/api/setup-status`, { headers: { Cookie: s1Cookie } });
       if (restoredRes.status === 401) {
-        ok("GET /api/setup-status (reactivated account, OLD cookie) (I1)", "401, the evicted session is not revived by reactivation");
+        ok(
+          "GET /api/setup-status (reactivated account, OLD cookie) (I1)",
+          "401, the evicted session is not revived by reactivation",
+        );
       } else {
         fail(
           "GET /api/setup-status (reactivated account, OLD cookie) (I1)",
@@ -1729,9 +1864,15 @@ async function main() {
         before.orgIds.includes(s8OrgAOwner.organizationId) &&
         before.orgIds.includes(plainOwnOrgId)
       ) {
-        ok("GET /api/auth/me (two active memberships) (I3)", `200, sees both org ${plainOwnOrgId} and org ${s8OrgAOwner.organizationId}`);
+        ok(
+          "GET /api/auth/me (two active memberships) (I3)",
+          `200, sees both org ${plainOwnOrgId} and org ${s8OrgAOwner.organizationId}`,
+        );
       } else {
-        fail("GET /api/auth/me (two active memberships) (I3)", `status ${before.status}, orgIds ${JSON.stringify(before.orgIds)}`);
+        fail(
+          "GET /api/auth/me (two active memberships) (I3)",
+          `status ${before.status}, orgIds ${JSON.stringify(before.orgIds)}`,
+        );
       }
 
       const deactivateRes = await fetch(`${BASE_URL}/api/admin/memberships/${plainMembershipInOrgAId}/deactivate`, {
@@ -1744,9 +1885,13 @@ async function main() {
 
       const after = await readMe();
       const orgAGoneFromBoth =
-        !after.orgIds.includes(s8OrgAOwner.organizationId) && !after.membershipOrgIds.includes(s8OrgAOwner.organizationId);
+        !after.orgIds.includes(s8OrgAOwner.organizationId) &&
+        !after.membershipOrgIds.includes(s8OrgAOwner.organizationId);
       if (after.status === 200 && orgAGoneFromBoth && after.orgIds.includes(plainOwnOrgId)) {
-        ok("GET /api/auth/me (one membership deactivated) (I3)", "deactivated org absent from organizations AND memberships, own org still present");
+        ok(
+          "GET /api/auth/me (one membership deactivated) (I3)",
+          "deactivated org absent from organizations AND memberships, own org still present",
+        );
       } else {
         fail(
           "GET /api/auth/me (one membership deactivated) (I3)",
@@ -1763,7 +1908,10 @@ async function main() {
       } else {
         const restored = await readMe();
         if (restored.orgIds.includes(s8OrgAOwner.organizationId)) {
-          ok("GET /api/auth/me (membership reactivated) (I3)", "reactivated org visible again, so the filter is live per request");
+          ok(
+            "GET /api/auth/me (membership reactivated) (I3)",
+            "reactivated org visible again, so the filter is live per request",
+          );
         } else {
           fail("GET /api/auth/me (membership reactivated) (I3)", `orgIds ${JSON.stringify(restored.orgIds)}`);
         }
@@ -1872,7 +2020,10 @@ async function main() {
         emailSrc.slice(emailSrc.indexOf("export async function sendEmailChangedByAdminEmail")),
       );
       if (changeEmailCalls === 2 && siblingExists && noSafelyIgnore) {
-        ok("change-email uses its own email copy, not the reset template (I4)", "both change-email routes call sendEmailChangedByAdminEmail; no \"safely ignore\" line in it");
+        ok(
+          "change-email uses its own email copy, not the reset template (I4)",
+          'both change-email routes call sendEmailChangedByAdminEmail; no "safely ignore" line in it',
+        );
       } else {
         fail(
           "change-email uses its own email copy, not the reset template (I4)",
@@ -1914,7 +2065,9 @@ async function main() {
         body: JSON.stringify({ note: "admin trying to deactivate the org owner's membership" }),
       });
       const rankBody = await rankRes.json().catch(() => ({}));
-      const ownerMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [ownerMembershipId]);
+      const ownerMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [
+        ownerMembershipId,
+      ]);
       if (
         rankRes.status === 403 &&
         /Only an owner can act on another owner/i.test(rankBody.message || "") &&
@@ -1952,7 +2105,9 @@ async function main() {
         body: JSON.stringify({ note: "solo owner trying to deactivate their own only membership" }),
       });
       const selfBody = await selfRes.json().catch(() => ({}));
-      const soloMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [soloMembershipId]);
+      const soloMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [
+        soloMembershipId,
+      ]);
       if (
         selfRes.status === 403 &&
         /cannot deactivate your own membership/i.test(selfBody.message || "") &&
@@ -1989,8 +2144,14 @@ async function main() {
         body: JSON.stringify({ note: "admin deactivating an ordinary member's membership -- should still work" }),
       });
       const counterBody = await counterRes.json().catch(() => ({}));
-      const memberMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [memberMembershipId]);
-      if (counterRes.status === 200 && counterBody.membership?.isActive === false && memberMembershipAfter.rows[0]?.is_active === false) {
+      const memberMembershipAfter = await pool.query("SELECT is_active FROM memberships WHERE id = $1", [
+        memberMembershipId,
+      ]);
+      if (
+        counterRes.status === 200 &&
+        counterBody.membership?.isActive === false &&
+        memberMembershipAfter.rows[0]?.is_active === false
+      ) {
         ok(
           "POST /api/team/memberships/:id/deactivate (admin on an ordinary member, still allowed)",
           "200, membership deactivated -- guard blocks by rank/identity, not a blanket disable",

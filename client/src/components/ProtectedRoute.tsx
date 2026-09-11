@@ -13,11 +13,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }, [isLoading, isAuthenticated, setLocation]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-neutral-500">
-        Loading...
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center text-neutral-500">Loading...</div>;
   }
 
   if (!isAuthenticated) {

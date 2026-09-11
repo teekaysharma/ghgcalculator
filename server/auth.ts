@@ -30,24 +30,19 @@ passport.use(
         return done(null, false, { message: "Invalid email or password" });
       }
       if (!user.emailVerified) {
-        return done(
-          null,
-          false,
-          { message: "Please verify your email before logging in.", reason: "unverified" } as {
-            message: string;
-            reason: string;
-          },
-        );
+        return done(null, false, { message: "Please verify your email before logging in.", reason: "unverified" } as {
+          message: string;
+          reason: string;
+        });
       }
       if (!user.isActive) {
-        return done(
-          null,
-          false,
-          { message: "This account has been deactivated. Contact your organization admin or support.", reason: "deactivated" } as {
-            message: string;
-            reason: string;
-          },
-        );
+        return done(null, false, {
+          message: "This account has been deactivated. Contact your organization admin or support.",
+          reason: "deactivated",
+        } as {
+          message: string;
+          reason: string;
+        });
       }
       return done(null, user);
     } catch (err) {

@@ -123,8 +123,8 @@ export default function SetupPanel({ children }: { children: React.ReactNode }) 
     <div className="space-y-6">
       <Alert>
         <AlertDescription>
-          ISO 14064-1 requires a defined organizational and reporting boundary before quantification. Complete the
-          three steps below once, they only need to be set up per reporting year.
+          ISO 14064-1 requires a defined organizational and reporting boundary before quantification. Complete the three
+          steps below once, they only need to be set up per reporting year.
         </AlertDescription>
       </Alert>
 
@@ -138,13 +138,21 @@ export default function SetupPanel({ children }: { children: React.ReactNode }) 
         </CardHeader>
         <CardContent className="space-y-3">
           {entities.length > 0 && (
-            <div className="text-sm text-neutral-600">
-              Existing: {entities.map((e) => e.name).join(", ")}
-            </div>
+            <div className="text-sm text-neutral-600">Existing: {entities.map((e) => e.name).join(", ")}</div>
           )}
           <div className="flex gap-2 flex-wrap">
-            <Input placeholder="Entity name" value={entityName} onChange={(e) => setEntityName(e.target.value)} className="max-w-xs" />
-            <Input placeholder="Legal entity (optional)" value={legalEntity} onChange={(e) => setLegalEntity(e.target.value)} className="max-w-xs" />
+            <Input
+              placeholder="Entity name"
+              value={entityName}
+              onChange={(e) => setEntityName(e.target.value)}
+              className="max-w-xs"
+            />
+            <Input
+              placeholder="Legal entity (optional)"
+              value={legalEntity}
+              onChange={(e) => setLegalEntity(e.target.value)}
+              className="max-w-xs"
+            />
             <Button onClick={() => createEntity.mutate()} disabled={!entityName || createEntity.isPending}>
               {createEntity.isPending ? "Adding..." : "Add reporting entity"}
             </Button>
@@ -174,8 +182,18 @@ export default function SetupPanel({ children }: { children: React.ReactNode }) 
             </SelectContent>
           </Select>
           <div className="flex gap-2 flex-wrap">
-            <Input placeholder="Facility name" value={facilityName} onChange={(e) => setFacilityName(e.target.value)} className="max-w-xs" />
-            <Input placeholder="Country (optional)" value={facilityCountry} onChange={(e) => setFacilityCountry(e.target.value)} className="max-w-xs" />
+            <Input
+              placeholder="Facility name"
+              value={facilityName}
+              onChange={(e) => setFacilityName(e.target.value)}
+              className="max-w-xs"
+            />
+            <Input
+              placeholder="Country (optional)"
+              value={facilityCountry}
+              onChange={(e) => setFacilityCountry(e.target.value)}
+              className="max-w-xs"
+            />
             <Button
               onClick={() => createFacility.mutate()}
               disabled={!facilityName || !selectedEntityId || createFacility.isPending}

@@ -385,8 +385,7 @@ function slugify(name: string): string {
 // documented way back in is PATCH .../recalculate, which reopens the
 // boundary to draft and logs the reason as a verification finding.
 // ---------------------------------------------------------------------------
-const FINALIZED_LOCK_MESSAGE =
-  "This report is finalized — use Recalculate to reopen it before making changes.";
+const FINALIZED_LOCK_MESSAGE = "This report is finalized — use Recalculate to reopen it before making changes.";
 
 /**
  * Returns the 409 message when the given reporting boundary is finalized,
@@ -692,7 +691,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         req.login(user, (loginErr) => {
           if (loginErr) return next(loginErr);
-          return res.json({ user: { id: user.id, email: user.email, name: user.name, isSuperAdmin: user.isSuperAdmin } });
+          return res.json({
+            user: { id: user.id, email: user.email, name: user.name, isSuperAdmin: user.isSuperAdmin },
+          });
         });
       },
     )(req, res, next);
@@ -913,7 +914,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // the admin's action already succeeded.
       console.error("Failed to write admin action log (verify):", err);
     }
-    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, emailVerified: true } });
+    return res
+      .status(200)
+      .json({ user: { id: target.id, email: target.email, name: target.name, emailVerified: true } });
   });
 
   app.delete("/api/admin/users/:id", requireAuth, requireSuperAdmin, async (req, res) => {
@@ -940,12 +943,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // renaming it would be churn with no reader. The human-readable message
     // is what carries the now-broader meaning.
     if (target.hasBeenVerified) {
-      return res.status(409).json({ message: "Cannot delete an account that has been verified from this panel.", reason: "already_verified" });
+      return res.status(409).json({
+        message: "Cannot delete an account that has been verified from this panel.",
+        reason: "already_verified",
+      });
     }
     const result = await storage.deleteUnverifiedUserById(targetId, (req.user as { id: number }).id);
     if (result === "not_found") return res.status(404).json({ message: "User not found" });
     if (result === "already_verified") {
-      return res.status(409).json({ message: "Cannot delete an account that has been verified from this panel.", reason: "already_verified" });
+      return res.status(409).json({
+        message: "Cannot delete an account that has been verified from this panel.",
+        reason: "already_verified",
+      });
     }
     return res.status(204).end();
   });
@@ -971,7 +980,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Failed to write admin action log (promote):", err);
     }
-    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: true } });
+    return res
+      .status(200)
+      .json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: true } });
   });
 
   app.post("/api/admin/users/:id/demote", requireAuth, requireSuperAdmin, async (req, res) => {
@@ -1012,7 +1023,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Failed to write admin action log (demote):", err);
     }
-    return res.status(200).json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: false } });
+    return res
+      .status(200)
+      .json({ user: { id: target.id, email: target.email, name: target.name, isSuperAdmin: false } });
   });
 
   app.get("/api/admin/action-log", requireAuth, requireSuperAdmin, async (_req, res) => {
@@ -1223,7 +1236,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Failed to write admin action log (reset_password):", err);
     }
     return res.status(200).json({
-      message: emailSendFailed ? "Reset link generated, but the email could not be sent." : "Password reset email sent.",
+      message: emailSendFailed
+        ? "Reset link generated, but the email could not be sent."
+        : "Password reset email sent.",
       emailSendFailed,
     });
   });
@@ -1264,7 +1279,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUserByEmail(email);
       if (!user) {
         return res.status(404).json({
-          message: "No account exists for that email yet. They need to register before you can add them to your organization.",
+          message:
+            "No account exists for that email yet. They need to register before you can add them to your organization.",
         });
       }
       const existing = await storage.getMembership(user.id, req.organizationId!);
@@ -1272,7 +1288,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: "This person is already a member of your organization" });
       }
       const membership = await storage.createMembership({ userId: user.id, organizationId: req.organizationId!, role });
-      return res.status(201).json({ membership: { id: membership.id, email: user.email, name: user.name, role: membership.role } });
+      return res
+        .status(201)
+        .json({ membership: { id: membership.id, email: user.email, name: user.name, role: membership.role } });
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid invite payload" });
     }
@@ -1313,7 +1331,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const target = await storage.getUser(targetMembership.userId);
     if (!target) return res.status(404).json({ message: "User not found" });
-    const rankError = await accountActionRankError(target, req.membership!.role, req.organizationId!, targetMembership.role);
+    const rankError = await accountActionRankError(
+      target,
+      req.membership!.role,
+      req.organizationId!,
+      targetMembership.role,
+    );
     if (rankError) return res.status(403).json({ message: rankError });
     const updated = await storage.deactivateMembership(membershipId, req.organizationId!);
     if (!updated) return res.status(404).json({ message: "Membership not found" });
@@ -1554,7 +1577,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Failed to write admin action log (reset_password, org-admin):", err);
     }
     return res.status(200).json({
-      message: emailSendFailed ? "Reset link generated, but the email could not be sent." : "Password reset email sent.",
+      message: emailSendFailed
+        ? "Reset link generated, but the email could not be sent."
+        : "Password reset email sent.",
       emailSendFailed,
     });
   });
@@ -1682,7 +1707,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const entity = await storage.createReportingEntity({ ...data, organizationId: req.organizationId! });
       return res.status(201).json({ reportingEntity: entity });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid reporting entity payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid reporting entity payload" });
     }
   });
 
@@ -1752,7 +1779,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!entity) return res.status(404).json({ message: "Reporting entity not found" });
       return res.json({ reportingEntity: entity });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid reporting entity payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid reporting entity payload" });
     }
   });
 
@@ -1777,7 +1806,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const existing = await storage.listFacilities(req.organizationId!);
       const duplicate = existing.some(
-        (f) => f.reportingEntityId === data.reportingEntityId && f.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
+        (f) =>
+          f.reportingEntityId === data.reportingEntityId &&
+          f.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
       );
       if (duplicate) return res.status(409).json({ message: "Facility name already exists for this reporting entity" });
 
@@ -1798,7 +1829,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const existing = await storage.listFacilities(req.organizationId!);
       const duplicate = existing.some(
-        (f) => f.id !== id && f.reportingEntityId === target.reportingEntityId && f.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
+        (f) =>
+          f.id !== id &&
+          f.reportingEntityId === target.reportingEntityId &&
+          f.name.trim().toLowerCase() === data.name.trim().toLowerCase(),
       );
       if (duplicate) return res.status(409).json({ message: "Facility name already exists for this reporting entity" });
 
@@ -1862,7 +1896,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const duplicate = existing.some(
         (b) => b.reportingEntityId === data.reportingEntityId && b.reportingYear === data.reportingYear,
       );
-      if (duplicate) return res.status(409).json({ message: "Reporting boundary already exists for this entity and year" });
+      if (duplicate)
+        return res.status(409).json({ message: "Reporting boundary already exists for this entity and year" });
 
       const boundary = await storage.createReportingBoundary({ ...data, organizationId: req.organizationId! });
       return res.status(201).json({ boundary });
@@ -1883,9 +1918,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (lock) return res.status(409).json({ message: lock });
 
       const duplicate = boundaries.some(
-        (b) => b.id !== id && b.reportingEntityId === target.reportingEntityId && b.reportingYear === data.reportingYear,
+        (b) =>
+          b.id !== id && b.reportingEntityId === target.reportingEntityId && b.reportingYear === data.reportingYear,
       );
-      if (duplicate) return res.status(409).json({ message: "Reporting boundary already exists for this entity and year" });
+      if (duplicate)
+        return res.status(409).json({ message: "Reporting boundary already exists for this entity and year" });
 
       const boundary = await storage.updateReportingBoundary(req.organizationId!, id, data);
       return res.json({ boundary });
@@ -1974,7 +2011,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         const code = data.revenueCurrency.trim().toUpperCase();
         if (!/^[A-Z]{3}$/.test(code)) {
-          return res.status(400).json({ message: "Revenue currency must be a 3-letter ISO 4217 code, for example USD or AED" });
+          return res
+            .status(400)
+            .json({ message: "Revenue currency must be a 3-letter ISO 4217 code, for example USD or AED" });
         }
         revenueCurrency = code;
       }
@@ -1998,7 +2037,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const boundary = await storage.updateReportingBoundary(req.organizationId!, id, update);
       return res.json({ reportingBoundary: boundary });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid reporting metrics payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid reporting metrics payload" });
     }
   });
 
@@ -2019,7 +2060,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // different shape from the per-activity-line rows the retired legacy
   // calculator's CSV export used to produce, so a small local builder is
   // used instead of a shared helper.
-  const buildFacilityRollupCsv = (rows: { facility: string; country: string; equityPercent: number | string; scope1: number; scope2: number; scope3: number }[]): string => {
+  const buildFacilityRollupCsv = (
+    rows: {
+      facility: string;
+      country: string;
+      equityPercent: number | string;
+      scope1: number;
+      scope2: number;
+      scope3: number;
+    }[],
+  ): string => {
     const escapeCsvValue = (value: string | number): string => {
       const stringValue = String(value);
       if (/[",\n]/.test(stringValue)) {
@@ -2062,29 +2112,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/reporting-boundaries/:id/consolidated-report/export.xlsx", requireAuth, requireOrg, async (req, res) => {
-    try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
-      const report = await storage.getConsolidatedReport(req.organizationId!, id);
-      if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
-      const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
+  app.get(
+    "/api/reporting-boundaries/:id/consolidated-report/export.xlsx",
+    requireAuth,
+    requireOrg,
+    async (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+        const report = await storage.getConsolidatedReport(req.organizationId!, id);
+        if (!report) return res.status(404).json({ message: "Reporting boundary not found" });
+        const streamDetails = await storage.getSourceStreamDetailForBoundary(req.organizationId!, id);
 
-      const { buildGenericWorkbook } = await import("./utils/xlsx-export");
-      const wb = buildGenericWorkbook(report, streamDetails);
-      const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        const { buildGenericWorkbook } = await import("./utils/xlsx-export");
+        const wb = buildGenericWorkbook(report, streamDetails);
+        const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; ${contentDispositionFilename(`${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-ISO14064.xlsx`)}`,
-      );
-      return res.send(buffer);
-    } catch (error) {
-      console.error("Consolidated report XLSX export error:", error);
-      return res.status(500).json({ message: "Failed to export XLSX" });
-    }
-  });
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; ${contentDispositionFilename(`${report.reportingEntity.name}-${report.reportingBoundary.reportingYear}-ISO14064.xlsx`)}`,
+        );
+        return res.send(buffer);
+      } catch (error) {
+        console.error("Consolidated report XLSX export error:", error);
+        return res.status(500).json({ message: "Failed to export XLSX" });
+      }
+    },
+  );
 
   app.get(
     "/api/reporting-boundaries/:id/consolidated-report/facilities/:facilityId/export-ead-check.json",
@@ -2108,9 +2163,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const calcCount = streamDetails.filter((s) => s.approachTier === "calculation").length;
         const measurementCount = streamDetails.filter((s) => s.approachTier === "measurement").length;
         const mitigationCount = (await storage.listMitigationMeasures(req.organizationId!, facilityId)).length;
-        const { SOURCE_STREAM_ROW_CAPACITY, MEASUREMENT_STREAM_ROW_CAPACITY, MITIGATION_MEASURE_ROW_CAPACITY } = await import(
-          "./utils/ead-template-fill"
-        );
+        const { SOURCE_STREAM_ROW_CAPACITY, MEASUREMENT_STREAM_ROW_CAPACITY, MITIGATION_MEASURE_ROW_CAPACITY } =
+          await import("./utils/ead-template-fill");
         return res.json({
           omittedSourceStreams: Math.max(0, calcCount - SOURCE_STREAM_ROW_CAPACITY),
           omittedMeasurementStreams: Math.max(0, measurementCount - MEASUREMENT_STREAM_ROW_CAPACITY),
@@ -2143,13 +2197,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (s) => s.facilityId === facilityId,
         );
 
-        const [methaneReport, mitigationMeasuresData, facilityIdentifier, facilityContacts, facilityProducts] = await Promise.all([
-          storage.getMethaneReport(req.organizationId!, facilityId, id),
-          storage.listMitigationMeasures(req.organizationId!, facilityId),
-          storage.getFacilityIdentifier(req.organizationId!, facilityId),
-          storage.listFacilityContacts(req.organizationId!, facilityId),
-          storage.listFacilityProducts(req.organizationId!, facilityId),
-        ]);
+        const [methaneReport, mitigationMeasuresData, facilityIdentifier, facilityContacts, facilityProducts] =
+          await Promise.all([
+            storage.getMethaneReport(req.organizationId!, facilityId, id),
+            storage.listMitigationMeasures(req.organizationId!, facilityId),
+            storage.getFacilityIdentifier(req.organizationId!, facilityId),
+            storage.listFacilityContacts(req.organizationId!, facilityId),
+            storage.listFacilityProducts(req.organizationId!, facilityId),
+          ]);
         const methaneReportsData = methaneReport ? [methaneReport] : [];
 
         const {
@@ -2171,7 +2226,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // would misrepresent it as facility-specific when it isn't).
         fillRemainingSheets(wb, streamDetails, methaneReportsData, mitigationMeasuresData, []);
         fillDataGapsSheet(wb, []);
-        fillFacilityDescriptionSheets(wb, facility, facilityIdentifier, facilityContacts, facilityProducts, streamDetails);
+        fillFacilityDescriptionSheets(
+          wb,
+          facility,
+          facilityIdentifier,
+          facilityContacts,
+          facilityProducts,
+          streamDetails,
+        );
 
         // Unlike SheetJS (confirmed inert -- Task 8's report), exceljs
         // genuinely serializes this into the output as
@@ -2194,7 +2256,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
-  const recalculateSchema = z.object({ reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report") });
+  const recalculateSchema = z.object({
+    reason: z.string().trim().min(1, "A reason is required to recalculate a finalized report"),
+  });
 
   app.patch("/api/reporting-boundaries/:id/recalculate", requireAuth, requireOrg, async (req, res) => {
     const id = Number(req.params.id);
@@ -2266,14 +2330,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Facility identifiers (1:1 with facility) ---
   app.get("/api/facilities/:facilityId/identifier", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     const identifier = await storage.getFacilityIdentifier(req.organizationId!, facilityId);
     return res.json({ identifier: identifier ?? null });
   });
 
   app.put("/api/facilities/:facilityId/identifier", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     try {
       const data = parseBody(facilityIdentifierUpsertSchema, req.body);
       const facility = await storage.getFacility(req.organizationId!, facilityId);
@@ -2288,21 +2354,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.json({ identifier });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility identifier payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid facility identifier payload" });
     }
   });
 
   // --- Facility contacts ---
   app.get("/api/facilities/:facilityId/contacts", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     const contacts = await storage.listFacilityContacts(req.organizationId!, facilityId);
     return res.json({ contacts });
   });
 
   app.post("/api/facilities/:facilityId/contacts", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     try {
       const data = parseBody(facilityContactSchema, req.body);
       const facility = await storage.getFacility(req.organizationId!, facilityId);
@@ -2311,7 +2381,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const contact = await storage.createFacilityContact({ ...data, organizationId: req.organizationId!, facilityId });
       return res.status(201).json({ contact });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility contact payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid facility contact payload" });
     }
   });
 
@@ -2324,7 +2396,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!contact) return res.status(404).json({ message: "Facility contact not found" });
       return res.json({ contact });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility contact payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid facility contact payload" });
     }
   });
 
@@ -2339,14 +2413,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Facility products ---
   app.get("/api/facilities/:facilityId/products", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     const products = await storage.listFacilityProducts(req.organizationId!, facilityId);
     return res.json({ products });
   });
 
   app.post("/api/facilities/:facilityId/products", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     try {
       const data = parseBody(facilityProductSchema, req.body);
       const facility = await storage.getFacility(req.organizationId!, facilityId);
@@ -2361,7 +2437,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.status(201).json({ product });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility product payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid facility product payload" });
     }
   });
 
@@ -2378,7 +2456,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!product) return res.status(404).json({ message: "Facility product not found" });
       return res.json({ product });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid facility product payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid facility product payload" });
     }
   });
 
@@ -2393,14 +2473,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Source streams ---
   app.get("/api/reporting-boundaries/:boundaryId/source-streams", requireAuth, requireOrg, async (req, res) => {
     const boundaryId = Number(req.params.boundaryId);
-    if (!Number.isInteger(boundaryId) || boundaryId <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    if (!Number.isInteger(boundaryId) || boundaryId <= 0)
+      return res.status(400).json({ message: "Invalid reporting boundary id" });
     const sourceStreamsList = await storage.listSourceStreams(req.organizationId!, boundaryId);
     return res.json({ sourceStreams: sourceStreamsList });
   });
 
   app.post("/api/reporting-boundaries/:boundaryId/source-streams", requireAuth, requireOrg, async (req, res) => {
     const boundaryId = Number(req.params.boundaryId);
-    if (!Number.isInteger(boundaryId) || boundaryId <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    if (!Number.isInteger(boundaryId) || boundaryId <= 0)
+      return res.status(400).json({ message: "Invalid reporting boundary id" });
     try {
       const data = parseBody(sourceStreamCreateSchema, req.body);
 
@@ -2420,7 +2502,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.status(201).json({ sourceStream });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid source stream payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid source stream payload" });
     }
   });
 
@@ -2450,7 +2534,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!sourceStream) return res.status(404).json({ message: "Source stream not found" });
       return res.json({ sourceStream });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid source stream payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid source stream payload" });
     }
   });
 
@@ -2471,14 +2557,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Calculation-based approach detail (1:1 with source stream) ---
   app.get("/api/source-streams/:id/calculation-approach", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     const approach = await storage.getCalculationApproach(req.organizationId!, sourceStreamId);
     return res.json({ calculationApproach: approach ?? null });
   });
 
   app.put("/api/source-streams/:id/calculation-approach", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     try {
       const data = parseBody(calculationApproachSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
@@ -2524,7 +2612,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // was needed. Persisted on the emission record so that record's
       // `quantity x gasBreakdown[].co2ePerUnit` per-gas rollup (see
       // server/storage.ts getConsolidatedReport) stays arithmetically valid.
-      const activityValueInFactorUnit = calculation.status === "computed" ? calculation.activityValueInFactorUnit : null;
+      const activityValueInFactorUnit =
+        calculation.status === "computed" ? calculation.activityValueInFactorUnit : null;
       // The NCV actually applied, recorded on the calculation approach so an
       // auditor can reconstruct kg -> TJ from the stored row alone.
       const appliedNetCalorificValue = calculation.status === "computed" ? calculation.appliedNetCalorificValue : null;
@@ -2553,7 +2642,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // -- divide by 1000. Falls back to whatever the client sent
         // (manual entry) when there isn't enough data to compute.
         calculatedEmissionsTco2e:
-          computedEmissionKg !== null ? String(computedEmissionKg / 1000) : toNumericField(data.calculatedEmissionsTco2e),
+          computedEmissionKg !== null
+            ? String(computedEmissionKg / 1000)
+            : toNumericField(data.calculatedEmissionsTco2e),
         // gasBreakdown intentionally rides along in `...data` rather than
         // being restated with `?? null`. Drizzle's onConflictDoUpdate drops
         // `undefined` fields from its SET clause but writes an explicit
@@ -2601,21 +2692,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.json({ calculationApproach: approach });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid calculation approach payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid calculation approach payload" });
     }
   });
 
   // --- Measurement-based approach detail (1:1 with source stream) ---
   app.get("/api/source-streams/:id/measurement-approach", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     const approach = await storage.getMeasurementBasedApproach(req.organizationId!, sourceStreamId);
     return res.json({ measurementApproach: approach ?? null });
   });
 
   app.put("/api/source-streams/:id/measurement-approach", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     try {
       const data = parseBody(measurementApproachSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
@@ -2632,21 +2727,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.json({ measurementApproach: approach });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid measurement approach payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid measurement approach payload" });
     }
   });
 
   // --- Fallback approach detail (1:1 with source stream) ---
   app.get("/api/source-streams/:id/fallback-approach", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     const approach = await storage.getFallbackApproach(req.organizationId!, sourceStreamId);
     return res.json({ fallbackApproach: approach ?? null });
   });
 
   app.put("/api/source-streams/:id/fallback-approach", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     try {
       const data = parseBody(fallbackApproachSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
@@ -2675,7 +2774,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       return res.json({ fallbackApproach: approach });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid fallback approach payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid fallback approach payload" });
     }
   });
 
@@ -2683,7 +2784,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/methane-reports", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.query.facilityId);
     const reportingBoundaryId = Number(req.query.reportingBoundaryId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0 || !Number.isInteger(reportingBoundaryId) || reportingBoundaryId <= 0) {
+    if (
+      !Number.isInteger(facilityId) ||
+      facilityId <= 0 ||
+      !Number.isInteger(reportingBoundaryId) ||
+      reportingBoundaryId <= 0
+    ) {
       return res.status(400).json({ message: "facilityId and reportingBoundaryId query params are required" });
     }
     const report = await storage.getMethaneReport(req.organizationId!, facilityId, reportingBoundaryId);
@@ -2708,21 +2814,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.json({ methaneReport: report });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid methane report payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid methane report payload" });
     }
   });
 
   // --- Data quality / uncertainty (1:1 with source stream) ---
   app.get("/api/source-streams/:id/data-quality", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     const record = await storage.getDataQualityRecord(req.organizationId!, sourceStreamId);
     return res.json({ dataQualityRecord: record ?? null });
   });
 
   app.put("/api/source-streams/:id/data-quality", requireAuth, requireOrg, async (req, res) => {
     const sourceStreamId = Number(req.params.id);
-    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0) return res.status(400).json({ message: "Invalid source stream id" });
+    if (!Number.isInteger(sourceStreamId) || sourceStreamId <= 0)
+      return res.status(400).json({ message: "Invalid source stream id" });
     try {
       const data = parseBody(dataQualityRecordSchema, req.body);
       const sourceStream = await storage.getSourceStream(req.organizationId!, sourceStreamId);
@@ -2747,14 +2857,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Verification findings / data gaps (per reporting boundary) ---
   app.get("/api/reporting-boundaries/:boundaryId/verification-findings", requireAuth, requireOrg, async (req, res) => {
     const boundaryId = Number(req.params.boundaryId);
-    if (!Number.isInteger(boundaryId) || boundaryId <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    if (!Number.isInteger(boundaryId) || boundaryId <= 0)
+      return res.status(400).json({ message: "Invalid reporting boundary id" });
     const findings = await storage.listVerificationFindings(req.organizationId!, boundaryId);
     return res.json({ findings });
   });
 
   app.post("/api/reporting-boundaries/:boundaryId/verification-findings", requireAuth, requireOrg, async (req, res) => {
     const boundaryId = Number(req.params.boundaryId);
-    if (!Number.isInteger(boundaryId) || boundaryId <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    if (!Number.isInteger(boundaryId) || boundaryId <= 0)
+      return res.status(400).json({ message: "Invalid reporting boundary id" });
     try {
       const data = parseBody(verificationFindingCreateSchema, req.body);
 
@@ -2770,7 +2882,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.status(201).json({ finding });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid verification finding payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid verification finding payload" });
     }
   });
 
@@ -2783,7 +2897,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!finding) return res.status(404).json({ message: "Verification finding not found" });
       return res.json({ finding });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid verification finding payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid verification finding payload" });
     }
   });
 
@@ -2798,14 +2914,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Management system & QA procedures (per reporting boundary) ---
   app.get("/api/reporting-boundaries/:boundaryId/management-qa", requireAuth, requireOrg, async (req, res) => {
     const boundaryId = Number(req.params.boundaryId);
-    if (!Number.isInteger(boundaryId) || boundaryId <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    if (!Number.isInteger(boundaryId) || boundaryId <= 0)
+      return res.status(400).json({ message: "Invalid reporting boundary id" });
     const managementQaRecords = await storage.listManagementQaRecords(req.organizationId!, boundaryId);
     return res.json({ managementQaRecords });
   });
 
   app.post("/api/reporting-boundaries/:boundaryId/management-qa", requireAuth, requireOrg, async (req, res) => {
     const boundaryId = Number(req.params.boundaryId);
-    if (!Number.isInteger(boundaryId) || boundaryId <= 0) return res.status(400).json({ message: "Invalid reporting boundary id" });
+    if (!Number.isInteger(boundaryId) || boundaryId <= 0)
+      return res.status(400).json({ message: "Invalid reporting boundary id" });
     try {
       const data = parseBody(managementQaCreateSchema, req.body);
 
@@ -2821,7 +2939,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.status(201).json({ managementQaRecord });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid management QA payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid management QA payload" });
     }
   });
 
@@ -2837,7 +2957,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!managementQaRecord) return res.status(404).json({ message: "Management QA record not found" });
       return res.json({ managementQaRecord });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid management QA payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid management QA payload" });
     }
   });
 
@@ -2852,14 +2974,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Mitigation measures (per facility) ---
   app.get("/api/facilities/:facilityId/mitigation-measures", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     const measures = await storage.listMitigationMeasures(req.organizationId!, facilityId);
     return res.json({ measures });
   });
 
   app.post("/api/facilities/:facilityId/mitigation-measures", requireAuth, requireOrg, async (req, res) => {
     const facilityId = Number(req.params.facilityId);
-    if (!Number.isInteger(facilityId) || facilityId <= 0) return res.status(400).json({ message: "Invalid facility id" });
+    if (!Number.isInteger(facilityId) || facilityId <= 0)
+      return res.status(400).json({ message: "Invalid facility id" });
     try {
       const data = parseBody(mitigationMeasureCreateSchema, req.body);
       const facility = await storage.getFacility(req.organizationId!, facilityId);
@@ -2875,7 +2999,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       return res.status(201).json({ measure });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid mitigation measure payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid mitigation measure payload" });
     }
   });
 
@@ -2892,7 +3018,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!measure) return res.status(404).json({ message: "Mitigation measure not found" });
       return res.json({ measure });
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : "Invalid mitigation measure payload" });
+      return res
+        .status(400)
+        .json({ message: error instanceof Error ? error.message : "Invalid mitigation measure payload" });
     }
   });
 
@@ -2976,7 +3104,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ]);
       if (entities.length === 0 || facilitiesList.length === 0 || boundaries.length === 0) {
         return res.status(400).json({
-          message: "Setup incomplete. Configure at least one reporting entity, facility, and reporting boundary before calculation.",
+          message:
+            "Setup incomplete. Configure at least one reporting entity, facility, and reporting boundary before calculation.",
         });
       }
 
@@ -2984,7 +3113,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const emissions: Emission[] = [];
 
       // Calculate emissions for each scope
-      for (const scope of ['scope1', 'scope2', 'scope3'] as const) {
+      for (const scope of ["scope1", "scope2", "scope3"] as const) {
         for (const input of inputs[scope]) {
           // Skip incomplete entries
           if (!input.activity || !input.unit || !input.qty) continue;
@@ -3053,7 +3182,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.json({
         results,
-        emissions
+        emissions,
       });
     } catch (error) {
       console.error("Calculation error:", error);
@@ -3065,17 +3194,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/yearly-comparison", requireAuth, requireOrg, (req, res) => {
     try {
       const { emissions } = req.body;
-      
+
       if (!emissions || !Array.isArray(emissions)) {
         return res.status(400).json({ message: "Invalid emissions data" });
       }
-      
+
       // Group emissions by year
       const yearlyEmissionsMap = new Map<number, YearlyEmissions>();
-      
+
       for (const emission of emissions) {
         if (!emission.year) continue;
-        
+
         const year = emission.year;
         if (!yearlyEmissionsMap.has(year)) {
           yearlyEmissionsMap.set(year, {
@@ -3083,23 +3212,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             scope1: 0,
             scope2: 0,
             scope3: 0,
-            total: 0
+            total: 0,
           });
         }
-        
+
         const yearData = yearlyEmissionsMap.get(year)!;
         // Type-safe update of the appropriate scope
-        if (emission.scope === 'scope1') yearData.scope1 += emission.emission;
-        else if (emission.scope === 'scope2') yearData.scope2 += emission.emission;
-        else if (emission.scope === 'scope3') yearData.scope3 += emission.emission;
-        
+        if (emission.scope === "scope1") yearData.scope1 += emission.emission;
+        else if (emission.scope === "scope2") yearData.scope2 += emission.emission;
+        else if (emission.scope === "scope3") yearData.scope3 += emission.emission;
+
         yearData.total += emission.emission;
       }
-      
+
       // Convert map to array for response
-      const yearlyEmissions = Array.from(yearlyEmissionsMap.values())
-        .sort((a, b) => a.year - b.year);
-      
+      const yearlyEmissions = Array.from(yearlyEmissionsMap.values()).sort((a, b) => a.year - b.year);
+
       return res.json({ yearlyEmissions });
     } catch (error) {
       console.error("Yearly comparison error:", error);
@@ -3111,55 +3239,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/product-intensity", requireAuth, requireOrg, (req, res) => {
     try {
       const { emissions, productionData } = req.body;
-      
+
       if (!emissions || !Array.isArray(emissions) || !productionData || !Array.isArray(productionData)) {
         return res.status(400).json({ message: "Invalid emissions or production data" });
       }
-      
+
       // Calculate total emissions per product per year
       const productEmissionsMap = new Map<string, Map<number, number>>();
-      
+
       for (const emission of emissions) {
         if (!emission.product || !emission.year) continue;
-        
+
         const key = emission.product;
         if (!productEmissionsMap.has(key)) {
           productEmissionsMap.set(key, new Map<number, number>());
         }
-        
+
         const yearMap = productEmissionsMap.get(key)!;
         const year = emission.year;
-        
+
         if (!yearMap.has(year)) {
           yearMap.set(year, 0);
         }
-        
+
         yearMap.set(year, yearMap.get(year)! + emission.emission);
       }
-      
+
       // Calculate intensity
       const productIntensities: ProductIntensity[] = [];
-      
+
       for (const productData of productionData as ProductData[]) {
         const { name, year, production, unit } = productData;
-        
+
         if (!productEmissionsMap.has(name) || !productEmissionsMap.get(name)!.has(year)) {
           continue;
         }
-        
+
         const emissions = productEmissionsMap.get(name)!.get(year)!;
         const intensity = production > 0 ? emissions / production : 0;
-        
+
         productIntensities.push({
           product: name,
           year,
           emissions,
           production,
           intensity,
-          unit
+          unit,
         });
       }
-      
+
       return res.json({ productIntensities });
     } catch (error) {
       console.error("Product intensity error:", error);

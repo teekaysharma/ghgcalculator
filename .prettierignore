@@ -1,0 +1,7 @@
+node_modules
+dist
+scripts/manual-migration-*.mjs
+scripts/exiobase/output/
+scripts/exiobase/gwp_weights.json
+package-lock.json
+*.md

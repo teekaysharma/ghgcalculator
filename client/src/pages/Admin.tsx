@@ -75,7 +75,15 @@ interface AdminConsolidatedReport {
   reportingBoundary: { reportingYear: number; consolidationApproach: string; status: string };
   totals: { scope1: number; scope2: number; scope3: number; biogenicCo2: number };
   gasBreakdown: { gas: string; co2e: number; pctOfTotal: number }[];
-  facilities: { id: number; name: string; country: string | null; scope1: number; scope2: number; scope3: number; incomplete: boolean }[];
+  facilities: {
+    id: number;
+    name: string;
+    country: string | null;
+    scope1: number;
+    scope2: number;
+    scope3: number;
+    incomplete: boolean;
+  }[];
 }
 
 // Read-only drill-down into one tenant's actual GHG data: reporting
@@ -145,7 +153,9 @@ function TenantDataBrowser({ orgId, orgName }: { orgId: number; orgName: string 
       <CardContent>
         {entitiesQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
         {entitiesQuery.isError && (
-          <p className="text-sm text-destructive">Couldn't load reporting entities. {(entitiesQuery.error as Error)?.message}</p>
+          <p className="text-sm text-destructive">
+            Couldn't load reporting entities. {(entitiesQuery.error as Error)?.message}
+          </p>
         )}
         {!entitiesQuery.isLoading && entities.length === 0 && (
           <p className="text-sm text-neutral-500">No reporting entities set up yet.</p>
@@ -164,11 +174,14 @@ function TenantDataBrowser({ orgId, orgName }: { orgId: number; orgName: string 
                 >
                   <span className="font-medium text-sm">
                     {entity.name}
-                    {entity.baseYear && <span className="text-neutral-500 font-normal"> · base year {entity.baseYear}</span>}
+                    {entity.baseYear && (
+                      <span className="text-neutral-500 font-normal"> · base year {entity.baseYear}</span>
+                    )}
                   </span>
                   <span className="text-xs text-neutral-500">
                     {entityFacilities.length} {entityFacilities.length === 1 ? "facility" : "facilities"} ·{" "}
-                    {entityBoundaries.length} {entityBoundaries.length === 1 ? "boundary" : "boundaries"} {isExpanded ? "▲" : "▼"}
+                    {entityBoundaries.length} {entityBoundaries.length === 1 ? "boundary" : "boundaries"}{" "}
+                    {isExpanded ? "▲" : "▼"}
                   </span>
                 </button>
                 {isExpanded && (
@@ -189,7 +202,9 @@ function TenantDataBrowser({ orgId, orgName }: { orgId: number; orgName: string 
                       )}
                     </div>
                     <div>
-                      <p className="text-xs font-mono uppercase tracking-wide text-neutral-400 mb-1.5">Reporting boundaries</p>
+                      <p className="text-xs font-mono uppercase tracking-wide text-neutral-400 mb-1.5">
+                        Reporting boundaries
+                      </p>
                       {entityBoundaries.length === 0 ? (
                         <p className="text-sm text-neutral-500">None yet.</p>
                       ) : (
@@ -197,8 +212,12 @@ function TenantDataBrowser({ orgId, orgName }: { orgId: number; orgName: string 
                           {entityBoundaries.map((b) => (
                             <li key={b.id} className="flex items-center gap-2">
                               <span>
-                                {b.reportingYear} · <span className="capitalize">{b.consolidationApproach.replace(/_/g, " ")}</span>{" "}
-                                <Badge variant={b.status === "finalized" ? "secondary" : "outline"} className="capitalize ml-1">
+                                {b.reportingYear} ·{" "}
+                                <span className="capitalize">{b.consolidationApproach.replace(/_/g, " ")}</span>{" "}
+                                <Badge
+                                  variant={b.status === "finalized" ? "secondary" : "outline"}
+                                  className="capitalize ml-1"
+                                >
                                   {b.status}
                                 </Badge>
                               </span>
@@ -218,22 +237,30 @@ function TenantDataBrowser({ orgId, orgName }: { orgId: number; orgName: string 
                       <div className="bg-neutral-50 border border-neutral-200 rounded-md p-3">
                         {reportQuery.isLoading && <p className="text-sm text-neutral-500">Loading report...</p>}
                         {reportQuery.isError && (
-                          <p className="text-sm text-destructive">Couldn't load report. {(reportQuery.error as Error)?.message}</p>
+                          <p className="text-sm text-destructive">
+                            Couldn't load report. {(reportQuery.error as Error)?.message}
+                          </p>
                         )}
                         {reportQuery.data && (
                           <div className="space-y-3 text-sm">
                             <div className="grid grid-cols-3 gap-3">
                               <div>
                                 <p className="text-xs text-neutral-500">Scope 1</p>
-                                <p className="font-mono font-medium">{reportQuery.data.report.totals.scope1.toFixed(2)} tCO2e</p>
+                                <p className="font-mono font-medium">
+                                  {reportQuery.data.report.totals.scope1.toFixed(2)} tCO2e
+                                </p>
                               </div>
                               <div>
                                 <p className="text-xs text-neutral-500">Scope 2</p>
-                                <p className="font-mono font-medium">{reportQuery.data.report.totals.scope2.toFixed(2)} tCO2e</p>
+                                <p className="font-mono font-medium">
+                                  {reportQuery.data.report.totals.scope2.toFixed(2)} tCO2e
+                                </p>
                               </div>
                               <div>
                                 <p className="text-xs text-neutral-500">Scope 3</p>
-                                <p className="font-mono font-medium">{reportQuery.data.report.totals.scope3.toFixed(2)} tCO2e</p>
+                                <p className="font-mono font-medium">
+                                  {reportQuery.data.report.totals.scope3.toFixed(2)} tCO2e
+                                </p>
                               </div>
                             </div>
                             {reportQuery.data.report.gasBreakdown.length > 0 && (
@@ -418,7 +445,8 @@ export default function Admin() {
       invalidateAll();
       toast({ title: "Registration deleted" });
     },
-    onError: (err) => toast({ title: "Could not delete registration", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not delete registration", description: err.message, variant: "destructive" }),
   });
 
   const promote = useMutation({
@@ -464,7 +492,8 @@ export default function Admin() {
       });
       toast({ title: "Membership deactivated" });
     },
-    onError: (err) => toast({ title: "Could not deactivate membership", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not deactivate membership", description: err.message, variant: "destructive" }),
   });
 
   const activateMembership = useMutation({
@@ -476,7 +505,8 @@ export default function Admin() {
       invalidateAll();
       toast({ title: "Membership reactivated" });
     },
-    onError: (err) => toast({ title: "Could not reactivate membership", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not reactivate membership", description: err.message, variant: "destructive" }),
   });
 
   const deactivateAccount = useMutation({
@@ -493,7 +523,8 @@ export default function Admin() {
       });
       toast({ title: "Account deactivated" });
     },
-    onError: (err) => toast({ title: "Could not deactivate account", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not deactivate account", description: err.message, variant: "destructive" }),
   });
 
   const reactivateAccount = useMutation({
@@ -505,7 +536,8 @@ export default function Admin() {
       invalidateAll();
       toast({ title: "Account reactivated" });
     },
-    onError: (err) => toast({ title: "Could not reactivate account", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not reactivate account", description: err.message, variant: "destructive" }),
   });
 
   const changeEmail = useMutation({
@@ -550,13 +582,15 @@ export default function Admin() {
         toast({
           variant: "destructive",
           title: "Reset link generated, but no email could be sent",
-          description: "Their current password still works, so nothing is broken. Retry, or check the email configuration.",
+          description:
+            "Their current password still works, so nothing is broken. Retry, or check the email configuration.",
         });
       } else {
         toast({ title: "Password reset email sent" });
       }
     },
-    onError: (err) => toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
   });
 
   if (isLoading || !user?.isSuperAdmin) return null;
@@ -584,14 +618,16 @@ export default function Admin() {
           <CardHeader>
             <CardTitle className="text-base">Organizations</CardTitle>
             <CardDescription>
-              Every tenant on the platform. Click a name to filter its members below and browse its GHG data
-              (read-only) further down.
+              Every tenant on the platform. Click a name to filter its members below and browse its GHG data (read-only)
+              further down.
             </CardDescription>
           </CardHeader>
           <CardContent>
             {orgsQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
             {orgsQuery.isError && (
-              <p className="text-sm text-destructive">Couldn't load organizations. {(orgsQuery.error as Error)?.message}</p>
+              <p className="text-sm text-destructive">
+                Couldn't load organizations. {(orgsQuery.error as Error)?.message}
+              </p>
             )}
             {!orgsQuery.isLoading && !orgsQuery.isError && (orgsQuery.data?.organizations.length ?? 0) === 0 && (
               <p className="text-sm text-neutral-500">No organizations yet.</p>
@@ -660,17 +696,13 @@ export default function Admin() {
           <CardContent>
             {usersQuery.isError && (
               <div className="flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
-                <span className="text-destructive">
-                  Couldn't load accounts. {(usersQuery.error as Error)?.message}
-                </span>
+                <span className="text-destructive">Couldn't load accounts. {(usersQuery.error as Error)?.message}</span>
                 <Button variant="outline" size="sm" onClick={() => usersQuery.refetch()}>
                   Retry
                 </Button>
               </div>
             )}
-            {!usersQuery.isError && usersQuery.isLoading && (
-              <div className="text-sm text-neutral-500">Loading...</div>
-            )}
+            {!usersQuery.isError && usersQuery.isLoading && <div className="text-sm text-neutral-500">Loading...</div>}
             {!usersQuery.isError && !usersQuery.isLoading && rows.length === 0 && (
               <p className="text-sm text-neutral-500">No accounts found.</p>
             )}
@@ -752,7 +784,10 @@ export default function Admin() {
                                           id={`membership-note-${org.membershipId}`}
                                           value={membershipNotes[org.membershipId] ?? ""}
                                           onChange={(e) =>
-                                            setMembershipNotes((prev) => ({ ...prev, [org.membershipId]: e.target.value }))
+                                            setMembershipNotes((prev) => ({
+                                              ...prev,
+                                              [org.membershipId]: e.target.value,
+                                            }))
                                           }
                                         />
                                       </div>
@@ -807,9 +842,7 @@ export default function Admin() {
                               >
                                 Verify
                               </Button>
-                              <p className="text-xs text-neutral-400 text-right">
-                                Live account — delete unavailable
-                              </p>
+                              <p className="text-xs text-neutral-400 text-right">Live account — delete unavailable</p>
                             </div>
                           )}
                           {isPendingRegistration && (
@@ -858,16 +891,13 @@ export default function Admin() {
                                     <AlertDialogTitle>Promote {u.email} to super-admin?</AlertDialogTitle>
                                     <AlertDialogDescription>
                                       This grants full access to every account and organization on the platform,
-                                      including the ability to verify, delete, promote, and demote other accounts.
-                                      This is a significant privilege grant with no built-in way to undo it from this
-                                      panel.
+                                      including the ability to verify, delete, promote, and demote other accounts. This
+                                      is a significant privilege grant with no built-in way to undo it from this panel.
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => promote.mutate(u.id)}>
-                                      Promote
-                                    </AlertDialogAction>
+                                    <AlertDialogAction onClick={() => promote.mutate(u.id)}>Promote</AlertDialogAction>
                                   </AlertDialogFooter>
                                 </AlertDialogContent>
                               </AlertDialog>
@@ -885,8 +915,8 @@ export default function Admin() {
                                   <AlertDialogHeader>
                                     <AlertDialogTitle>Demote {u.email}?</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      This removes {u.email}'s super-admin access. A reason is required and is
-                                      recorded in the activity log below.
+                                      This removes {u.email}'s super-admin access. A reason is required and is recorded
+                                      in the activity log below.
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <div className="py-2 space-y-2">
@@ -894,9 +924,7 @@ export default function Admin() {
                                     <Textarea
                                       id={`demote-note-${u.id}`}
                                       value={demoteNotes[u.id] ?? ""}
-                                      onChange={(e) =>
-                                        setDemoteNotes((prev) => ({ ...prev, [u.id]: e.target.value }))
-                                      }
+                                      onChange={(e) => setDemoteNotes((prev) => ({ ...prev, [u.id]: e.target.value }))}
                                       placeholder="Why is this account being demoted?"
                                     />
                                   </div>
@@ -929,8 +957,8 @@ export default function Admin() {
                                     <AlertDialogHeader>
                                       <AlertDialogTitle>Deactivate {u.email}'s account?</AlertDialogTitle>
                                       <AlertDialogDescription>
-                                        This blocks login entirely, regardless of which organizations they belong to.
-                                        A reason is required and is recorded in the activity log.
+                                        This blocks login entirely, regardless of which organizations they belong to. A
+                                        reason is required and is recorded in the activity log.
                                       </AlertDialogDescription>
                                     </AlertDialogHeader>
                                     <div className="py-2 space-y-2">
@@ -1013,7 +1041,8 @@ export default function Admin() {
                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                                     <AlertDialogAction
                                       disabled={
-                                        !changeEmailDrafts[u.id]?.email?.trim() || !changeEmailDrafts[u.id]?.note?.trim()
+                                        !changeEmailDrafts[u.id]?.email?.trim() ||
+                                        !changeEmailDrafts[u.id]?.note?.trim()
                                       }
                                       onClick={() =>
                                         changeEmail.mutate({

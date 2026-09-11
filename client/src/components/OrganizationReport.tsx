@@ -6,7 +6,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Info } from "lucide-react";
 
@@ -21,7 +26,13 @@ const MODULE_LABELS: Record<string, string> = {
 };
 
 interface ConsolidatedReport {
-  reportingBoundary: { id: number; reportingYear: number; consolidationApproach: string; status: string; finalizedAt: string | null };
+  reportingBoundary: {
+    id: number;
+    reportingYear: number;
+    consolidationApproach: string;
+    status: string;
+    finalizedAt: string | null;
+  };
   reportingEntity: { id: number; name: string; baseYear: number | null; baseYearRationale: string | null };
   totals: { scope1: number; scope2: number; scope3: number; biogenicCo2: number };
   gasBreakdown: { gas: string; co2e: number; pctOfTotal: number }[];
@@ -53,8 +64,19 @@ interface ConsolidatedReport {
     usedIpccDefaultFactor: boolean | null;
     ipccDefaultSubstitutionReason: string | null;
   }[];
-  verificationFindings: { id: number; findingType: string; description: string; severity: string | null; status: string }[];
-  managementQaRecords: { id: number; qaProcedureDescription: string | null; responsiblePerson: string | null; reviewFrequency: string | null }[];
+  verificationFindings: {
+    id: number;
+    findingType: string;
+    description: string;
+    severity: string | null;
+    status: string;
+  }[];
+  managementQaRecords: {
+    id: number;
+    qaProcedureDescription: string | null;
+    responsiblePerson: string | null;
+    reviewFrequency: string | null;
+  }[];
   baseYearComparison: { baseYearTotal: number | null; currentYearTotal: number; changePercent: number | null } | null;
 }
 
@@ -105,16 +127,21 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
       <Card className="bg-white">
         <CardContent className="pt-6 flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-medium">{report.reportingEntity.name} — {report.reportingBoundary.reportingYear}</h3>
+            <h3 className="text-lg font-medium">
+              {report.reportingEntity.name} — {report.reportingBoundary.reportingYear}
+            </h3>
             <p className="text-sm text-neutral-500">
-              Consolidation: {report.reportingBoundary.consolidationApproach} · Status: {report.reportingBoundary.status}
+              Consolidation: {report.reportingBoundary.consolidationApproach} · Status:{" "}
+              {report.reportingBoundary.status}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button
               size="sm"
               variant="outline"
-              onClick={() => window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.csv`, "_blank")}
+              onClick={() =>
+                window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.csv`, "_blank")
+              }
             >
               Export CSV
             </Button>
@@ -126,7 +153,12 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
               </DropdownMenuTrigger>
               <DropdownMenuContent>
                 <DropdownMenuItem
-                  onClick={() => window.open(`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.xlsx`, "_blank")}
+                  onClick={() =>
+                    window.open(
+                      `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/export.xlsx`,
+                      "_blank",
+                    )
+                  }
                 >
                   ISO 14064-3 / GHG Protocol (generic)
                 </DropdownMenuItem>
@@ -138,11 +170,15 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
                         "GET",
                         `/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report/facilities/${f.id}/export-ead-check.json`,
                       );
-                      const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } = await res.json();
+                      const { omittedSourceStreams, omittedMeasurementStreams, omittedMitigationMeasures } =
+                        await res.json();
                       const omissions: string[] = [];
-                      if (omittedSourceStreams > 0) omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
-                      if (omittedMeasurementStreams > 0) omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
-                      if (omittedMitigationMeasures > 0) omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
+                      if (omittedSourceStreams > 0)
+                        omissions.push(`${omittedSourceStreams} calculation-tier source stream(s)`);
+                      if (omittedMeasurementStreams > 0)
+                        omissions.push(`${omittedMeasurementStreams} measurement-tier source stream(s)`);
+                      if (omittedMitigationMeasures > 0)
+                        omissions.push(`${omittedMitigationMeasures} mitigation measure(s)`);
                       if (omissions.length > 0) {
                         const proceed = window.confirm(
                           `${omissions.join(" and ")} exceed the EAD template's row limits and will not be included in this file — see the ISO 14064-3 workbook for the complete data. Continue anyway?`,
@@ -185,14 +221,19 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
                 size="sm"
                 onClick={async () => {
                   await apiRequest("PATCH", `/api/reporting-boundaries/${reportingBoundaryId}/finalize`, {});
-                  queryClient.invalidateQueries({ queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report`] });
+                  queryClient.invalidateQueries({
+                    queryKey: [`/api/reporting-boundaries/${reportingBoundaryId}/consolidated-report`],
+                  });
                 }}
               >
                 Finalize report
               </Button>
             ) : (
               <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
-                Finalized {report.reportingBoundary.finalizedAt ? new Date(report.reportingBoundary.finalizedAt).toLocaleDateString() : ""}
+                Finalized{" "}
+                {report.reportingBoundary.finalizedAt
+                  ? new Date(report.reportingBoundary.finalizedAt).toLocaleDateString()
+                  : ""}
               </span>
             )}
           </div>
@@ -202,10 +243,8 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
       <Card className="bg-amber-50 border-amber-200">
         <CardContent className="pt-4 pb-4 text-sm text-amber-800">
           <strong>GHG coverage:</strong>{" "}
-          {report.gasCoverage
-            .map((g) => `${g.gas}${g.covered ? "" : " (not yet covered by this system)"}`)
-            .join(", ")}
-          . This report covers Stationary Combustion only as of this build — other Scope 1/2/3 categories are not yet
+          {report.gasCoverage.map((g) => `${g.gas}${g.covered ? "" : " (not yet covered by this system)"}`).join(", ")}.
+          This report covers Stationary Combustion only as of this build — other Scope 1/2/3 categories are not yet
           calculated.
         </CardContent>
       </Card>
@@ -229,8 +268,8 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
           <div className="text-sm">
             <span className="font-medium">Biogenic CO2</span>{" "}
             <span className="text-neutral-500">
-              — memo item, excluded from gross Scope 1/2/3 above. Biogenic CH4 and N2O are NOT excluded; they remain in the
-              scope totals.
+              — memo item, excluded from gross Scope 1/2/3 above. Biogenic CH4 and N2O are NOT excluded; they remain in
+              the scope totals.
             </span>
           </div>
           <div className="text-lg font-semibold whitespace-nowrap">
@@ -312,9 +351,15 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
             <h4 className="text-sm font-medium mb-2">Base year comparison ({report.reportingEntity.baseYear})</h4>
             <p className="text-neutral-600">{report.reportingEntity.baseYearRationale}</p>
             <p className="mt-2">
-              Base year: {report.baseYearComparison.baseYearTotal?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "n/a"} tCO2e ·
-              Current: {report.baseYearComparison.currentYearTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} tCO2e ·
-              Change: {report.baseYearComparison.changePercent !== null ? `${report.baseYearComparison.changePercent.toFixed(1)}%` : "n/a"}
+              Base year:{" "}
+              {report.baseYearComparison.baseYearTotal?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ??
+                "n/a"}{" "}
+              tCO2e · Current:{" "}
+              {report.baseYearComparison.currentYearTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} tCO2e
+              · Change:{" "}
+              {report.baseYearComparison.changePercent !== null
+                ? `${report.baseYearComparison.changePercent.toFixed(1)}%`
+                : "n/a"}
             </p>
           </CardContent>
         </Card>
@@ -337,7 +382,10 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
               </p>
             )}
             {report.intensity.tco2ePerFte !== null && (
-              <p>tCO2e per FTE employee: {report.intensity.tco2ePerFte.toLocaleString(undefined, { maximumFractionDigits: 3 })}</p>
+              <p>
+                tCO2e per FTE employee:{" "}
+                {report.intensity.tco2ePerFte.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+              </p>
             )}
             {report.intensity.tco2ePerProductionUnit !== null && (
               <p>
@@ -399,7 +447,8 @@ export default function OrganizationReport({ reportingBoundaryId }: { reportingB
             <ul className="space-y-2 text-sm">
               {report.verificationFindings.map((f) => (
                 <li key={f.id} className="border-b border-neutral-100 pb-2">
-                  <span className="font-medium">{f.findingType}</span>{f.severity ? ` (${f.severity})` : ""} — {f.description}{" "}
+                  <span className="font-medium">{f.findingType}</span>
+                  {f.severity ? ` (${f.severity})` : ""} — {f.description}{" "}
                   <span className="text-xs text-neutral-400">[{f.status}]</span>
                 </li>
               ))}

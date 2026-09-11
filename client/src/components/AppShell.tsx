@@ -65,10 +65,28 @@ interface SetupStatus {
 }
 
 const NAV_ITEMS: { key: Section; label: string; description: string }[] = [
-  { key: "setup", label: "Setup", description: "Create the reporting entity, first facility, and reporting boundary this inventory needs, and set each entity's base year." },
-  { key: "facilities", label: "Facilities", description: "Manage facilities and their identifiers, contacts, products, and mitigation measures." },
-  { key: "boundary", label: "Boundary Workspace", description: "Source streams, methane reporting, verification findings, and management QA for one facility and reporting year." },
-  { key: "report", label: "Organization Report", description: "The consolidated, auditable emissions report across every facility for a reporting year." },
+  {
+    key: "setup",
+    label: "Setup",
+    description:
+      "Create the reporting entity, first facility, and reporting boundary this inventory needs, and set each entity's base year.",
+  },
+  {
+    key: "facilities",
+    label: "Facilities",
+    description: "Manage facilities and their identifiers, contacts, products, and mitigation measures.",
+  },
+  {
+    key: "boundary",
+    label: "Boundary Workspace",
+    description:
+      "Source streams, methane reporting, verification findings, and management QA for one facility and reporting year.",
+  },
+  {
+    key: "report",
+    label: "Organization Report",
+    description: "The consolidated, auditable emissions report across every facility for a reporting year.",
+  },
   { key: "team", label: "Team", description: "Manage who has access to your organization." },
 ];
 
@@ -148,9 +166,7 @@ function SetupCompleteSection({ onNavigate }: { onNavigate: (section: Section) =
             <SetupStat label="Reporting years" value={status?.boundaryCount ?? 0} />
           </div>
           {entities.length > 0 && (
-            <p className="text-sm text-green-900">
-              Reporting for {entities.map((e) => e.name).join(", ")}.
-            </p>
+            <p className="text-sm text-green-900">Reporting for {entities.map((e) => e.name).join(", ")}.</p>
           )}
           <div className="flex gap-2 flex-wrap">
             <Button size="sm" onClick={() => onNavigate("facilities")}>
@@ -252,8 +268,8 @@ function ReportingEntitySettings({ entity }: { entity: ReportingEntity }) {
         </div>
       </div>
       <p className="text-xs text-neutral-500">
-        The report compares each reporting year against the base year automatically, using the boundary already
-        recorded for that year. Setting a base year with no reporting boundary behind it simply shows no comparison.
+        The report compares each reporting year against the base year automatically, using the boundary already recorded
+        for that year. Setting a base year with no reporting boundary behind it simply shows no comparison.
       </p>
       <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
         {save.isPending ? "Saving..." : "Save base year"}
@@ -398,7 +414,9 @@ function FacilitiesSection({ onNavigate }: { onNavigate: (section: Section) => v
 
 function BoundaryWorkspaceSection({ onNavigate }: { onNavigate: (section: Section) => void }) {
   const entitiesQuery = useQuery<{ reportingEntities: ReportingEntity[] }>({ queryKey: ["/api/reporting-entities"] });
-  const boundariesQuery = useQuery<{ reportingBoundaries: ReportingBoundary[] }>({ queryKey: ["/api/reporting-boundaries"] });
+  const boundariesQuery = useQuery<{ reportingBoundaries: ReportingBoundary[] }>({
+    queryKey: ["/api/reporting-boundaries"],
+  });
   const facilitiesQuery = useQuery<{ facilities: Facility[] }>({ queryKey: ["/api/facilities"] });
 
   const entities = entitiesQuery.data?.reportingEntities ?? [];
@@ -442,8 +460,8 @@ function BoundaryWorkspaceSection({ onNavigate }: { onNavigate: (section: Sectio
         <CardHeader>
           <CardTitle className="text-base">Open a facility's reporting year</CardTitle>
           <CardDescription>
-            Pick a reporting entity, then a reporting year, then a facility. All three are required before the
-            workspace below can open.
+            Pick a reporting entity, then a reporting year, then a facility. All three are required before the workspace
+            below can open.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -534,13 +552,17 @@ function BoundaryWorkspaceSection({ onNavigate }: { onNavigate: (section: Sectio
 }
 
 function OrganizationReportSection() {
-  const boundariesQuery = useQuery<{ reportingBoundaries: ReportingBoundary[] }>({ queryKey: ["/api/reporting-boundaries"] });
+  const boundariesQuery = useQuery<{ reportingBoundaries: ReportingBoundary[] }>({
+    queryKey: ["/api/reporting-boundaries"],
+  });
   const boundaries = boundariesQuery.data?.reportingBoundaries ?? [];
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   if (boundariesQuery.isLoading) return <div className="text-sm text-neutral-500 py-8 text-center">Loading...</div>;
   if (boundaries.length === 0) {
-    return <p className="text-sm text-neutral-500">No reporting boundaries yet. Create one in Boundary Workspace first.</p>;
+    return (
+      <p className="text-sm text-neutral-500">No reporting boundaries yet. Create one in Boundary Workspace first.</p>
+    );
   }
 
   const activeId = selectedId ?? boundaries[0].id;

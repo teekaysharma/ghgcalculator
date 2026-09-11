@@ -52,8 +52,8 @@ export default function AuthLayout({
               Report with confidence.
             </h1>
             <p className="mt-3 text-primary-foreground/80 max-w-sm">
-              Track, consolidate, and report your organization's greenhouse gas emissions across
-              every scope and facility.
+              Track, consolidate, and report your organization's greenhouse gas emissions across every scope and
+              facility.
             </p>
           </div>
         </div>

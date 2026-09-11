@@ -101,7 +101,8 @@ export default function TeamPanel() {
       });
       toast({ title: "Membership deactivated" });
     },
-    onError: (err) => toast({ title: "Could not deactivate membership", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not deactivate membership", description: err.message, variant: "destructive" }),
   });
 
   const activateMembership = useMutation({
@@ -113,7 +114,8 @@ export default function TeamPanel() {
       invalidateAll();
       toast({ title: "Membership reactivated" });
     },
-    onError: (err) => toast({ title: "Could not reactivate membership", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not reactivate membership", description: err.message, variant: "destructive" }),
   });
 
   const deactivateAccount = useMutation({
@@ -130,7 +132,8 @@ export default function TeamPanel() {
       });
       toast({ title: "Account deactivated" });
     },
-    onError: (err) => toast({ title: "Could not deactivate account", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not deactivate account", description: err.message, variant: "destructive" }),
   });
 
   const reactivateAccount = useMutation({
@@ -142,7 +145,8 @@ export default function TeamPanel() {
       invalidateAll();
       toast({ title: "Account reactivated" });
     },
-    onError: (err) => toast({ title: "Could not reactivate account", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not reactivate account", description: err.message, variant: "destructive" }),
   });
 
   const changeEmail = useMutation({
@@ -187,13 +191,15 @@ export default function TeamPanel() {
         toast({
           variant: "destructive",
           title: "Reset link generated, but no email could be sent",
-          description: "Their current password still works, so nothing is broken. Retry, or check the email configuration.",
+          description:
+            "Their current password still works, so nothing is broken. Retry, or check the email configuration.",
         });
       } else {
         toast({ title: "Password reset email sent" });
       }
     },
-    onError: (err) => toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
+    onError: (err) =>
+      toast({ title: "Could not send password reset", description: err.message, variant: "destructive" }),
   });
 
   const members = teamQuery.data?.members ?? [];
@@ -205,9 +211,7 @@ export default function TeamPanel() {
         <CardHeader>
           <CardTitle className="text-base">Team</CardTitle>
           <CardDescription>
-            {canManage
-              ? "Add, deactivate, or manage members of your organization."
-              : "Members of your organization."}
+            {canManage ? "Add, deactivate, or manage members of your organization." : "Members of your organization."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -241,239 +245,251 @@ export default function TeamPanel() {
                   // button that would 403.
                   const isSelf = m.userId === user?.id;
                   return (
-                  <TableRow key={m.id}>
-                    <TableCell>{m.name || "-"}</TableCell>
-                    <TableCell>{m.email}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="capitalize">{m.role}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1 text-xs">
-                          <span className="text-neutral-500">Membership:</span>
-                          {m.isActive ? (
-                            <Badge variant="secondary">Active</Badge>
-                          ) : (
-                            <Badge variant="destructive">Deactivated</Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 text-xs">
-                          <span className="text-neutral-500">Account:</span>
-                          {m.accountIsActive ? (
-                            <Badge variant="secondary">Active</Badge>
-                          ) : (
-                            <Badge variant="destructive">Deactivated</Badge>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    {canManage && isSelf && (
+                    <TableRow key={m.id}>
+                      <TableCell>{m.name || "-"}</TableCell>
+                      <TableCell>{m.email}</TableCell>
                       <TableCell>
-                        <p className="text-xs text-neutral-400 text-right">(you)</p>
+                        <Badge variant="secondary" className="capitalize">
+                          {m.role}
+                        </Badge>
                       </TableCell>
-                    )}
-                    {canManage && !isSelf && (
                       <TableCell>
-                        <div className="flex flex-wrap gap-2 justify-end">
-                          {m.isActive ? (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="sm" className="text-destructive">
-                                  Deactivate membership
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Deactivate {m.email}'s membership?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This revokes their access to your organization only. A reason is required.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <div className="py-2 space-y-2">
-                                  <Label htmlFor={`membership-note-${m.id}`}>Reason</Label>
-                                  <Textarea
-                                    id={`membership-note-${m.id}`}
-                                    value={membershipNotes[m.id] ?? ""}
-                                    onChange={(e) =>
-                                      setMembershipNotes((prev) => ({ ...prev, [m.id]: e.target.value }))
-                                    }
-                                  />
-                                </div>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    disabled={!membershipNotes[m.id]?.trim()}
-                                    onClick={() =>
-                                      deactivateMembership.mutate({ membershipId: m.id, note: membershipNotes[m.id]!.trim() })
-                                    }
-                                  >
-                                    Deactivate
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => activateMembership.mutate(m.id)}
-                              disabled={activateMembership.isPending}
-                            >
-                              Reactivate membership
-                            </Button>
-                          )}
-                          {m.accountIsActive ? (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="sm" className="text-destructive">
-                                  Deactivate account
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Deactivate {m.email}'s account?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This blocks their login entirely. Only available if they belong to no other
-                                    organization — otherwise a super-admin is required. A reason is required.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <div className="py-2 space-y-2">
-                                  <Label htmlFor={`deactivate-note-${m.userId}`}>Reason</Label>
-                                  <Textarea
-                                    id={`deactivate-note-${m.userId}`}
-                                    value={deactivateNotes[m.userId] ?? ""}
-                                    onChange={(e) =>
-                                      setDeactivateNotes((prev) => ({ ...prev, [m.userId]: e.target.value }))
-                                    }
-                                  />
-                                </div>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    disabled={!deactivateNotes[m.userId]?.trim()}
-                                    onClick={() =>
-                                      deactivateAccount.mutate({ userId: m.userId, note: deactivateNotes[m.userId]!.trim() })
-                                    }
-                                  >
-                                    Deactivate
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => reactivateAccount.mutate(m.userId)}
-                              disabled={reactivateAccount.isPending}
-                            >
-                              Reactivate account
-                            </Button>
-                          )}
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="sm">
-                                Change email
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1 text-xs">
+                            <span className="text-neutral-500">Membership:</span>
+                            {m.isActive ? (
+                              <Badge variant="secondary">Active</Badge>
+                            ) : (
+                              <Badge variant="destructive">Deactivated</Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 text-xs">
+                            <span className="text-neutral-500">Account:</span>
+                            {m.accountIsActive ? (
+                              <Badge variant="secondary">Active</Badge>
+                            ) : (
+                              <Badge variant="destructive">Deactivated</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      {canManage && isSelf && (
+                        <TableCell>
+                          <p className="text-xs text-neutral-400 text-right">(you)</p>
+                        </TableCell>
+                      )}
+                      {canManage && !isSelf && (
+                        <TableCell>
+                          <div className="flex flex-wrap gap-2 justify-end">
+                            {m.isActive ? (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-destructive">
+                                    Deactivate membership
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Deactivate {m.email}'s membership?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This revokes their access to your organization only. A reason is required.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-2 space-y-2">
+                                    <Label htmlFor={`membership-note-${m.id}`}>Reason</Label>
+                                    <Textarea
+                                      id={`membership-note-${m.id}`}
+                                      value={membershipNotes[m.id] ?? ""}
+                                      onChange={(e) =>
+                                        setMembershipNotes((prev) => ({ ...prev, [m.id]: e.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      disabled={!membershipNotes[m.id]?.trim()}
+                                      onClick={() =>
+                                        deactivateMembership.mutate({
+                                          membershipId: m.id,
+                                          note: membershipNotes[m.id]!.trim(),
+                                        })
+                                      }
+                                    >
+                                      Deactivate
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => activateMembership.mutate(m.id)}
+                                disabled={activateMembership.isPending}
+                              >
+                                Reactivate membership
                               </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Change {m.email}'s email?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  A password-set link is emailed to the new address — nobody types or shares a
-                                  password. Only available if they belong to no other organization. A reason is
-                                  required.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <div className="py-2 space-y-3">
-                                <div className="space-y-2">
-                                  <Label htmlFor={`new-email-${m.userId}`}>New email</Label>
-                                  <Input
-                                    id={`new-email-${m.userId}`}
-                                    type="email"
-                                    value={changeEmailDrafts[m.userId]?.email ?? ""}
-                                    onChange={(e) =>
-                                      setChangeEmailDrafts((prev) => ({
-                                        ...prev,
-                                        [m.userId]: { email: e.target.value, note: prev[m.userId]?.note ?? "" },
-                                      }))
-                                    }
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor={`change-email-note-${m.userId}`}>Reason</Label>
-                                  <Textarea
-                                    id={`change-email-note-${m.userId}`}
-                                    value={changeEmailDrafts[m.userId]?.note ?? ""}
-                                    onChange={(e) =>
-                                      setChangeEmailDrafts((prev) => ({
-                                        ...prev,
-                                        [m.userId]: { email: prev[m.userId]?.email ?? "", note: e.target.value },
-                                      }))
-                                    }
-                                  />
-                                </div>
-                              </div>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  disabled={
-                                    !changeEmailDrafts[m.userId]?.email?.trim() || !changeEmailDrafts[m.userId]?.note?.trim()
-                                  }
-                                  onClick={() =>
-                                    changeEmail.mutate({
-                                      userId: m.userId,
-                                      newEmail: changeEmailDrafts[m.userId]!.email.trim(),
-                                      note: changeEmailDrafts[m.userId]!.note.trim(),
-                                    })
-                                  }
-                                >
+                            )}
+                            {m.accountIsActive ? (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-destructive">
+                                    Deactivate account
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Deactivate {m.email}'s account?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This blocks their login entirely. Only available if they belong to no other
+                                      organization — otherwise a super-admin is required. A reason is required.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <div className="py-2 space-y-2">
+                                    <Label htmlFor={`deactivate-note-${m.userId}`}>Reason</Label>
+                                    <Textarea
+                                      id={`deactivate-note-${m.userId}`}
+                                      value={deactivateNotes[m.userId] ?? ""}
+                                      onChange={(e) =>
+                                        setDeactivateNotes((prev) => ({ ...prev, [m.userId]: e.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      disabled={!deactivateNotes[m.userId]?.trim()}
+                                      onClick={() =>
+                                        deactivateAccount.mutate({
+                                          userId: m.userId,
+                                          note: deactivateNotes[m.userId]!.trim(),
+                                        })
+                                      }
+                                    >
+                                      Deactivate
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => reactivateAccount.mutate(m.userId)}
+                                disabled={reactivateAccount.isPending}
+                              >
+                                Reactivate account
+                              </Button>
+                            )}
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="sm">
                                   Change email
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="sm">
-                                Reset password
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Send {m.email} a password reset link?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Nobody types or sees their new password — they set it themselves via the emailed
-                                  link. A reason is required.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <div className="py-2 space-y-2">
-                                <Label htmlFor={`reset-password-note-${m.userId}`}>Reason</Label>
-                                <Textarea
-                                  id={`reset-password-note-${m.userId}`}
-                                  value={resetPasswordNotes[m.userId] ?? ""}
-                                  onChange={(e) =>
-                                    setResetPasswordNotes((prev) => ({ ...prev, [m.userId]: e.target.value }))
-                                  }
-                                />
-                              </div>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  disabled={!resetPasswordNotes[m.userId]?.trim()}
-                                  onClick={() =>
-                                    resetPassword.mutate({ userId: m.userId, note: resetPasswordNotes[m.userId]!.trim() })
-                                  }
-                                >
-                                  Send reset link
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Change {m.email}'s email?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    A password-set link is emailed to the new address — nobody types or shares a
+                                    password. Only available if they belong to no other organization. A reason is
+                                    required.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <div className="py-2 space-y-3">
+                                  <div className="space-y-2">
+                                    <Label htmlFor={`new-email-${m.userId}`}>New email</Label>
+                                    <Input
+                                      id={`new-email-${m.userId}`}
+                                      type="email"
+                                      value={changeEmailDrafts[m.userId]?.email ?? ""}
+                                      onChange={(e) =>
+                                        setChangeEmailDrafts((prev) => ({
+                                          ...prev,
+                                          [m.userId]: { email: e.target.value, note: prev[m.userId]?.note ?? "" },
+                                        }))
+                                      }
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label htmlFor={`change-email-note-${m.userId}`}>Reason</Label>
+                                    <Textarea
+                                      id={`change-email-note-${m.userId}`}
+                                      value={changeEmailDrafts[m.userId]?.note ?? ""}
+                                      onChange={(e) =>
+                                        setChangeEmailDrafts((prev) => ({
+                                          ...prev,
+                                          [m.userId]: { email: prev[m.userId]?.email ?? "", note: e.target.value },
+                                        }))
+                                      }
+                                    />
+                                  </div>
+                                </div>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    disabled={
+                                      !changeEmailDrafts[m.userId]?.email?.trim() ||
+                                      !changeEmailDrafts[m.userId]?.note?.trim()
+                                    }
+                                    onClick={() =>
+                                      changeEmail.mutate({
+                                        userId: m.userId,
+                                        newEmail: changeEmailDrafts[m.userId]!.email.trim(),
+                                        note: changeEmailDrafts[m.userId]!.note.trim(),
+                                      })
+                                    }
+                                  >
+                                    Change email
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="sm">
+                                  Reset password
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Send {m.email} a password reset link?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Nobody types or sees their new password — they set it themselves via the emailed
+                                    link. A reason is required.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <div className="py-2 space-y-2">
+                                  <Label htmlFor={`reset-password-note-${m.userId}`}>Reason</Label>
+                                  <Textarea
+                                    id={`reset-password-note-${m.userId}`}
+                                    value={resetPasswordNotes[m.userId] ?? ""}
+                                    onChange={(e) =>
+                                      setResetPasswordNotes((prev) => ({ ...prev, [m.userId]: e.target.value }))
+                                    }
+                                  />
+                                </div>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    disabled={!resetPasswordNotes[m.userId]?.trim()}
+                                    onClick={() =>
+                                      resetPassword.mutate({
+                                        userId: m.userId,
+                                        note: resetPasswordNotes[m.userId]!.trim(),
+                                      })
+                                    }
+                                  >
+                                    Send reset link
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
                   );
                 })}
               </TableBody>
@@ -495,8 +511,8 @@ export default function TeamPanel() {
             </div>
           )}
           <p className="text-xs text-neutral-400">
-            The person must already have an account. There's no email invite yet, they need to register themselves first,
-            then you can add them here.
+            The person must already have an account. There's no email invite yet, they need to register themselves
+            first, then you can add them here.
           </p>
         </CardContent>
       </Card>

@@ -107,7 +107,9 @@ async function main() {
     }
   } finally {
     // Clean up whatever this run left behind, regardless of pass/fail.
-    const remaining = await pool.query("SELECT id, email FROM users WHERE email = ANY($1)", [[expiredEmail, freshEmail]]);
+    const remaining = await pool.query("SELECT id, email FROM users WHERE email = ANY($1)", [
+      [expiredEmail, freshEmail],
+    ]);
     for (const row of remaining.rows) {
       const m = await pool.query("SELECT organization_id FROM memberships WHERE user_id = $1", [row.id]);
       const orgId = m.rows[0]?.organization_id;

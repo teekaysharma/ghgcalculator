@@ -87,7 +87,13 @@ import {
 // large, so there's no established convention to follow either way.
 // -----------------------------------------------------------------------
 export interface ConsolidatedReport {
-  reportingBoundary: { id: number; reportingYear: number; consolidationApproach: string; status: string; finalizedAt: string | null };
+  reportingBoundary: {
+    id: number;
+    reportingYear: number;
+    consolidationApproach: string;
+    status: string;
+    finalizedAt: string | null;
+  };
   reportingEntity: { id: number; name: string; baseYear: number | null; baseYearRationale: string | null };
   totals: { scope1: number; scope2: number; scope3: number; biogenicCo2: number };
   gasBreakdown: { gas: string; co2e: number; nativeMass: number; pctOfTotal: number }[];
@@ -213,7 +219,13 @@ export interface AdminUserListItem {
   isSuperAdmin: boolean;
   isActive: boolean;
   createdAt: Date;
-  organizations: { membershipId: number; organizationId: number; organizationName: string; role: string; isActive: boolean }[];
+  organizations: {
+    membershipId: number;
+    organizationId: number;
+    organizationName: string;
+    role: string;
+    isActive: boolean;
+  }[];
 }
 
 export interface AdminOrganizationListItem {
@@ -278,17 +290,25 @@ export interface IStorage {
   getMembershipsForUser(userId: number): Promise<Membership[]>;
   getActiveMembershipsForUser(userId: number): Promise<Membership[]>;
   getMembership(userId: number, organizationId: number): Promise<Membership | undefined>;
-  listMembershipsForOrganization(organizationId: number): Promise<(Membership & { userEmail: string; userName: string | null })[]>;
+  listMembershipsForOrganization(
+    organizationId: number,
+  ): Promise<(Membership & { userEmail: string; userName: string | null })[]>;
   getEnabledModuleKeys(organizationId: number): Promise<string[]>;
   isUsersSoleOrganization(userId: number, organizationId: number): Promise<boolean>;
 
   // Emission factors (tenant-scoped)
-  createEmissionFactors(organizationId: number, factors: Omit<InsertEmissionFactorRow, "organizationId">[]): Promise<EmissionFactorRow[]>;
+  createEmissionFactors(
+    organizationId: number,
+    factors: Omit<InsertEmissionFactorRow, "organizationId">[],
+  ): Promise<EmissionFactorRow[]>;
   listEmissionFactors(organizationId: number): Promise<EmissionFactorRow[]>;
   deleteEmissionFactor(organizationId: number, factorId: number): Promise<boolean>;
 
   // Emission records (tenant-scoped, persisted calculation results)
-  createEmissionRecords(organizationId: number, records: Omit<InsertEmissionRecordRow, "organizationId">[]): Promise<EmissionRecordRow[]>;
+  createEmissionRecords(
+    organizationId: number,
+    records: Omit<InsertEmissionRecordRow, "organizationId">[],
+  ): Promise<EmissionRecordRow[]>;
   listEmissionRecords(organizationId: number): Promise<EmissionRecordRow[]>;
   upsertEmissionRecordForCalculationApproach(data: {
     organizationId: number;
@@ -315,19 +335,43 @@ export interface IStorage {
   createReportingEntity(entity: InsertReportingEntity): Promise<ReportingEntity>;
   listReportingEntities(organizationId: number): Promise<ReportingEntity[]>;
   getReportingEntity(organizationId: number, id: number): Promise<ReportingEntity | undefined>;
-  updateReportingEntity(organizationId: number, id: number, data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity" | "baseYear" | "baseYearRationale">>): Promise<ReportingEntity | undefined>;
+  updateReportingEntity(
+    organizationId: number,
+    id: number,
+    data: Partial<Pick<InsertReportingEntity, "name" | "legalEntity" | "baseYear" | "baseYearRationale">>,
+  ): Promise<ReportingEntity | undefined>;
   deleteReportingEntity(organizationId: number, id: number): Promise<boolean>;
 
   createFacility(facility: InsertFacility): Promise<Facility>;
   listFacilities(organizationId: number): Promise<Facility[]>;
   getFacility(organizationId: number, id: number): Promise<Facility | undefined>;
-  updateFacility(organizationId: number, id: number, data: Partial<Pick<InsertFacility, "name" | "country" | "equityShareOwnershipPercent">>): Promise<Facility | undefined>;
+  updateFacility(
+    organizationId: number,
+    id: number,
+    data: Partial<Pick<InsertFacility, "name" | "country" | "equityShareOwnershipPercent">>,
+  ): Promise<Facility | undefined>;
   deleteFacility(organizationId: number, id: number): Promise<boolean>;
 
   createReportingBoundary(boundary: InsertReportingBoundary): Promise<ReportingBoundary>;
   listReportingBoundaries(organizationId: number): Promise<ReportingBoundary[]>;
   getReportingBoundary(organizationId: number, id: number): Promise<ReportingBoundary | undefined>;
-  updateReportingBoundary(organizationId: number, id: number, data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description" | "status" | "finalizedAt" | "revenueAmount" | "revenueCurrency" | "fullTimeEquivalentEmployees">>): Promise<ReportingBoundary | undefined>;
+  updateReportingBoundary(
+    organizationId: number,
+    id: number,
+    data: Partial<
+      Pick<
+        InsertReportingBoundary,
+        | "reportingYear"
+        | "consolidationApproach"
+        | "description"
+        | "status"
+        | "finalizedAt"
+        | "revenueAmount"
+        | "revenueCurrency"
+        | "fullTimeEquivalentEmployees"
+      >
+    >,
+  ): Promise<ReportingBoundary | undefined>;
   deleteReportingBoundary(organizationId: number, id: number): Promise<boolean>;
 
   // -----------------------------------------------------------------------
@@ -342,20 +386,32 @@ export interface IStorage {
   // Facility contacts (many per facility)
   createFacilityContact(contact: InsertFacilityContact): Promise<FacilityContact>;
   listFacilityContacts(organizationId: number, facilityId: number): Promise<FacilityContact[]>;
-  updateFacilityContact(organizationId: number, id: number, data: Partial<Omit<InsertFacilityContact, "organizationId" | "facilityId">>): Promise<FacilityContact | undefined>;
+  updateFacilityContact(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertFacilityContact, "organizationId" | "facilityId">>,
+  ): Promise<FacilityContact | undefined>;
   deleteFacilityContact(organizationId: number, id: number): Promise<boolean>;
 
   // Facility products (many per facility)
   createFacilityProduct(product: InsertFacilityProduct): Promise<FacilityProduct>;
   listFacilityProducts(organizationId: number, facilityId: number): Promise<FacilityProduct[]>;
-  updateFacilityProduct(organizationId: number, id: number, data: Partial<Omit<InsertFacilityProduct, "organizationId" | "facilityId">>): Promise<FacilityProduct | undefined>;
+  updateFacilityProduct(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertFacilityProduct, "organizationId" | "facilityId">>,
+  ): Promise<FacilityProduct | undefined>;
   deleteFacilityProduct(organizationId: number, id: number): Promise<boolean>;
 
   // Source streams (many per facility+reportingBoundary) -- the core new entity
   createSourceStream(stream: InsertSourceStream): Promise<SourceStream>;
   listSourceStreams(organizationId: number, reportingBoundaryId: number): Promise<SourceStream[]>;
   getSourceStream(organizationId: number, id: number): Promise<SourceStream | undefined>;
-  updateSourceStream(organizationId: number, id: number, data: Partial<Omit<InsertSourceStream, "organizationId" | "facilityId" | "reportingBoundaryId">>): Promise<SourceStream | undefined>;
+  updateSourceStream(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertSourceStream, "organizationId" | "facilityId" | "reportingBoundaryId">>,
+  ): Promise<SourceStream | undefined>;
   deleteSourceStream(organizationId: number, id: number): Promise<boolean>;
 
   // Calculation approaches (1:1 per source stream, unique on sourceStreamId)
@@ -364,7 +420,10 @@ export interface IStorage {
 
   // Measurement-based approaches (1:1 per source stream, unique on sourceStreamId)
   upsertMeasurementBasedApproach(data: InsertMeasurementBasedApproach): Promise<MeasurementBasedApproach>;
-  getMeasurementBasedApproach(organizationId: number, sourceStreamId: number): Promise<MeasurementBasedApproach | undefined>;
+  getMeasurementBasedApproach(
+    organizationId: number,
+    sourceStreamId: number,
+  ): Promise<MeasurementBasedApproach | undefined>;
 
   // Fallback approaches (1:1 per source stream, unique on sourceStreamId)
   upsertFallbackApproach(data: InsertFallbackApproach): Promise<FallbackApproach>;
@@ -372,7 +431,11 @@ export interface IStorage {
 
   // Methane reports (1 per facility+reportingBoundary, unique on the pair)
   upsertMethaneReport(data: InsertMethaneReport): Promise<MethaneReport>;
-  getMethaneReport(organizationId: number, facilityId: number, reportingBoundaryId: number): Promise<MethaneReport | undefined>;
+  getMethaneReport(
+    organizationId: number,
+    facilityId: number,
+    reportingBoundaryId: number,
+  ): Promise<MethaneReport | undefined>;
 
   // Data quality records (1:1 per source stream, unique on sourceStreamId)
   upsertDataQualityRecord(data: InsertDataQualityRecord): Promise<DataQualityRecord>;
@@ -381,19 +444,31 @@ export interface IStorage {
   // Verification findings (many per reportingBoundary)
   createVerificationFinding(finding: InsertVerificationFinding): Promise<VerificationFinding>;
   listVerificationFindings(organizationId: number, reportingBoundaryId: number): Promise<VerificationFinding[]>;
-  updateVerificationFinding(organizationId: number, id: number, data: Partial<Omit<InsertVerificationFinding, "organizationId" | "reportingBoundaryId">>): Promise<VerificationFinding | undefined>;
+  updateVerificationFinding(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertVerificationFinding, "organizationId" | "reportingBoundaryId">>,
+  ): Promise<VerificationFinding | undefined>;
   deleteVerificationFinding(organizationId: number, id: number): Promise<boolean>;
 
   // Management QA records (many per reportingBoundary)
   createManagementQaRecord(record: InsertManagementQaRecord): Promise<ManagementQaRecord>;
   listManagementQaRecords(organizationId: number, reportingBoundaryId: number): Promise<ManagementQaRecord[]>;
-  updateManagementQaRecord(organizationId: number, id: number, data: Partial<Omit<InsertManagementQaRecord, "organizationId" | "reportingBoundaryId">>): Promise<ManagementQaRecord | undefined>;
+  updateManagementQaRecord(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertManagementQaRecord, "organizationId" | "reportingBoundaryId">>,
+  ): Promise<ManagementQaRecord | undefined>;
   deleteManagementQaRecord(organizationId: number, id: number): Promise<boolean>;
 
   // Mitigation measures (many per facility)
   createMitigationMeasure(measure: InsertMitigationMeasure): Promise<MitigationMeasure>;
   listMitigationMeasures(organizationId: number, facilityId: number): Promise<MitigationMeasure[]>;
-  updateMitigationMeasure(organizationId: number, id: number, data: Partial<Omit<InsertMitigationMeasure, "organizationId" | "facilityId">>): Promise<MitigationMeasure | undefined>;
+  updateMitigationMeasure(
+    organizationId: number,
+    id: number,
+    data: Partial<Omit<InsertMitigationMeasure, "organizationId" | "facilityId">>,
+  ): Promise<MitigationMeasure | undefined>;
   deleteMitigationMeasure(organizationId: number, id: number): Promise<boolean>;
 
   // Reference data (global, not tenant-scoped, read-only)
@@ -418,7 +493,12 @@ export interface IStorage {
   // organizationId -- a super-admin isn't scoped to one tenant. The
   // membership/account methods below double as the org-admin implementation
   // too (Task 6) via the optional scopedToOrgId parameter.
-  listAllUsersForAdmin(params: { search?: string; organizationId?: number; limit: number; offset: number }): Promise<{ users: AdminUserListItem[]; total: number }>;
+  listAllUsersForAdmin(params: {
+    search?: string;
+    organizationId?: number;
+    limit: number;
+    offset: number;
+  }): Promise<{ users: AdminUserListItem[]; total: number }>;
   listAllOrganizationsForAdmin(): Promise<AdminOrganizationListItem[]>;
   deleteUnverifiedUserById(userId: number, actorUserId: number): Promise<"deleted" | "not_found" | "already_verified">;
   promoteToSuperAdmin(userId: number): Promise<void>;
@@ -428,7 +508,12 @@ export interface IStorage {
   activateMembership(membershipId: number, scopedToOrgId?: number): Promise<Membership | undefined>;
   deactivateAccount(userId: number): Promise<void>;
   reactivateAccount(userId: number): Promise<void>;
-  setNewEmailPendingVerification(userId: number, newEmail: string, resetToken: string, resetTokenExpiresAt: Date): Promise<void>;
+  setNewEmailPendingVerification(
+    userId: number,
+    newEmail: string,
+    resetToken: string,
+    resetTokenExpiresAt: Date,
+  ): Promise<void>;
   logAdminAction(entry: {
     actorUserId: number;
     action:
@@ -817,7 +902,9 @@ export class DbStorage implements IStorage {
       })
       .returning();
     if (!row) {
-      throw new Error("upsertEmissionRecordForCalculationApproach: conflicting row belongs to a different organization");
+      throw new Error(
+        "upsertEmissionRecordForCalculationApproach: conflicting row belongs to a different organization",
+      );
     }
     return row;
   }
@@ -932,7 +1019,19 @@ export class DbStorage implements IStorage {
   async updateReportingBoundary(
     organizationId: number,
     id: number,
-    data: Partial<Pick<InsertReportingBoundary, "reportingYear" | "consolidationApproach" | "description" | "status" | "finalizedAt" | "revenueAmount" | "revenueCurrency" | "fullTimeEquivalentEmployees">>,
+    data: Partial<
+      Pick<
+        InsertReportingBoundary,
+        | "reportingYear"
+        | "consolidationApproach"
+        | "description"
+        | "status"
+        | "finalizedAt"
+        | "revenueAmount"
+        | "revenueCurrency"
+        | "fullTimeEquivalentEmployees"
+      >
+    >,
   ): Promise<ReportingBoundary | undefined> {
     const [row] = await db
       .update(reportingBoundaries)
@@ -956,7 +1055,9 @@ export class DbStorage implements IStorage {
     const [row] = await db
       .select()
       .from(facilityIdentifiers)
-      .where(and(eq(facilityIdentifiers.facilityId, facilityId), eq(facilityIdentifiers.organizationId, organizationId)));
+      .where(
+        and(eq(facilityIdentifiers.facilityId, facilityId), eq(facilityIdentifiers.organizationId, organizationId)),
+      );
     return row;
   }
 
@@ -1053,7 +1154,12 @@ export class DbStorage implements IStorage {
     return db
       .select()
       .from(sourceStreams)
-      .where(and(eq(sourceStreams.reportingBoundaryId, reportingBoundaryId), eq(sourceStreams.organizationId, organizationId)))
+      .where(
+        and(
+          eq(sourceStreams.reportingBoundaryId, reportingBoundaryId),
+          eq(sourceStreams.organizationId, organizationId),
+        ),
+      )
       .orderBy(desc(sourceStreams.createdAt));
   }
 
@@ -1102,11 +1208,19 @@ export class DbStorage implements IStorage {
     return row;
   }
 
-  async getCalculationApproach(organizationId: number, sourceStreamId: number): Promise<CalculationApproach | undefined> {
+  async getCalculationApproach(
+    organizationId: number,
+    sourceStreamId: number,
+  ): Promise<CalculationApproach | undefined> {
     const [row] = await db
       .select()
       .from(calculationApproaches)
-      .where(and(eq(calculationApproaches.sourceStreamId, sourceStreamId), eq(calculationApproaches.organizationId, organizationId)));
+      .where(
+        and(
+          eq(calculationApproaches.sourceStreamId, sourceStreamId),
+          eq(calculationApproaches.organizationId, organizationId),
+        ),
+      );
     return row;
   }
 
@@ -1162,7 +1276,12 @@ export class DbStorage implements IStorage {
     const [row] = await db
       .select()
       .from(fallbackApproaches)
-      .where(and(eq(fallbackApproaches.sourceStreamId, sourceStreamId), eq(fallbackApproaches.organizationId, organizationId)));
+      .where(
+        and(
+          eq(fallbackApproaches.sourceStreamId, sourceStreamId),
+          eq(fallbackApproaches.organizationId, organizationId),
+        ),
+      );
     return row;
   }
 
@@ -1220,7 +1339,12 @@ export class DbStorage implements IStorage {
     const [row] = await db
       .select()
       .from(dataQualityRecords)
-      .where(and(eq(dataQualityRecords.sourceStreamId, sourceStreamId), eq(dataQualityRecords.organizationId, organizationId)));
+      .where(
+        and(
+          eq(dataQualityRecords.sourceStreamId, sourceStreamId),
+          eq(dataQualityRecords.organizationId, organizationId),
+        ),
+      );
     return row;
   }
 
@@ -1356,7 +1480,10 @@ export class DbStorage implements IStorage {
     return db.select().from(gwpValues).orderBy(gwpValues.gas);
   }
 
-  async getConsolidatedReport(organizationId: number, reportingBoundaryId: number): Promise<ConsolidatedReport | undefined> {
+  async getConsolidatedReport(
+    organizationId: number,
+    reportingBoundaryId: number,
+  ): Promise<ConsolidatedReport | undefined> {
     const boundary = await this.getReportingBoundary(organizationId, reportingBoundaryId);
     if (!boundary) return undefined;
     const entity = await this.getReportingEntity(organizationId, boundary.reportingEntityId);
@@ -1429,8 +1556,8 @@ export class DbStorage implements IStorage {
       // contributes exactly record.emission as before.
       const breakdown =
         (record.gasBreakdown as
-          | { gas: string; co2e?: number; co2ePerUnit?: number; nativeFactor?: number; isBiogenic?: boolean }[]
-          | null) ?? [];
+          { gas: string; co2e?: number; co2ePerUnit?: number; nativeFactor?: number; isBiogenic?: boolean }[] | null) ??
+        [];
       const quantity = Number(record.quantity);
       let recordBiogenicCo2Tonnes = 0;
       for (const component of breakdown) {
@@ -1480,7 +1607,12 @@ export class DbStorage implements IStorage {
     const facilitySourceStreams = await db
       .select({ facilityId: sourceStreams.facilityId })
       .from(sourceStreams)
-      .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
+      .where(
+        and(
+          eq(sourceStreams.organizationId, organizationId),
+          eq(sourceStreams.reportingBoundaryId, reportingBoundaryId),
+        ),
+      );
     const facilitiesWithStreams = new Set(facilitySourceStreams.map((s) => s.facilityId));
 
     const facilitiesOut = entityFacilities.map((f) => {
@@ -1516,7 +1648,10 @@ export class DbStorage implements IStorage {
               ),
             )
         : [];
-    const totalProduction = facilityProductRows.reduce((sum, p) => sum + (p.actualProduction ? Number(p.actualProduction) : 0), 0);
+    const totalProduction = facilityProductRows.reduce(
+      (sum, p) => sum + (p.actualProduction ? Number(p.actualProduction) : 0),
+      0,
+    );
 
     // GRI 305-4 and IFRS S2 both define GHG intensity as emissions per unit
     // of the organization-specific denominator (tCO2e / revenue, tCO2e /
@@ -1559,7 +1694,8 @@ export class DbStorage implements IStorage {
         baseYearComparison = {
           baseYearTotal,
           currentYearTotal: totalTco2e,
-          changePercent: baseYearTotal && baseYearTotal > 0 ? ((totalTco2e - baseYearTotal) / baseYearTotal) * 100 : null,
+          changePercent:
+            baseYearTotal && baseYearTotal > 0 ? ((totalTco2e - baseYearTotal) / baseYearTotal) * 100 : null,
         };
       }
     }
@@ -1571,7 +1707,12 @@ export class DbStorage implements IStorage {
     const streamIdsForBoundary = await db
       .select({ id: sourceStreams.id, name: sourceStreams.name })
       .from(sourceStreams)
-      .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
+      .where(
+        and(
+          eq(sourceStreams.organizationId, organizationId),
+          eq(sourceStreams.reportingBoundaryId, reportingBoundaryId),
+        ),
+      );
     const streamIds = streamIdsForBoundary.map((s) => s.id);
     const streamNamesById = new Map(streamIdsForBoundary.map((s) => [s.id, s.name]));
 
@@ -1580,16 +1721,31 @@ export class DbStorage implements IStorage {
         ? db
             .select()
             .from(dataQualityRecords)
-            .where(and(eq(dataQualityRecords.organizationId, organizationId), inArray(dataQualityRecords.sourceStreamId, streamIds)))
+            .where(
+              and(
+                eq(dataQualityRecords.organizationId, organizationId),
+                inArray(dataQualityRecords.sourceStreamId, streamIds),
+              ),
+            )
         : Promise.resolve([]),
       db
         .select()
         .from(verificationFindings)
-        .where(and(eq(verificationFindings.organizationId, organizationId), eq(verificationFindings.reportingBoundaryId, reportingBoundaryId))),
+        .where(
+          and(
+            eq(verificationFindings.organizationId, organizationId),
+            eq(verificationFindings.reportingBoundaryId, reportingBoundaryId),
+          ),
+        ),
       db
         .select()
         .from(managementQaRecords)
-        .where(and(eq(managementQaRecords.organizationId, organizationId), eq(managementQaRecords.reportingBoundaryId, reportingBoundaryId))),
+        .where(
+          and(
+            eq(managementQaRecords.organizationId, organizationId),
+            eq(managementQaRecords.reportingBoundaryId, reportingBoundaryId),
+          ),
+        ),
     ]);
 
     return {
@@ -1634,30 +1790,56 @@ export class DbStorage implements IStorage {
     };
   }
 
-  async getSourceStreamDetailForBoundary(organizationId: number, reportingBoundaryId: number): Promise<SourceStreamDetail[]> {
+  async getSourceStreamDetailForBoundary(
+    organizationId: number,
+    reportingBoundaryId: number,
+  ): Promise<SourceStreamDetail[]> {
     const streams = await db
       .select()
       .from(sourceStreams)
-      .where(and(eq(sourceStreams.organizationId, organizationId), eq(sourceStreams.reportingBoundaryId, reportingBoundaryId)));
+      .where(
+        and(
+          eq(sourceStreams.organizationId, organizationId),
+          eq(sourceStreams.reportingBoundaryId, reportingBoundaryId),
+        ),
+      );
     if (streams.length === 0) return [];
 
     const streamIds = streams.map((s) => s.id);
     const facilityIds = Array.from(new Set(streams.map((s) => s.facilityId)));
 
     const [facilityRows, calcRows, measureRows, fallbackRows] = await Promise.all([
-      db.select().from(facilities).where(and(eq(facilities.organizationId, organizationId), inArray(facilities.id, facilityIds))),
+      db
+        .select()
+        .from(facilities)
+        .where(and(eq(facilities.organizationId, organizationId), inArray(facilities.id, facilityIds))),
       db
         .select()
         .from(calculationApproaches)
-        .where(and(eq(calculationApproaches.organizationId, organizationId), inArray(calculationApproaches.sourceStreamId, streamIds))),
+        .where(
+          and(
+            eq(calculationApproaches.organizationId, organizationId),
+            inArray(calculationApproaches.sourceStreamId, streamIds),
+          ),
+        ),
       db
         .select()
         .from(measurementBasedApproaches)
-        .where(and(eq(measurementBasedApproaches.organizationId, organizationId), inArray(measurementBasedApproaches.sourceStreamId, streamIds))),
+        .where(
+          and(
+            eq(measurementBasedApproaches.organizationId, organizationId),
+            inArray(measurementBasedApproaches.sourceStreamId, streamIds),
+          ),
+        ),
       db
         .select()
         .from(fallbackApproaches)
-        .where(and(eq(fallbackApproaches.organizationId, organizationId), inArray(fallbackApproaches.sourceStreamId, streamIds))),
+        .where(
+          and(
+            eq(fallbackApproaches.organizationId, organizationId),
+            inArray(fallbackApproaches.sourceStreamId, streamIds),
+          ),
+        ),
     ]);
 
     const facilityNameById = new Map(facilityRows.map((f) => [f.id, f.name]));
@@ -1669,7 +1851,13 @@ export class DbStorage implements IStorage {
       const calc = calcByStream.get(s.id);
       const measure = measureByStream.get(s.id);
       const fallback = fallbackByStream.get(s.id);
-      const approachTier: SourceStreamDetail["approachTier"] = calc ? "calculation" : measure ? "measurement" : fallback ? "fallback" : "none";
+      const approachTier: SourceStreamDetail["approachTier"] = calc
+        ? "calculation"
+        : measure
+          ? "measurement"
+          : fallback
+            ? "fallback"
+            : "none";
 
       return {
         sourceStreamId: s.id,
@@ -1715,7 +1903,9 @@ export class DbStorage implements IStorage {
           ? {
               justification: fallback.justification,
               fallbackMethodDescription: fallback.fallbackMethodDescription,
-              estimatedEmissionsTco2e: fallback.estimatedEmissionsTco2e ? Number(fallback.estimatedEmissionsTco2e) : null,
+              estimatedEmissionsTco2e: fallback.estimatedEmissionsTco2e
+                ? Number(fallback.estimatedEmissionsTco2e)
+                : null,
             }
           : null,
       };
@@ -1729,7 +1919,9 @@ export class DbStorage implements IStorage {
     offset: number;
   }): Promise<{ users: AdminUserListItem[]; total: number }> {
     const { search, organizationId, limit, offset } = params;
-    const searchCondition = search ? or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`)) : undefined;
+    const searchCondition = search
+      ? or(ilike(users.email, `%${search}%`), ilike(users.name, `%${search}%`))
+      : undefined;
     // Organization filter is a membership EXISTS check, not a join -- a join
     // would duplicate a user row per membership, same reasoning as every
     // other admin-list query in this file.
@@ -1743,9 +1935,7 @@ export class DbStorage implements IStorage {
           )
         : undefined;
     const whereFilter =
-      searchCondition && orgCondition
-        ? and(searchCondition, orgCondition)
-        : (searchCondition ?? orgCondition);
+      searchCondition && orgCondition ? and(searchCondition, orgCondition) : (searchCondition ?? orgCondition);
 
     const totalRes = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -1915,7 +2105,12 @@ export class DbStorage implements IStorage {
     // delete no-ops because the flag flipped, the org delete no-ops with it
     // rather than orphaning a freshly-verified owner from their organization.
     const stillNeverVerified = () =>
-      exists(db.select().from(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))));
+      exists(
+        db
+          .select()
+          .from(users)
+          .where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))),
+      );
 
     if (orgIdToDelete) {
       await db.batch([
@@ -1924,10 +2119,7 @@ export class DbStorage implements IStorage {
         db.delete(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))),
       ]);
     } else {
-      await db.batch([
-        logEntry,
-        db.delete(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false))),
-      ]);
+      await db.batch([logEntry, db.delete(users).where(and(eq(users.id, userId), eq(users.hasBeenVerified, false)))]);
     }
 
     return "deleted";
