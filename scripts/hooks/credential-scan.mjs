@@ -29,8 +29,12 @@ export function getEnvVarNames() {
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=/);
-    if (match) names.push(match[1]);
+    const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    // A name declared with a real committed default value (e.g. PORT, which
+    // ships with a real port number) is self-evidently not a secret -- only
+    // bare `NAME=` placeholders, meant to be filled with a real credential
+    // locally, are scanned for.
+    if (match && match[2].trim() === "") names.push(match[1]);
   }
   return names;
 }
@@ -54,7 +58,7 @@ export function findLeakedCredential(content, envVarNames) {
   for (const name of envVarNames) {
     // NAME=<non-empty value>; an empty assignment (NAME=) is a
     // template/placeholder, not a leak.
-    const pattern = new RegExp(`\\b${name}=([^\\s"'` + "`" + `]+)`);
+    const pattern = new RegExp(`\\b${name}=["'` + "`" + `]?([^\\s"'` + "`" + `]+)`);
     const match = content.match(pattern);
     if (match && match[1].length > 0) return name;
   }

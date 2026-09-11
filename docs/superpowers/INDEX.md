@@ -33,19 +33,19 @@ day, binding until revised again here.
 3. **Deploy-stage pair, now the active priority (unblocked by item 2 above):** `REVIEW.md` +
    PR-gated deploy (AI PR review), and Hooks as approval gates. Sequencing between/within these two
    not yet finalized.
-4. **Resume the paused Hooks (build-time guardrails) execution** — worktree already created and
-   ready at `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), dependencies
-   installed, baseline `npm run check` verified clean, Task 1's implementer not yet dispatched.
-   Nothing to redo, just re-enter and continue when this becomes the priority again. Distinct
-   initiative from item 3's "Hooks as approval gates" — this one is protected-path/credential-scan/
-   formatting guardrails during a session, not deploy-time gating.
-5. **Once Hooks' full repo-wide Prettier reformat actually lands** (still pending — item 4 above
-   hasn't run yet, so this hasn't triggered): refresh the stale `file:line` anchors throughout
+4. ~~Resume the paused Hooks (build-time guardrails) execution~~ — **done.** Completed 2026-09-11
+   via `subagent-driven-development` (4 tasks, 3 escalated plan-defect findings fixed --
+   `isProtectedPath` fail-open, `isEnvFile` fail-closed, `npx` ENOENT on Windows -- plus a
+   cross-task path-normalization consolidation, final whole-branch review + fix wave + scoped
+   re-review, all clean). See the Hooks row below for what actually shipped.
+5. **Now the actionable next step, unblocked by item 4 above:** refresh the stale `file:line`
+   anchors throughout
    [`docs/superpowers/plans/2026-09-10-document-extraction.md`](plans/2026-09-10-document-extraction.md)
-   — the reformat will shift line numbers repo-wide, and this plan's task steps reference exact
-   lines (`server/routes.ts:2478`, `BoundaryWorkspace.tsx:621`, etc.) that go stale the moment
-   that happens. **Do this before resuming any other feature build**, document extraction
-   included — do not execute that plan against stale line references.
+   — the repo-wide Prettier reformat (commit `bfda6ca`) landed and shifted line numbers repo-wide,
+   and this plan's task steps reference exact lines (`server/routes.ts:2478`,
+   `BoundaryWorkspace.tsx:621`, etc.) that are now stale. **Do this before resuming any other
+   feature build**, document extraction included — do not execute that plan against stale line
+   references.
 6. Everything else (document extraction itself, Stage 6 monitoring) resumes only after 1-5 above
    are done.
 

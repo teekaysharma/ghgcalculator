@@ -43,7 +43,7 @@ async function main() {
   filePath = toWindowsAbsolutePath(filePath, REPO_ROOT);
 
   try {
-    spawnSync("npx", ["prettier", "--write", filePath], { stdio: "ignore", shell: true });
+    spawnSync(`npx prettier --write "${filePath}"`, { shell: true, stdio: "ignore" });
   } catch {
     // Formatting failures (e.g. a syntax error mid-edit) must never block
     // the turn -- this is a PostToolUse convenience, not a gate.
