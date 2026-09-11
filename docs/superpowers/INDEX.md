@@ -17,21 +17,26 @@ that pipeline right now.
 
 ## Next priorities, in order
 
-Explicit sequencing, not just per-row status — set 2026-09-11 by the product owner, binding until
-revised here.
+Explicit sequencing, not just per-row status — set 2026-09-11 by the product owner, revised same
+day, binding until revised again here.
 
-1. Finish the SDLC-basics work currently in flight: `.claude/skills/` (spec approved, plan not
-   yet written) and Hooks (design in progress — protected-path methodology settled, reformat
-   scope decided, spec not yet written).
-2. **Once the Hooks work's full repo-wide Prettier reformat lands:** refresh the stale
-   `file:line` anchors throughout
+1. **Test suite (Stage 4, "Test — Feedback loop")** — flagged 2026-09-11 ("This step needs to be
+   built"), interrupting Hooks execution mid-setup to take it up. Design not yet started; this is
+   the active priority.
+2. **Resume the paused Hooks execution** — worktree already created and ready at
+   `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), dependencies installed,
+   baseline `npm run check` verified clean, Task 1's implementer not yet dispatched. Nothing to
+   redo, just re-enter and continue when this becomes the priority again.
+3. `.claude/skills/` — spec approved, plan not yet written.
+4. **Once Hooks' full repo-wide Prettier reformat actually lands** (still pending — item 2 above
+   hasn't run yet, so this hasn't triggered): refresh the stale `file:line` anchors throughout
    [`docs/superpowers/plans/2026-09-10-document-extraction.md`](plans/2026-09-10-document-extraction.md)
-   — the reformat will shift line numbers throughout the repo, and this plan's task steps
-   reference exact lines (`server/routes.ts:2478`, `BoundaryWorkspace.tsx:621`, etc.) that go
-   stale the moment that happens. **Do this before resuming any other feature build**, document
-   extraction included — do not execute that plan against stale line references.
-3. Everything else (document extraction itself, the remaining playbook gaps — test suite, CI/CD,
-   `REVIEW.md`, Stage 6 monitoring) resumes only after 1 and 2 above are both done.
+   — the reformat will shift line numbers repo-wide, and this plan's task steps reference exact
+   lines (`server/routes.ts:2478`, `BoundaryWorkspace.tsx:621`, etc.) that go stale the moment
+   that happens. **Do this before resuming any other feature build**, document extraction
+   included — do not execute that plan against stale line references.
+5. Everything else (document extraction itself, the remaining playbook gaps — CI/CD, `REVIEW.md`,
+   Stage 6 monitoring) resumes only after 1-4 above are done.
 
 ## Product features
 
@@ -61,8 +66,8 @@ revised here.
 | `CLAUDE.md` as shared institutional knowledge | Done | Committed and refreshed 2026-09-10 (was git-ignored and 3+ weeks stale before). Critical subset of `ClaudeCowork/ABOUT ME/CLAUDE-TKS.md` carried over. |
 | This index | Done | Created 2026-09-11. |
 | `.claude/skills/` (project-specific policy skills) — [intent](intents/2026-09-11-claude-skills-intent.md) · [spec](specs/2026-09-11-claude-skills-design.md) | Spec approved | Design done 2026-09-11: three skills (`database-conventions`, `ghg-domain-conventions`, `api-conventions`), `CLAUDE.md`'s overlapping bullets to be trimmed to one-liners + pointers once built. Plan not yet written. Real prerequisite for PR review per the playbook's own dependency graph ("PR review requires updated CLAUDE.md and skills"). |
-| Hooks (build-time guardrails) — [intent](intents/2026-09-11-build-hooks-intent.md) · [spec](specs/2026-09-11-build-hooks-design.md) · [plan](plans/2026-09-11-build-hooks.md) | Plan written | Plan written 2026-09-11 (4 tasks: protected-path block, credential scan, Prettier config + one-time reformat, format-on-write hook). **First plan in this project to be executed via `subagent-driven-development`** rather than directly in the main session — chosen deliberately for that reason. Execution not yet started. Includes the full one-time repo-wide reformat that triggers "Next priorities" item 2 above. |
-| Test suite | Not started | Zero `.test.`/`.spec.` files anywhere in the repo. `npm run verify` (`scripts/verify-branch.mjs`) + standalone `verify-*.mjs` scripts are real end-to-end smoke checks, happy-path only, not a regression net. |
+| Hooks (build-time guardrails) — [intent](intents/2026-09-11-build-hooks-intent.md) · [spec](specs/2026-09-11-build-hooks-design.md) · [plan](plans/2026-09-11-build-hooks.md) | Plan written, execution paused | **Paused 2026-09-11 at a clean, resumable checkpoint** — mid-way through kicking off `subagent-driven-development`, before Task 1's implementer was dispatched. Worktree already created and ready at `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), `npm install` done, `npm run check` baseline verified clean. Paused (not abandoned) to take up the Test-suite item below at the user's request. Resume by re-entering that worktree and dispatching Task 1 — no setup work is lost. Includes the full one-time repo-wide reformat that triggers "Next priorities" item 2 above (still applies once resumed). |
+| Test suite — flagged by product owner 2026-09-11 ("This step needs to be built") | Not started, next up | Zero `.test.`/`.spec.` files anywhere in the repo. `npm run verify` (`scripts/verify-branch.mjs`) + standalone `verify-*.mjs` scripts are real end-to-end smoke checks, happy-path only, not a regression net. This is the Stage 4 ("Test — Feedback loop") gap from the playbook correlation. Design not yet started. |
 | CI/CD | Not started | No `.github/` directory at all — not even lint/typecheck on push. |
 | `REVIEW.md` + PR-gated deploy | Not started | No PR workflow exists today — direct commits to `main`, approved per-instance in chat (see `CLAUDE.md`'s Merge Policy section). Requires `.claude/skills/` first per the playbook's dependency graph. |
 | Stage 6 monitoring / control-band alerting / autonomous maintenance loop | Not started | |
