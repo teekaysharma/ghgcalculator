@@ -18,6 +18,11 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Claude Code worktrees -- other active git worktrees under .claude/worktrees/,
+# never something this repo should track. .claude/launch.json and .claude/skills/
+# stay trackable (skills content is committed intentionally).
+.claude/worktrees/
+
 # Python (scripts/exiobase/build_factors.py -- offline/local only, see
 # scripts/exiobase/README.md; this is compiled-bytecode cache, never source)
 __pycache__/
