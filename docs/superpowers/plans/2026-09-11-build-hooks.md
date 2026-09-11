@@ -40,6 +40,12 @@ hook system via `.claude/settings.json`.
 - **This plan's own execution triggers `docs/superpowers/INDEX.md`'s "Next priorities" item 2**: once
   Task 3's reformat lands, `docs/superpowers/plans/2026-09-10-document-extraction.md`'s `file:line`
   references go stale. That refresh is a separate, already-tracked follow-up — not built here.
+  **Correction note, 2026-09-11 (added when this plan's execution resumed):** the `.claude/skills/`
+  initiative shipped between when this plan was written and when it was executed, and renumbered
+  `docs/superpowers/INDEX.md`'s "Next priorities" list — the line-ref refresh this bullet describes
+  is now **item 5**, not item 2. Task 3 Step 9 and Task 4 Step 8 below both touch `INDEX.md`;
+  neither should copy the stale "item 2" wording — check the live file's current numbering, don't
+  trust this plan's text for that specific detail.
 - Settings changes go to `.claude/settings.json` (project-scoped, git-committed) — NOT
   `.claude/settings.local.json` — since these guardrails are meant to be shared, version-controlled
   policy per the playbook, not a personal override.
