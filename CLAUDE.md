@@ -63,7 +63,6 @@ always go to TeeKay via `AskUserQuestion` -- never silently fixed or dismissed, 
 
 **Known gaps against the playbook's later stages** (correlated 2026-09-10, confirmed by direct
 inspection, not yet closed):
-- No hooks configured anywhere.
 - A first Vitest suite now exists (`server/calculations/emission-calculation.test.ts`, 6 tests,
   added 2026-09-11) covering the emission-calculation arithmetic -- no longer "zero" test files,
   but still a narrow first slice: most of the codebase (tenant isolation, hooks, auth flows, etc.)

@@ -16,6 +16,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/hooks/format-on-write.mjs",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }
