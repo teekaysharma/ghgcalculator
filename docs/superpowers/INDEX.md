@@ -20,23 +20,36 @@ that pipeline right now.
 Explicit sequencing, not just per-row status — set 2026-09-11 by the product owner, revised same
 day, binding until revised again here.
 
-1. **Test suite (Stage 4, "Test — Feedback loop")** — flagged 2026-09-11 ("This step needs to be
-   built"), interrupting Hooks execution mid-setup to take it up. Spec approved same day (first
-   slice: emission-calculation arithmetic); plan not yet written. Still the active priority.
-2. **Resume the paused Hooks execution** — worktree already created and ready at
-   `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), dependencies installed,
-   baseline `npm run check` verified clean, Task 1's implementer not yet dispatched. Nothing to
-   redo, just re-enter and continue when this becomes the priority again.
-3. `.claude/skills/` — spec approved, plan not yet written.
-4. **Once Hooks' full repo-wide Prettier reformat actually lands** (still pending — item 2 above
+1. ~~Test suite (Stage 4, "Test — Feedback loop")~~ — **done.** Plan executed via
+   `subagent-driven-development` 2026-09-11 (2 tasks, 1 escalated finding ruled on by the product
+   owner, final whole-branch review + fix wave + scoped re-review, all clean), merged to `main`
+   (fast-forward, commit `9bd3666`). `npm run check` and `npm run test` both verified green on the
+   merged tree post-merge.
+2. **Deploy-stage pair, per the product owner's 2026-09-11 instruction given right after the
+   merge:** `REVIEW.md` + PR-gated deploy (AI PR review), and Hooks as approval gates. Sequencing
+   between/within these two not yet finalized — see the flagged dependency-graph conflict below
+   before starting either.
+3. **Resume the paused Hooks (build-time guardrails) execution** — worktree already created and
+   ready at `.claude/worktrees/build-hooks` (branch `worktree-build-hooks`), dependencies
+   installed, baseline `npm run check` verified clean, Task 1's implementer not yet dispatched.
+   Nothing to redo, just re-enter and continue when this becomes the priority again. Distinct
+   initiative from item 2's "Hooks as approval gates" — this one is protected-path/credential-scan/
+   formatting guardrails during a session, not deploy-time gating.
+4. `.claude/skills/` — spec approved, plan not yet written. **Also a documented prerequisite for
+   item 2's PR-review piece** ("PR review requires updated CLAUDE.md and skills" per the playbook's
+   own dependency graph, and the skills initiative row below says the same) — this is the flagged
+   conflict: the product owner's new ordering puts REVIEW.md/PR-review ahead of skills, but the
+   playbook's own dependency graph says skills must come first. Not resolved silently; surfaced for
+   a decision before either piece of item 2 starts.
+5. **Once Hooks' full repo-wide Prettier reformat actually lands** (still pending — item 3 above
    hasn't run yet, so this hasn't triggered): refresh the stale `file:line` anchors throughout
    [`docs/superpowers/plans/2026-09-10-document-extraction.md`](plans/2026-09-10-document-extraction.md)
    — the reformat will shift line numbers repo-wide, and this plan's task steps reference exact
    lines (`server/routes.ts:2478`, `BoundaryWorkspace.tsx:621`, etc.) that go stale the moment
    that happens. **Do this before resuming any other feature build**, document extraction
    included — do not execute that plan against stale line references.
-5. Everything else (document extraction itself, the remaining playbook gaps — CI/CD, `REVIEW.md`,
-   Stage 6 monitoring) resumes only after 1-4 above are done.
+6. Everything else (document extraction itself, Stage 6 monitoring) resumes only after 1-5 above
+   are done.
 
 ## Product features
 
