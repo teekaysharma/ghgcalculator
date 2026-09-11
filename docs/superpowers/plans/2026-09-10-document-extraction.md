@@ -19,6 +19,7 @@
 - File types accepted end to end: `application/pdf`, `image/png`, `image/jpeg`, `image/webp`. Max size: 20MB.
 - `GEMINI_API_KEY` and `BLOB_READ_WRITE_TOKEN` are real external credentials the project owner must provision (Google AI Studio free tier; Vercel Blob store dashboard) — no task in this plan can provision them. Task 5's live-integration test must degrade gracefully (skip with a clear message, not fail) when they're unset.
 - Both new SDKs (`@vercel/blob`, `@google/genai`) are genuinely new to this repo — before treating any exact call signature in this plan as final, check it against the installed package's own type definitions (`node_modules/@vercel/blob`, `node_modules/@google/genai`). This plan's code reflects current best knowledge of both APIs, not a confirmed read of this repo's installed copies.
+- **Line-reference refresh, 2026-09-11:** this plan was written 2026-09-10. Since then, `server/routes.ts:2478-2657`'s inline calculation was extracted into `server/calculations/emission-calculation.ts` (2026-09-11), and a repo-wide Prettier reformat landed (`printWidth: 120`, commit `bfda6ca`) — both shifted line numbers in every file this plan references. Every `file:line` anchor below has been re-verified against the current tree and corrected in place (not annotated separately, since these are mechanical position updates, not disputed content) — search-based anchors ("search for `export type CalculationApproach...`") were unaffected and needed no changes.
 
 ---
 
@@ -436,7 +437,7 @@ BLOB_READ_WRITE_TOKEN=
 
 In `server/storage.ts`, add to the import block (around line 4-78): add `documentExtractions,` to the table-import list (after `adminActionLog,`) and `type DocumentExtraction, type InsertDocumentExtraction,` to the type-import list (after `type GwpValue,`).
 
-Add to the `IStorage` interface (`server/storage.ts:257`), in a new section near the end, after the existing cross-cutting methods:
+Add to the `IStorage` interface (`server/storage.ts:269-538`), in a new section right before the interface's closing `}` (line 538), after the existing cross-cutting methods (`listAdminActionLogForOrganization` at line 537):
 
 ```ts
   createDocumentExtraction(data: InsertDocumentExtraction): Promise<DocumentExtraction>;
@@ -445,7 +446,7 @@ Add to the `IStorage` interface (`server/storage.ts:257`), in a new section near
   confirmDocumentExtraction(organizationId: number, id: number, calculationApproachId: number): Promise<void>;
 ```
 
-Add the implementations to the storage class, right after `getCalculationApproach` (`server/storage.ts:1105-1111`):
+Add the implementations to the storage class, right after `getCalculationApproach` (`server/storage.ts:1211-1225`):
 
 ```ts
   async createDocumentExtraction(data: InsertDocumentExtraction): Promise<DocumentExtraction> {
@@ -486,13 +487,13 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { extractActivityDataFromDocument } from "./services/document-extraction";
 ```
 
-In `calculationApproachSchema` (`server/routes.ts:223-277`), add one line right before the closing `});` (after `notes: z.string().optional(),`):
+In `calculationApproachSchema` (`server/routes.ts:224-278`), add one line right before the closing `});` (after `notes: z.string().optional(),`):
 
 ```ts
   documentExtractionId: z.number().int().positive().optional(),
 ```
 
-Immediately after the existing `/api/source-streams/:id/calculation-approach` GET/PUT pair (i.e., right after the closing `});` of the PUT handler at `server/routes.ts:2657`, before the `// --- Measurement-based approach detail` comment), add three new routes:
+Immediately after the existing `/api/source-streams/:id/calculation-approach` GET/PUT pair (i.e., right after the closing `});` of the PUT handler at `server/routes.ts:2699`, before the `// --- Measurement-based approach detail` comment at line 2701), add three new routes:
 
 ```ts
   // --- Activity-data document extraction ---
@@ -587,7 +588,7 @@ Immediately after the existing `/api/source-streams/:id/calculation-approach` GE
   });
 ```
 
-In the existing PUT handler (`server/routes.ts:2478-2657`), right after the `upsertCalculationApproach` call resolves (after the closing `});` of the `storage.upsertCalculationApproach({...})` call, around line 2618, before the `if (computedEmissionKg !== null) {` block), add:
+In the existing PUT handler (`server/routes.ts:2566-2699`), right after the `upsertCalculationApproach` call resolves (after the closing `});` of the `storage.upsertCalculationApproach({...})` call at line 2658, before the `if (computedEmissionKg !== null) {` block at line 2660), add:
 
 ```ts
       if (data.documentExtractionId !== undefined) {
@@ -638,7 +639,7 @@ import { upload } from "@vercel/blob/client";
 
 - [ ] **Step 2: Add extraction state and handler to `CalculationApproachForm`**
 
-In `CalculationApproachForm` (`client/src/components/BoundaryWorkspace.tsx:621`), after the existing `gasBreakdown` state and its hydration `useEffect` (after line 672, before the `save` mutation), add:
+In `CalculationApproachForm` (`client/src/components/BoundaryWorkspace.tsx:629`), after the existing `gasBreakdown` state (lines 665-667) and its hydration `useEffect` (lines 676-680, after line 680, before the `save` mutation which now starts at line 682), add:
 
 ```tsx
   const [documentExtractionId, setDocumentExtractionId] = useState<number | null>(null);
@@ -704,7 +705,7 @@ In `CalculationApproachForm` (`client/src/components/BoundaryWorkspace.tsx:621`)
 
 - [ ] **Step 3: Include `documentExtractionId` in the save mutation**
 
-In the `save` mutation's `mutationFn` (`client/src/components/BoundaryWorkspace.tsx:674-686`), add one line to the `apiRequest` call's body, alongside the existing `gasBreakdown` spread:
+In the `save` mutation's `mutationFn` (`client/src/components/BoundaryWorkspace.tsx:682-697`), add one line to the `apiRequest` call's body, alongside the existing `gasBreakdown` spread (now at line 691):
 
 ```tsx
         ...(gasBreakdown !== undefined ? { gasBreakdown } : {}),
@@ -713,7 +714,7 @@ In the `save` mutation's `mutationFn` (`client/src/components/BoundaryWorkspace.
 
 - [ ] **Step 4: Add the upload UI and confidence badges to the rendered form**
 
-At the top of the returned JSX (`client/src/components/BoundaryWorkspace.tsx:694-695`, right after the opening `<div className="space-y-3 bg-neutral-50 rounded-md p-3">`), add:
+At the top of the returned JSX (`client/src/components/BoundaryWorkspace.tsx:703`, right after the opening `<div className="space-y-3 bg-neutral-50 rounded-md p-3">`), add:
 
 ```tsx
       <div className="bg-white border rounded-md p-2 space-y-1.5">
@@ -739,7 +740,19 @@ At the top of the returned JSX (`client/src/components/BoundaryWorkspace.tsx:694
       </div>
 ```
 
-Then replace the existing three-`Input` lines for `fuelOrMaterialType`, `activityDataValue`, and `activityDataUnit` (`client/src/components/BoundaryWorkspace.tsx:697-699`) with:
+Then replace the existing `Input`s for `fuelOrMaterialType`, `activityDataValue`, and `activityDataUnit` (`client/src/components/BoundaryWorkspace.tsx:705-711` — the reformat wrapped `fuelOrMaterialType`'s onto multiple lines, so this is 7 lines on disk now, not 3; the current exact text to match and replace is:
+
+```tsx
+        <Input
+          placeholder="Fuel / material type"
+          value={fields.fuelOrMaterialType}
+          onChange={set("fuelOrMaterialType")}
+        />
+        <Input placeholder="Activity data value" value={fields.activityDataValue} onChange={set("activityDataValue")} />
+        <Input placeholder="Activity data unit" value={fields.activityDataUnit} onChange={set("activityDataUnit")} />
+```
+
+) with:
 
 ```tsx
         <div>

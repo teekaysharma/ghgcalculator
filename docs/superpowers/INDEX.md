@@ -38,16 +38,18 @@ day, binding until revised again here.
    `isProtectedPath` fail-open, `isEnvFile` fail-closed, `npx` ENOENT on Windows -- plus a
    cross-task path-normalization consolidation, final whole-branch review + fix wave + scoped
    re-review, all clean). See the Hooks row below for what actually shipped.
-5. **Now the actionable next step, unblocked by item 4 above:** refresh the stale `file:line`
-   anchors throughout
-   [`docs/superpowers/plans/2026-09-10-document-extraction.md`](plans/2026-09-10-document-extraction.md)
-   — the repo-wide Prettier reformat (commit `bfda6ca`) landed and shifted line numbers repo-wide,
-   and this plan's task steps reference exact lines (`server/routes.ts:2478`,
-   `BoundaryWorkspace.tsx:621`, etc.) that are now stale. **Do this before resuming any other
-   feature build**, document extraction included — do not execute that plan against stale line
-   references.
-6. Everything else (document extraction itself, Stage 6 monitoring) resumes only after 1-5 above
-   are done.
+5. ~~Refresh the stale `file:line` anchors throughout `document-extraction.md`~~ — **done.**
+   Completed 2026-09-11: every anchor re-verified against the current tree (post emission-calc
+   extraction and post Prettier reformat) and corrected in place — `server/storage.ts` (IStorage
+   interface, `getCalculationApproach` insertion point), `server/routes.ts` (`calculationApproachSchema`
+   span, the PUT handler's new span and internal insertion point — shifted ~90 lines by the
+   emission-calc extraction alone), and `client/src/components/BoundaryWorkspace.tsx`
+   (`CalculationApproachForm`'s start, the `save` mutation, the JSX insertion points — one of which
+   changed shape, not just line number, since Prettier wrapped a previously single-line `Input`).
+   `scripts/verify-branch.mjs`'s anchors were untouched by either change. Search-based anchors
+   (`shared/schema.ts`) needed no correction.
+6. Document extraction itself is now unblocked and ready to execute whenever prioritized. Stage 6
+   monitoring remains not-yet-started, separately.
 
 ## Product features
 
@@ -63,7 +65,7 @@ day, binding until revised again here.
 | Membership/account lifecycle | — | [spec](specs/2026-09-04-membership-lifecycle-management-design.md) | [plan](plans/2026-09-04-membership-lifecycle-management.md) | Shipped | Deactivate/reactivate (membership + account), unified token-based password reset, two-tier permission model. |
 | Super-admin control panel | — | [spec](specs/2026-09-04-super-admin-panel-design.md) | [plan](plans/2026-09-04-super-admin-panel.md) | Shipped, extended beyond its plan | Cross-tenant account directory, verify/delete/promote/demote, audit log. Extended 2026-09-09 (self-service name editor, real Privacy/Help pages, read-only cross-tenant GHG-data drill-down, optional org creation) directly in-session under deadline pressure, with no spec/plan of its own for the extension — an acknowledged process deviation, see `CLAUDE.md`'s Development Process section. |
 | Platform BRD | — | [spec](specs/2026-09-09-platform-brd-structure-design.md) | — (writing task, no code — no `plan.md` needed) | Shipped | Published as a Claude Artifact ("GHG Calculator BRD"), 12 sections. |
-| Activity-data document extraction | [intent](intents/2026-09-10-document-extraction-intent.md) | [spec](specs/2026-09-10-document-extraction-design.md) | [plan](plans/2026-09-10-document-extraction.md) | Planned | Plan written 2026-09-10, execution not started. Needs `GEMINI_API_KEY` + `BLOB_READ_WRITE_TOKEN` provisioned (project owner only) before it's testable end to end. **⚠️ Do not execute this plan until "Next priorities" item 5 above (refreshing its stale line references after the Hooks reformat) is done.** |
+| Activity-data document extraction | [intent](intents/2026-09-10-document-extraction-intent.md) | [spec](specs/2026-09-10-document-extraction-design.md) | [plan](plans/2026-09-10-document-extraction.md) | Planned | Plan written 2026-09-10, execution not started. `file:line` references refreshed 2026-09-11 (see "Next priorities" item 5) — safe to execute now. Still needs `GEMINI_API_KEY` + `BLOB_READ_WRITE_TOKEN` provisioned (project owner only) before it's testable end to end. |
 | Emissions-factors upload facility (EPA/EXIOBASE/IPCC tables, superadmin-only) | — | — (discussed in-session, never committed to a file) | — | On hold | Design presented and discussed; explicitly **not approved to build** ("think it over... do not attempt anything yet," reinforced twice). Distinct from document extraction above — this one is reference-factor tables, not a tenant's own activity data. |
 | Tenant lifecycle governance (archive/unarchive, governed multi-step deletion) | — | — | — | Deferred by design | Approved concept, no design pass started. Binding constraint meanwhile: a tenant must never be deactivated/deleted as a side effect of any user or membership action. |
 | Identity/profile decoupling (machine-allocated usernames, admin-assigned email as login identity, separate display name) | — | — | — | Deferred by design | Approved concept, needs its own brainstorming/design pass before building — touches `email`-as-identity everywhere (auth, sessions, invites, verification). |
