@@ -67,9 +67,13 @@ inspection, not yet closed):
   process skills are in use) -- conventions like the `organizationId`-scoping rule below live only
   in this file and in code comments, not in a discoverable skill.
 - No hooks configured anywhere.
-- Zero `.test.`/`.spec.` files in the repo. `npm run verify` (`scripts/verify-branch.mjs`) plus
-  several standalone `verify-*.mjs` scripts do real end-to-end smoke checks against a running
-  server, but it's happy-path coverage, not a regression suite.
+- A first Vitest suite now exists (`server/calculations/emission-calculation.test.ts`, 6 tests,
+  added 2026-09-11) covering the emission-calculation arithmetic -- no longer "zero" test files,
+  but still a narrow first slice: most of the codebase (tenant isolation, hooks, auth flows, etc.)
+  still has zero coverage. `npm run verify` (`scripts/verify-branch.mjs`) plus several standalone
+  `verify-*.mjs` scripts do real end-to-end smoke checks against a running server, but it's
+  happy-path coverage, not a regression suite -- and it does not exercise the route the new Vitest
+  suite covers (see `docs/superpowers/INDEX.md`'s Test suite row for that specific gap).
 - No `.github/` directory -- zero CI/CD, not even lint/typecheck on push.
 - No PR-based workflow, no `REVIEW.md` gate -- see "Merge policy" below for what actually happens
   instead.
@@ -218,5 +222,6 @@ When in doubt: ask one focused question. Do not fill gaps with assumptions.
    specific intent/spec/plan file once you know which feature you're actually working on.
    `HANDOFF-SESSION.md` (last touched 2026-08-18) predates this convention and is historical only
    -- do not treat it as current.
-3. `npm install` if needed, `npm run check` -- report actual output, don't assume clean.
+3. `npm install` if needed, `npm run check` and `npm run test` -- report actual output, don't
+   assume clean.
 4. Report current verified state before starting new work.

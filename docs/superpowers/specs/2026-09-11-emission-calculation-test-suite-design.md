@@ -73,6 +73,14 @@ behavior change. The implementation plan's verification must prove this concrete
 `npm run verify` end-to-end smoke test (which exercises this exact calculation through a real
 save) must still pass, unchanged, after the refactor.
 
+**Correction (2026-09-11, found during final review):** `npm run verify` does NOT actually
+exercise this route — confirmed by direct inspection of `scripts/verify-branch.mjs`, which only
+tests the unrelated legacy `POST /api/calculate` endpoint. The product owner ruled that
+independent manual code comparison plus this plan's own Task 2 unit tests stand in as sufficient
+proof for this specific behavior-preserving extraction instead. `PUT
+/api/source-streams/:id/calculation-approach` itself has no automated integration coverage —
+flagged as a candidate for a future test-suite slice.
+
 **Test runner:** Vitest, added as a devDependency — ecosystem-standard fit for this already-Vite-
 based project (the client build already uses Vite), fast, native ESM/TS support. A
 `vitest.config.ts` targets `server/**/*.test.ts`; `package.json` gains a `"test": "vitest run"`
@@ -108,6 +116,14 @@ constraint — not padding for coverage's sake:
 - `npm run check` (existing, `tsc`) stays clean after the extraction.
 - `npm run verify` (existing, live-server smoke test) stays passing unchanged — the concrete proof
   that the extraction didn't alter behavior.
+
+**Correction (2026-09-11, found during final review):** `npm run verify` does NOT actually
+exercise this route — confirmed by direct inspection of `scripts/verify-branch.mjs`, which only
+tests the unrelated legacy `POST /api/calculate` endpoint. The product owner ruled that
+independent manual code comparison plus this plan's own Task 2 unit tests stand in as sufficient
+proof for this specific behavior-preserving extraction instead. `PUT
+/api/source-streams/:id/calculation-approach` itself has no automated integration coverage —
+flagged as a candidate for a future test-suite slice.
 
 ## Explicitly out of scope
 

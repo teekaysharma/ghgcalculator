@@ -18,6 +18,14 @@
 - **Concrete proof of behavior preservation is required**, not just careful extraction: `npm run
   verify` (the existing end-to-end smoke test, which exercises this exact calculation through a
   real save) must still pass, unchanged, after the refactor.
+
+  **Correction (2026-09-11, found during final review):** `npm run verify` does NOT actually
+  exercise this route — confirmed by direct inspection of `scripts/verify-branch.mjs`, which only
+  tests the unrelated legacy `POST /api/calculate` endpoint. The product owner ruled that
+  independent manual code comparison plus this plan's own Task 2 unit tests stand in as sufficient
+  proof for this specific behavior-preserving extraction instead. `PUT
+  /api/source-streams/:id/calculation-approach` itself has no automated integration coverage —
+  flagged as a candidate for a future test-suite slice.
 - Result type is a clean discriminated union on `status`: `"computed" | "rejected" |
   "insufficient_data"` — never two members both carrying the same discriminant value.
 - `npm run check` (`tsc`) must stay clean throughout.

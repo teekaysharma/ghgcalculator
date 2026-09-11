@@ -32,6 +32,8 @@ export type EmissionCalculationResult =
   | { status: "insufficient_data" };
 
 // 1 Gg = 1e6 kg = 1e3 tonnes -- 2006 IPCC Guidelines Vol.2 Ch.1 Table 1.2.
+// Weight-basis units only -- volume-basis (liters/m3) is deliberately unsupported here. See
+// shared/schema.ts's ipccDefaultFactors.netCalorificValue comment for the full rationale.
 const WEIGHT_UNITS_PER_GG: Record<string, number> = {
   kg: 1_000_000,
   kgs: 1_000_000,
