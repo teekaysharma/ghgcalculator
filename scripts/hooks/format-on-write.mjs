@@ -11,8 +11,12 @@
 // value in reformatting a file nobody may write to anyway.
 
 import { spawnSync } from "child_process";
-import { extname } from "path";
-import { isProtectedPath } from "./protected-paths.mjs";
+import { extname, dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { isProtectedPath, toWindowsAbsolutePath } from "./protected-paths.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, "..", "..");
 
 const FORMATTABLE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".jsx", ".css"]);
 
@@ -36,11 +40,7 @@ async function main() {
   if (!FORMATTABLE_EXTENSIONS.has(extname(filePath))) return;
   if (isProtectedPath(filePath)) return;
 
-  // Convert POSIX paths (from Git Bash) to Windows format for prettier
-  if (filePath.match(/^\/[a-z]\//i)) {
-    const driveLetter = filePath[1].toUpperCase();
-    filePath = driveLetter + ":\\" + filePath.substring(3).replace(/\//g, "\\");
-  }
+  filePath = toWindowsAbsolutePath(filePath, REPO_ROOT);
 
   try {
     spawnSync("npx", ["prettier", "--write", filePath], { stdio: "ignore", shell: true });
