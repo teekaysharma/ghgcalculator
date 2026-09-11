@@ -11,7 +11,7 @@
 
 import { readFileSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
-import { dirname, join, relative as pathRelative } from "path";
+import { dirname, join, relative as pathRelative, resolve, isAbsolute } from "path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..");
@@ -35,7 +35,17 @@ export function getEnvVarNames() {
 }
 
 function isEnvFile(filePath) {
-  const rel = pathRelative(REPO_ROOT, filePath).replace(/\\/g, "/");
+  let normalized = filePath;
+  // Handle Git Bash POSIX paths like /c/Users/... by converting to Windows format
+  // Matches /c/, /C/, /d/, etc. and converts to C:\, D:\, etc.
+  if (normalized.match(/^\/[a-z]\//i)) {
+    const driveLetter = normalized[1].toUpperCase();
+    normalized = driveLetter + ":\\" + normalized.substring(3).replace(/\//g, "\\");
+  }
+  const absolute = isAbsolute(normalized)
+    ? normalized
+    : resolve(REPO_ROOT, normalized);
+  const rel = pathRelative(REPO_ROOT, absolute).replace(/\\/g, "/").replace(/^\.\//, "");
   return rel === ".env";
 }
 
@@ -75,8 +85,19 @@ async function main() {
     return;
   }
 
-  const filePath = input?.tool_input?.file_path;
-  if (!filePath || isEnvFile(filePath)) {
+  let filePath = input?.tool_input?.file_path;
+  if (!filePath) {
+    process.stdout.write("{}");
+    return;
+  }
+
+  // Normalize POSIX paths to Windows format for consistent handling
+  if (filePath.match(/^\/[a-z]\//i)) {
+    const driveLetter = filePath[1].toUpperCase();
+    filePath = driveLetter + ":\\" + filePath.substring(3).replace(/\//g, "\\");
+  }
+
+  if (isEnvFile(filePath)) {
     process.stdout.write("{}");
     return;
   }
